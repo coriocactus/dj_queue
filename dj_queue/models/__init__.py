@@ -6,14 +6,16 @@ from dj_queue.models.jobs import (
   ReadyExecution,
   ScheduledExecution,
 )
-from dj_queue.models.runtime import Process
+from dj_queue.models.runtime import Pause, Process, Semaphore
 
 __all__ = [
   "BlockedExecution",
   "ClaimedExecution",
   "FailedExecution",
   "Job",
+  "Pause",
   "Process",
   "ReadyExecution",
   "ScheduledExecution",
+  "Semaphore",
 ]
