@@ -6,8 +6,21 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: "check"
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: "format --check --diff"
+
   sqlite:
     name: SQLite / Python ${{ matrix.python-version }}
+    needs: lint
     runs-on: ubuntu-24.04
     strategy:
       matrix:
@@ -24,6 +37,7 @@ jobs:
 
   postgres:
     name: PostgreSQL ${{ matrix.postgres-version }} / Python ${{ matrix.python-version }}
+    needs: lint
     runs-on: ubuntu-24.04
     strategy:
       matrix:
@@ -56,6 +70,7 @@ jobs:
 
   mysql:
     name: MySQL ${{ matrix.mysql-version }} / Python ${{ matrix.python-version }}
+    needs: lint
     runs-on: ubuntu-24.04
     strategy:
       matrix:
@@ -89,6 +104,7 @@ jobs:
 
   mariadb:
     name: MariaDB ${{ matrix.mariadb-version }} / Python ${{ matrix.python-version }}
+    needs: lint
     runs-on: ubuntu-24.04
     strategy:
       matrix:
