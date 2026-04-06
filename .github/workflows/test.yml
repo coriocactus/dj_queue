@@ -42,7 +42,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12", "3.13", "3.14"]
-        postgres-version: ["14", "15", "16", "17"]
+        postgres-version: ["14", "15", "16", "17", "18"]
     services:
       postgres:
         image: postgres:${{ matrix.postgres-version }}
@@ -109,7 +109,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12", "3.13", "3.14"]
-        mariadb-version: ["10.6", "10.11", "11.4"]
+        mariadb-version: ["10.6", "10.11", "11.4", "11.8"]
     services:
       mariadb:
         image: mariadb:${{ matrix.mariadb-version }}

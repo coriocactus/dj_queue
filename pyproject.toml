@@ -24,7 +24,7 @@ dev = [
 DJANGO_SETTINGS_MODULE = "tests.settings"
 pythonpath = ["."]
 markers = [
-  "postgres: requires PostgreSQL",
+  "postgres: requires PostgreSQL 14+",
   "mysql: requires MySQL 8+",
   "mariadb: requires MariaDB 10.6+",
 ]
