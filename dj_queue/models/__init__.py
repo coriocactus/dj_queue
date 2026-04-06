@@ -6,6 +6,7 @@ from dj_queue.models.jobs import (
   ReadyExecution,
   ScheduledExecution,
 )
+from dj_queue.models.recurring import RecurringExecution, RecurringTask
 from dj_queue.models.runtime import Pause, Process, Semaphore
 
 __all__ = [
@@ -16,6 +17,8 @@ __all__ = [
   "Pause",
   "Process",
   "ReadyExecution",
+  "RecurringExecution",
+  "RecurringTask",
   "ScheduledExecution",
   "Semaphore",
 ]
