@@ -14,3 +14,11 @@ dev = [
     "pytest-django>=4.12.0",
     "ruff>=0.15.9",
 ]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "tests.settings"
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
