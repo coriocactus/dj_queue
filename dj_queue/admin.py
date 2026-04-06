@@ -1,1 +1,1 @@
-# Register your models here.
+"""Admin registrations live here in later phases."""
