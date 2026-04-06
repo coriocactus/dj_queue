@@ -34,5 +34,9 @@ target-version = "py312"
 line-length = 99
 indent-width = 2
 
+extend-exclude = [
+  'dj_queue/migrations/*',
+]
+
 [tool.uv]
 exclude-newer = "1 week"
