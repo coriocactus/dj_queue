@@ -14,7 +14,7 @@ dev = [
   "pymysql>=1.1.2",
   "pytest>=9.0.2",
   "pytest-django>=4.12.0",
-  "ruff>=0.15.9",
+  "ruff>=0.15.8",
 ]
 
 [tool.pytest.ini_options]
@@ -30,3 +30,6 @@ markers = [
 target-version = "py312"
 line-length = 99
 indent-width = 2
+
+[tool.uv]
+exclude-newer = "1 week"
