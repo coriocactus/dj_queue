@@ -6,147 +6,257 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
+  initial = True
 
-    initial = True
+  dependencies = []
 
-    dependencies = [
-    ]
-
-    operations = [
-        migrations.CreateModel(
-            name='Job',
-            fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('task_path', models.TextField()),
-                ('queue_name', models.CharField(default='default', max_length=64)),
-                ('priority', models.SmallIntegerField(default=0)),
-                ('payload', models.JSONField(default=dict)),
-                ('backend_name', models.CharField(max_length=64)),
-                ('scheduled_at', models.DateTimeField(blank=True, null=True)),
-                ('concurrency_key', models.CharField(blank=True, max_length=255, null=True)),
-                ('finished_at', models.DateTimeField(blank=True, null=True)),
-                ('return_value', models.JSONField(blank=True, null=True)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('updated_at', models.DateTimeField(auto_now=True)),
-            ],
-            options={
-                'db_table': 'dj_queue_jobs',
-                'indexes': [models.Index(fields=['queue_name', 'finished_at'], name='dj_queue_jo_queue_n_b824ac_idx'), models.Index(fields=['scheduled_at', 'finished_at'], name='dj_queue_jo_schedul_92b51a_idx'), models.Index(fields=['finished_at'], name='dj_queue_jo_finishe_9acb9a_idx')],
-                'constraints': [models.CheckConstraint(condition=models.Q(('priority__gte', -100), ('priority__lte', 100)), name='dj_queue_jobs_priority_range')],
-            },
+  operations = [
+    migrations.CreateModel(
+      name="Job",
+      fields=[
+        (
+          "id",
+          models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False),
         ),
-        migrations.CreateModel(
-            name='FailedExecution',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('exception_class', models.CharField(max_length=255)),
-                ('message', models.TextField(default='')),
-                ('traceback', models.TextField(default='')),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('job', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='failed_execution', to='dj_queue.job')),
-            ],
-            options={
-                'db_table': 'dj_queue_failed_executions',
-            },
+        ("task_path", models.TextField()),
+        ("queue_name", models.CharField(default="default", max_length=64)),
+        ("priority", models.SmallIntegerField(default=0)),
+        ("payload", models.JSONField(default=dict)),
+        ("backend_name", models.CharField(max_length=64)),
+        ("scheduled_at", models.DateTimeField(blank=True, null=True)),
+        ("concurrency_key", models.CharField(blank=True, max_length=255, null=True)),
+        ("finished_at", models.DateTimeField(blank=True, null=True)),
+        ("return_value", models.JSONField(blank=True, null=True)),
+        ("created_at", models.DateTimeField(auto_now_add=True)),
+        ("updated_at", models.DateTimeField(auto_now=True)),
+      ],
+      options={
+        "db_table": "dj_queue_jobs",
+        "indexes": [
+          models.Index(
+            fields=["queue_name", "finished_at"], name="dj_queue_jo_queue_n_b824ac_idx"
+          ),
+          models.Index(
+            fields=["scheduled_at", "finished_at"], name="dj_queue_jo_schedul_92b51a_idx"
+          ),
+          models.Index(fields=["finished_at"], name="dj_queue_jo_finishe_9acb9a_idx"),
+        ],
+        "constraints": [
+          models.CheckConstraint(
+            condition=models.Q(("priority__gte", -100), ("priority__lte", 100)),
+            name="dj_queue_jobs_priority_range",
+          )
+        ],
+      },
+    ),
+    migrations.CreateModel(
+      name="FailedExecution",
+      fields=[
+        (
+          "id",
+          models.BigAutoField(
+            auto_created=True, primary_key=True, serialize=False, verbose_name="ID"
+          ),
         ),
-        migrations.CreateModel(
-            name='Process',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('kind', models.CharField(max_length=32)),
-                ('pid', models.IntegerField()),
-                ('hostname', models.CharField(max_length=255)),
-                ('name', models.CharField(max_length=255)),
-                ('metadata', models.JSONField(default=dict)),
-                ('last_heartbeat_at', models.DateTimeField()),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('supervisor', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='children', to='dj_queue.process')),
-            ],
-            options={
-                'db_table': 'dj_queue_processes',
-            },
+        ("exception_class", models.CharField(max_length=255)),
+        ("message", models.TextField(default="")),
+        ("traceback", models.TextField(default="")),
+        ("created_at", models.DateTimeField(auto_now_add=True)),
+        (
+          "job",
+          models.OneToOneField(
+            on_delete=django.db.models.deletion.CASCADE,
+            related_name="failed_execution",
+            to="dj_queue.job",
+          ),
         ),
-        migrations.CreateModel(
-            name='ClaimedExecution',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('job', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='claimed_execution', to='dj_queue.job')),
-                ('process', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='claimed_executions', to='dj_queue.process')),
-            ],
-            options={
-                'db_table': 'dj_queue_claimed_executions',
-            },
+      ],
+      options={
+        "db_table": "dj_queue_failed_executions",
+      },
+    ),
+    migrations.CreateModel(
+      name="Process",
+      fields=[
+        (
+          "id",
+          models.BigAutoField(
+            auto_created=True, primary_key=True, serialize=False, verbose_name="ID"
+          ),
         ),
-        migrations.CreateModel(
-            name='ReadyExecution',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('queue_name', models.CharField(max_length=64)),
-                ('priority', models.SmallIntegerField()),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('job', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='ready_execution', to='dj_queue.job')),
-            ],
-            options={
-                'db_table': 'dj_queue_ready_executions',
-            },
+        ("kind", models.CharField(max_length=32)),
+        ("pid", models.IntegerField()),
+        ("hostname", models.CharField(max_length=255)),
+        ("name", models.CharField(max_length=255)),
+        ("metadata", models.JSONField(default=dict)),
+        ("last_heartbeat_at", models.DateTimeField()),
+        ("created_at", models.DateTimeField(auto_now_add=True)),
+        (
+          "supervisor",
+          models.ForeignKey(
+            blank=True,
+            null=True,
+            on_delete=django.db.models.deletion.SET_NULL,
+            related_name="children",
+            to="dj_queue.process",
+          ),
         ),
-        migrations.CreateModel(
-            name='ScheduledExecution',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('queue_name', models.CharField(max_length=64)),
-                ('priority', models.SmallIntegerField()),
-                ('scheduled_at', models.DateTimeField()),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('job', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='scheduled_execution', to='dj_queue.job')),
-            ],
-            options={
-                'db_table': 'dj_queue_scheduled_executions',
-            },
+      ],
+      options={
+        "db_table": "dj_queue_processes",
+      },
+    ),
+    migrations.CreateModel(
+      name="ClaimedExecution",
+      fields=[
+        (
+          "id",
+          models.BigAutoField(
+            auto_created=True, primary_key=True, serialize=False, verbose_name="ID"
+          ),
         ),
-        migrations.CreateModel(
-            name='BlockedExecution',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('queue_name', models.CharField(max_length=64)),
-                ('priority', models.SmallIntegerField()),
-                ('concurrency_key', models.CharField(max_length=255)),
-                ('expires_at', models.DateTimeField()),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('job', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='blocked_execution', to='dj_queue.job')),
-            ],
-            options={
-                'db_table': 'dj_queue_blocked_executions',
-                'indexes': [models.Index(fields=['concurrency_key', 'priority', 'id'], name='dj_queue_bl_concurr_1ce730_idx'), models.Index(fields=['expires_at', 'concurrency_key'], name='dj_queue_bl_expires_ea27f7_idx')],
-            },
+        ("created_at", models.DateTimeField(auto_now_add=True)),
+        (
+          "job",
+          models.OneToOneField(
+            on_delete=django.db.models.deletion.CASCADE,
+            related_name="claimed_execution",
+            to="dj_queue.job",
+          ),
         ),
-        migrations.AddIndex(
-            model_name='process',
-            index=models.Index(fields=['name', 'supervisor'], name='dj_queue_pr_name_d374d8_idx'),
+        (
+          "process",
+          models.ForeignKey(
+            blank=True,
+            null=True,
+            on_delete=django.db.models.deletion.SET_NULL,
+            related_name="claimed_executions",
+            to="dj_queue.process",
+          ),
         ),
-        migrations.AddIndex(
-            model_name='process',
-            index=models.Index(fields=['last_heartbeat_at'], name='dj_queue_pr_last_he_813530_idx'),
+      ],
+      options={
+        "db_table": "dj_queue_claimed_executions",
+      },
+    ),
+    migrations.CreateModel(
+      name="ReadyExecution",
+      fields=[
+        (
+          "id",
+          models.BigAutoField(
+            auto_created=True, primary_key=True, serialize=False, verbose_name="ID"
+          ),
         ),
-        migrations.AddConstraint(
-            model_name='process',
-            constraint=models.UniqueConstraint(fields=('name', 'supervisor'), name='dj_queue_processes_name_supervisor_unique'),
+        ("queue_name", models.CharField(max_length=64)),
+        ("priority", models.SmallIntegerField()),
+        ("created_at", models.DateTimeField(auto_now_add=True)),
+        (
+          "job",
+          models.OneToOneField(
+            on_delete=django.db.models.deletion.CASCADE,
+            related_name="ready_execution",
+            to="dj_queue.job",
+          ),
         ),
-        migrations.AddIndex(
-            model_name='claimedexecution',
-            index=models.Index(fields=['process', 'job'], name='dj_queue_cl_process_647400_idx'),
+      ],
+      options={
+        "db_table": "dj_queue_ready_executions",
+      },
+    ),
+    migrations.CreateModel(
+      name="ScheduledExecution",
+      fields=[
+        (
+          "id",
+          models.BigAutoField(
+            auto_created=True, primary_key=True, serialize=False, verbose_name="ID"
+          ),
         ),
-        migrations.AddIndex(
-            model_name='readyexecution',
-            index=models.Index(fields=['priority', 'id'], name='dj_queue_re_priorit_bfc737_idx'),
+        ("queue_name", models.CharField(max_length=64)),
+        ("priority", models.SmallIntegerField()),
+        ("scheduled_at", models.DateTimeField()),
+        ("created_at", models.DateTimeField(auto_now_add=True)),
+        (
+          "job",
+          models.OneToOneField(
+            on_delete=django.db.models.deletion.CASCADE,
+            related_name="scheduled_execution",
+            to="dj_queue.job",
+          ),
         ),
-        migrations.AddIndex(
-            model_name='readyexecution',
-            index=models.Index(fields=['queue_name', 'priority', 'id'], name='dj_queue_re_queue_n_9931e4_idx'),
+      ],
+      options={
+        "db_table": "dj_queue_scheduled_executions",
+      },
+    ),
+    migrations.CreateModel(
+      name="BlockedExecution",
+      fields=[
+        (
+          "id",
+          models.BigAutoField(
+            auto_created=True, primary_key=True, serialize=False, verbose_name="ID"
+          ),
         ),
-        migrations.AddIndex(
-            model_name='scheduledexecution',
-            index=models.Index(fields=['scheduled_at', 'priority', 'id'], name='dj_queue_sc_schedul_7e8dd0_idx'),
+        ("queue_name", models.CharField(max_length=64)),
+        ("priority", models.SmallIntegerField()),
+        ("concurrency_key", models.CharField(max_length=255)),
+        ("expires_at", models.DateTimeField()),
+        ("created_at", models.DateTimeField(auto_now_add=True)),
+        (
+          "job",
+          models.OneToOneField(
+            on_delete=django.db.models.deletion.CASCADE,
+            related_name="blocked_execution",
+            to="dj_queue.job",
+          ),
         ),
-    ]
+      ],
+      options={
+        "db_table": "dj_queue_blocked_executions",
+        "indexes": [
+          models.Index(
+            fields=["concurrency_key", "priority", "id"], name="dj_queue_bl_concurr_1ce730_idx"
+          ),
+          models.Index(
+            fields=["expires_at", "concurrency_key"], name="dj_queue_bl_expires_ea27f7_idx"
+          ),
+        ],
+      },
+    ),
+    migrations.AddIndex(
+      model_name="process",
+      index=models.Index(fields=["name", "supervisor"], name="dj_queue_pr_name_d374d8_idx"),
+    ),
+    migrations.AddIndex(
+      model_name="process",
+      index=models.Index(fields=["last_heartbeat_at"], name="dj_queue_pr_last_he_813530_idx"),
+    ),
+    migrations.AddConstraint(
+      model_name="process",
+      constraint=models.UniqueConstraint(
+        fields=("name", "supervisor"), name="dj_queue_processes_name_supervisor_unique"
+      ),
+    ),
+    migrations.AddIndex(
+      model_name="claimedexecution",
+      index=models.Index(fields=["process", "job"], name="dj_queue_cl_process_647400_idx"),
+    ),
+    migrations.AddIndex(
+      model_name="readyexecution",
+      index=models.Index(fields=["priority", "id"], name="dj_queue_re_priorit_bfc737_idx"),
+    ),
+    migrations.AddIndex(
+      model_name="readyexecution",
+      index=models.Index(
+        fields=["queue_name", "priority", "id"], name="dj_queue_re_queue_n_9931e4_idx"
+      ),
+    ),
+    migrations.AddIndex(
+      model_name="scheduledexecution",
+      index=models.Index(
+        fields=["scheduled_at", "priority", "id"], name="dj_queue_sc_schedul_7e8dd0_idx"
+      ),
+    ),
+  ]
