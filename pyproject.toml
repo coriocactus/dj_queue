@@ -5,11 +5,14 @@ description = "Database-backed task queue backend for Django's django.tasks fram
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+  "croniter>=6.2.2",
   "django>=6.0.3",
+  "pyyaml>=6.0.3",
 ]
 
 [dependency-groups]
 dev = [
+  "cryptography>=46.0.6",
   "psycopg>=3.3.3",
   "pymysql>=1.1.2",
   "pytest>=9.0.2",

@@ -5,6 +5,8 @@ DB_BACKEND = os.environ.get("DB_BACKEND", "sqlite")
 if DB_BACKEND in ("mysql", "mariadb"):
   import pymysql
 
+  pymysql.version_info = (2, 2, 1, "final", 0)
+  pymysql.__version__ = "2.2.1"
   pymysql.install_as_MySQLdb()
 
 _DATABASES = {
@@ -43,6 +45,14 @@ DATABASES = {"default": _DATABASES[DB_BACKEND]}
 INSTALLED_APPS = [
   "dj_queue",
 ]
+
+TASKS = {
+  "default": {
+    "BACKEND": "dj_queue.backend.DjQueueBackend",
+    "QUEUES": [],
+    "OPTIONS": {},
+  },
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
