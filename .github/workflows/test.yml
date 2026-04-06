@@ -52,6 +52,7 @@ jobs:
       - run: uv run pytest
         env:
           DB_BACKEND: postgres
+          DB_PORT: "5432"
 
   mysql:
     name: MySQL ${{ matrix.mysql-version }} / Python ${{ matrix.python-version }}
@@ -84,6 +85,7 @@ jobs:
       - run: uv run pytest
         env:
           DB_BACKEND: mysql
+          DB_PORT: "3306"
 
   mariadb:
     name: MariaDB ${{ matrix.mariadb-version }} / Python ${{ matrix.python-version }}
@@ -116,3 +118,4 @@ jobs:
       - run: uv run pytest
         env:
           DB_BACKEND: mariadb
+          DB_PORT: "3306"

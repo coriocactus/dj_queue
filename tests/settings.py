@@ -1,5 +1,9 @@
 import os
 
+import pymysql
+
+pymysql.install_as_MySQLdb()
+
 DB_BACKEND = os.environ.get("DB_BACKEND", "sqlite")
 
 _DATABASES = {
