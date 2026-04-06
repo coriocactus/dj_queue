@@ -46,6 +46,8 @@ INSTALLED_APPS = [
   "dj_queue",
 ]
 
+DATABASE_ROUTERS = ["dj_queue.routers.DjQueueRouter"]
+
 TASKS = {
   "default": {
     "BACKEND": "dj_queue.backend.DjQueueBackend",
