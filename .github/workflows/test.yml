@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       matrix:
-        python-version: ["3.13"]
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       matrix:
-        python-version: ["3.13"]
+        python-version: ["3.12", "3.13", "3.14"]
         postgres-version: ["16", "17"]
     services:
       postgres:
@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       matrix:
-        python-version: ["3.13"]
+        python-version: ["3.12", "3.13", "3.14"]
         mysql-version: ["8.4"]
     services:
       mysql:
@@ -90,7 +90,7 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       matrix:
-        python-version: ["3.13"]
+        python-version: ["3.12", "3.13", "3.14"]
         mariadb-version: ["10.6"]
     services:
       mariadb:

@@ -13,7 +13,7 @@ _DATABASES = {
         "USER": os.environ.get("DB_USER", "dj_queue"),
         "PASSWORD": os.environ.get("DB_PASSWORD", "dj_queue"),
         "HOST": os.environ.get("DB_HOST", "127.0.0.1"),
-        "PORT": os.environ.get("DB_PORT", "5432"),
+        "PORT": os.environ.get("DB_PORT", "17432"),
     },
     "mysql": {
         "ENGINE": "django.db.backends.mysql",
@@ -21,7 +21,7 @@ _DATABASES = {
         "USER": os.environ.get("DB_USER", "dj_queue"),
         "PASSWORD": os.environ.get("DB_PASSWORD", "dj_queue"),
         "HOST": os.environ.get("DB_HOST", "127.0.0.1"),
-        "PORT": os.environ.get("DB_PORT", "3306"),
+        "PORT": os.environ.get("DB_PORT", "17312"),
     },
     "mariadb": {
         "ENGINE": "django.db.backends.mysql",
@@ -29,7 +29,7 @@ _DATABASES = {
         "USER": os.environ.get("DB_USER", "dj_queue"),
         "PASSWORD": os.environ.get("DB_PASSWORD", "dj_queue"),
         "HOST": os.environ.get("DB_HOST", "127.0.0.1"),
-        "PORT": os.environ.get("DB_PORT", "3307"),
+        "PORT": os.environ.get("DB_PORT", "17306"),
     },
 }
 

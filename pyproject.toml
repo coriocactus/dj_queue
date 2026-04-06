@@ -3,7 +3,7 @@ name = "dj-queue"
 version = "0.1.0"
 description = "Database-backed task queue backend for Django's django.tasks framework"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "django>=6.0.3",
 ]
@@ -25,5 +25,5 @@ markers = [
 ]
 
 [tool.ruff]
-target-version = "py313"
+target-version = "py312"
 line-length = 120
