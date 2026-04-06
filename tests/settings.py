@@ -1,10 +1,11 @@
 import os
 
-import pymysql
-
-pymysql.install_as_MySQLdb()
-
 DB_BACKEND = os.environ.get("DB_BACKEND", "sqlite")
+
+if DB_BACKEND in ("mysql", "mariadb"):
+    import pymysql
+
+    pymysql.install_as_MySQLdb()
 
 _DATABASES = {
     "sqlite": {
