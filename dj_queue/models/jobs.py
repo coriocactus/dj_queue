@@ -1,11 +1,41 @@
 import uuid
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import models
 from django.db.models import Q
 
+JOB_STATUS_RELATIONS = (
+  ("ready", "ready_execution"),
+  ("scheduled", "scheduled_execution"),
+  ("claimed", "claimed_execution"),
+  ("blocked", "blocked_execution"),
+  ("failed", "failed_execution"),
+)
+
+
+class JobQuerySet(models.QuerySet):
+  def ready(self):
+    return self.filter(ready_execution__isnull=False)
+
+  def scheduled(self):
+    return self.filter(scheduled_execution__isnull=False)
+
+  def claimed(self):
+    return self.filter(claimed_execution__isnull=False)
+
+  def blocked(self):
+    return self.filter(blocked_execution__isnull=False)
+
+  def failed(self):
+    return self.filter(failed_execution__isnull=False)
+
+  def finished(self):
+    return self.filter(finished_at__isnull=False)
+
 
 class Job(models.Model):
+  objects = JobQuerySet.as_manager()
+
   id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
   task_path = models.TextField()
   queue_name = models.CharField(max_length=64, default="default")
@@ -32,6 +62,47 @@ class Job(models.Model):
       models.Index(fields=["scheduled_at", "finished_at"]),
       models.Index(fields=["finished_at"]),
     ]
+
+  @property
+  def status(self):
+    if self.finished_at is not None:
+      return "finished"
+
+    for status_name, relation_name in JOB_STATUS_RELATIONS:
+      if self._has_state_relation(relation_name):
+        return status_name
+    return None
+
+  @property
+  def ready(self):
+    return self.status == "ready"
+
+  @property
+  def scheduled(self):
+    return self.status == "scheduled"
+
+  @property
+  def claimed(self):
+    return self.status == "claimed"
+
+  @property
+  def blocked(self):
+    return self.status == "blocked"
+
+  @property
+  def failed(self):
+    return self.status == "failed"
+
+  @property
+  def finished(self):
+    return self.status == "finished"
+
+  def _has_state_relation(self, relation_name):
+    try:
+      getattr(self, relation_name)
+    except ObjectDoesNotExist:
+      return False
+    return True
 
 
 class ReadyExecution(models.Model):
