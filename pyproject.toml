@@ -18,6 +18,11 @@ dev = [
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "tests.settings"
 pythonpath = ["."]
+markers = [
+    "postgres: requires PostgreSQL",
+    "mysql: requires MySQL 8+",
+    "mariadb: requires MariaDB 10.6+",
+]
 
 [tool.ruff]
 target-version = "py313"

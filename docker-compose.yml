@@ -1,0 +1,29 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: dj_queue_test
+      POSTGRES_USER: dj_queue
+      POSTGRES_PASSWORD: dj_queue
+    ports:
+      - "5432:5432"
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: dj_queue_test
+      MYSQL_USER: dj_queue
+      MYSQL_PASSWORD: dj_queue
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3306:3306"
+
+  mariadb:
+    image: mariadb:10.6
+    environment:
+      MARIADB_DATABASE: dj_queue_test
+      MARIADB_USER: dj_queue
+      MARIADB_PASSWORD: dj_queue
+      MARIADB_ROOT_PASSWORD: root
+    ports:
+      - "3307:3306"
