@@ -4,26 +4,63 @@ import os
 import subprocess
 import sys
 import threading
+import time
 
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+DB_SERVICES = ["mysql", "mariadb", "postgres"]
+
 
 def start_services():
-  services = ["mysql", "mariadb", "postgres"]
-  for svc in services:
+  needed = []
+  for svc in DB_SERVICES:
     result = subprocess.run(
-      ["docker", "compose", "ps", svc, "--status", "running", "--format", "{{.Names}}"],
+      ["docker", "compose", "ps", svc, "--format", "{{.Health}}"],
       capture_output=True,
       text=True,
     )
-    if not result.stdout.strip():
-      print(f"Starting {svc}...")
-      subprocess.run(["docker", "compose", "up", "-d", svc], check=True)
+    if result.stdout.strip().lower() != "healthy":
+      needed.append(svc)
+  if needed:
+    print(f"Starting {', '.join(needed)}...")
+    subprocess.run(
+      ["docker", "compose", "up", "-d", *needed],
+      check=True,
+      stdout=subprocess.DEVNULL,
+      stderr=subprocess.DEVNULL,
+    )
+
+
+def wait_for_healthy(timeout=60):
+  """Wait until all db services report healthy via docker compose."""
+  deadline = time.monotonic() + timeout
+  pending = set(DB_SERVICES)
+  while pending and time.monotonic() < deadline:
+    for svc in list(pending):
+      result = subprocess.run(
+        ["docker", "compose", "ps", svc, "--format", "{{.Health}}"],
+        capture_output=True,
+        text=True,
+      )
+      if result.stdout.strip().lower() == "healthy":
+        pending.discard(svc)
+    if pending:
+      time.sleep(1)
+  if pending:
+    print(f"\033[31mTimed out waiting for: {', '.join(sorted(pending))}\033[0m")
+    sys.exit(1)
+
+
+# states for progress line display
+STREAMING = 0  # normal: show current line
+JOINING = 1    # saw [100%], waiting to see if next line is summary or failures
+SUMMARY = 2    # showing summary line, freeze on next newline
+FROZEN = 3     # done updating the progress line
 
 
 def run_tests(backend, idx, backends_count, lock, results):
   proc = subprocess.Popen(
-    ["pytest", "-q", "--color=yes"],
+    ["pytest", "-q", "--color=yes", "--tb=short"],
     env={**os.environ, "DB_BACKEND": backend, "PYTHONUNBUFFERED": "1"},
     stdout=subprocess.PIPE,
     stderr=subprocess.STDOUT,
@@ -33,6 +70,7 @@ def run_tests(backend, idx, backends_count, lock, results):
   line_buf = []
   full_output = []
   in_escape = False
+  state = STREAMING
 
   while True:
     char = proc.stdout.read(1)
@@ -41,10 +79,26 @@ def run_tests(backend, idx, backends_count, lock, results):
 
     full_output.append(char)
 
+    if state == FROZEN:
+      continue
+
     if char in ("\n", "\r"):
-      char = " "
+      if state == JOINING:
+        # after [100%], join the next line onto the progress bar
+        line_buf.append(" ")
+        state = SUMMARY
+        continue
+      if state == SUMMARY:
+        state = FROZEN
+      line_buf.clear()
+      continue
 
     if char == " " and line_buf and line_buf[-1] == " ":
+      continue
+
+    # first visible char after joining — check if it's failures header
+    if state == SUMMARY and not in_escape and char == "=":
+      state = FROZEN
       continue
 
     line_buf.append(char)
@@ -56,17 +110,26 @@ def run_tests(backend, idx, backends_count, lock, results):
 
     if not in_escape:
       line_str = "".join(line_buf)
+      if state == STREAMING and "[100%]" in line_str:
+        state = JOINING
       with lock:
         offset = backends_count - idx
         sys.stdout.write(f"\033[{offset}A\033[2K\r[{backend}] {line_str}\033[{offset}B\r")
         sys.stdout.flush()
 
   exit_code = proc.wait()
-  results[backend] = (exit_code, "".join(full_output))
+  output = "".join(full_output)
+  # strip progress dots, keep from first === separator onward
+  for i, line in enumerate(output.splitlines(True)):
+    if line.startswith("==="):
+      output = "".join(output.splitlines(True)[i:])
+      break
+  results[backend] = (exit_code, output)
 
 
 def main():
   start_services()
+  wait_for_healthy()
 
   backends = ["sqlite", "mysql", "mariadb", "postgres"]
   lock = threading.Lock()
@@ -97,10 +160,14 @@ def main():
     code, out = results.get(backend, (1, ""))
     if code != 0:
       failed = True
-      print(f"\n\033[31m{'=' * 20} {backend} ERRORS {'=' * 20}\033[0m")
-      print(out)
 
   if failed:
+    for backend in backends:
+      code, out = results.get(backend, (1, ""))
+      if code != 0:
+        print(f"\n\033[31m── {backend} {'─' * (55 - len(backend))}\033[0m")
+        print(out.rstrip())
+    print()
     sys.exit(1)
 
 

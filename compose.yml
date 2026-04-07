@@ -7,6 +7,11 @@ services:
       POSTGRES_PASSWORD: dj_queue
     ports:
       - "17432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dj_queue -d dj_queue_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
 
   mysql:
     image: mysql:8.4
@@ -17,6 +22,11 @@ services:
       MYSQL_ROOT_PASSWORD: root
     ports:
       - "17312:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysql -u dj_queue -pdj_queue -e 'SELECT 1' dj_queue_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
 
   mariadb:
     image: mariadb:10.6
@@ -27,3 +37,8 @@ services:
       MARIADB_ROOT_PASSWORD: root
     ports:
       - "17306:3306"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
