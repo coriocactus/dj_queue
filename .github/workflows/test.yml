@@ -53,10 +53,10 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
+          --health-cmd "pg_isready -U dj_queue -d dj_queue_test"
+          --health-interval 2s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 15
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v8.0.0
@@ -87,10 +87,10 @@ jobs:
         ports:
           - 3306:3306
         options: >-
-          --health-cmd "mysqladmin ping -h 127.0.0.1"
-          --health-interval 10s
+          --health-cmd "mysql -u dj_queue -pdj_queue -e 'SELECT 1' dj_queue_test"
+          --health-interval 2s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 15
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v8.0.0
@@ -121,10 +121,10 @@ jobs:
         ports:
           - 3306:3306
         options: >-
-          --health-cmd "mariadb-admin ping -h 127.0.0.1"
-          --health-interval 10s
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 2s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 15
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v8.0.0
