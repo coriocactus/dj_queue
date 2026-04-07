@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.12"
 
 [options]
-exclude-newer = "2026-03-30T14:44:42.584562Z"
+exclude-newer = "2026-03-31T16:30:21.238685Z"
 exclude-newer-span = "P1W"
 
 [[package]]
@@ -169,7 +169,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "croniter", specifier = ">=6.2.2" },
-    { name = "django", specifier = ">=6.0.3" },
+    { name = "django", specifier = ">=6.0.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
 ]
 
