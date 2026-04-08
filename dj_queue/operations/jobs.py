@@ -27,6 +27,7 @@ from dj_queue.operations.concurrency import (
   semaphore_release,
   unblock_next_blocked_job,
 )
+from dj_queue.runtime import notify as runtime_notify
 
 
 def enqueue_job(task, args, kwargs, *, backend_alias="default"):
@@ -44,7 +45,10 @@ def enqueue_job(task, args, kwargs, *, backend_alias="default"):
       scheduled_at=task.run_after,
       concurrency_key=concurrency_key,
     )
-    _dispatch_job(job, task=task, backend_alias=backend_alias)
+    dispatched_as = _dispatch_job(job, task=task, backend_alias=backend_alias)
+
+  if dispatched_as == "ready":
+    runtime_notify.notify_ready_queues((job.queue_name,), backend_alias=backend_alias)
 
   log_event(
     "job.enqueued",
@@ -198,7 +202,9 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
       pk__in=[row.pk for row in scheduled_rows]
     ).delete()
     for job in jobs:
-      _dispatch_existing_job(job)
+      dispatched_as = _dispatch_existing_job(job)
+      if dispatched_as == "ready":
+        runtime_notify.notify_ready_queues((job.queue_name,), backend_alias=backend_alias)
     return jobs
 
 
@@ -212,7 +218,10 @@ def retry_failed_job(job_id, *, backend_alias="default"):
     job.return_value = None
     job.finished_at = None
     job.save(using=alias, update_fields=["return_value", "finished_at", "updated_at"])
-    _dispatch_existing_job(job)
+    dispatched_as = _dispatch_existing_job(job)
+
+  if dispatched_as == "ready":
+    runtime_notify.notify_ready_queues((job.queue_name,), backend_alias=backend_alias)
 
   log_event("job.retried", job_id=str(job.id), queue_name=job.queue_name, priority=job.priority)
   return job
@@ -277,7 +286,7 @@ def discard_blocked_jobs(*, job_ids=None, batch_size=500, backend_alias="default
 
 def _dispatch_existing_job(job):
   task = import_string(job.task_path)
-  _dispatch_job(job, task=task, backend_alias=job.backend_name)
+  return _dispatch_job(job, task=task, backend_alias=job.backend_name)
 
 
 def _dispatch_job(job, *, task, backend_alias):

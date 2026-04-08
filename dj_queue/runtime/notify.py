@@ -9,6 +9,10 @@ class NoopWakeupBackend:
     return None
 
 
+def notify_ready_queues(queue_names, *, backend_alias="default"):
+  return None
+
+
 def build_wakeup_backend(*, backend_alias="default", queues=(), wake_up=None):
   alias = get_database_alias(backend_alias)
   if supports_listen_notify(alias):

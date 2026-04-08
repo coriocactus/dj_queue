@@ -8,6 +8,7 @@ from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias, locked_queryset
 from dj_queue.log import log_event
 from dj_queue.models import BlockedExecution, ReadyExecution, Semaphore
+from dj_queue.runtime import notify as runtime_notify
 
 
 def semaphore_acquire(
@@ -109,6 +110,7 @@ def unblock_next_blocked_job(
     job_id=str(job.id),
     concurrency_key=key,
   )
+  runtime_notify.notify_ready_queues((job.queue_name,), backend_alias=backend_alias)
   return job
 
 
@@ -173,4 +175,5 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
 
   for job in promoted_jobs:
     log_event("job.unblocked", job_id=str(job.id), concurrency_key=job.concurrency_key)
+    runtime_notify.notify_ready_queues((job.queue_name,), backend_alias=backend_alias)
   return promoted_jobs
