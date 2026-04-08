@@ -8,7 +8,12 @@ from dj_queue.models import Job
 
 
 def clear_finished_jobs(
-  *, older_than=None, task_path=None, batch_size=500, backend_alias="default"
+  *,
+  older_than=None,
+  task_path=None,
+  batch_size=500,
+  backend_alias="default",
+  now=None,
 ):
   config = load_backend_config(backend_alias)
   if older_than is None:
@@ -17,7 +22,9 @@ def clear_finished_jobs(
     return 0
 
   alias = get_database_alias(backend_alias)
-  cutoff = timezone.now() - timedelta(seconds=older_than)
+  if now is None:
+    now = timezone.now()
+  cutoff = now - timedelta(seconds=older_than)
   queryset = Job.objects.using(alias).filter(finished_at__lt=cutoff).order_by("finished_at", "id")
   if task_path is not None:
     queryset = queryset.filter(task_path=task_path)
