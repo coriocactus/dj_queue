@@ -1,3 +1,5 @@
+import time
+
 from django.tasks import task
 
 
@@ -9,6 +11,11 @@ def echo(value=None):
 @task
 def add(left, right):
   return left + right
+
+
+@task
+def fail(value=None):
+  raise ValueError(value or "boom")
 
 
 @task(queue_name="other")
@@ -40,3 +47,18 @@ limited_discard.func.on_conflict = "discard"
 @task
 async def async_echo(value=None):
   return value
+
+
+@task(takes_context=True)
+def with_context(context, value=None):
+  return {
+    "job_id": context.task_result.id,
+    "attempt": context.attempt,
+    "value": value,
+  }
+
+
+@task
+def sleep_for(seconds):
+  time.sleep(seconds)
+  return seconds

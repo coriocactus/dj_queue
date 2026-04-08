@@ -1,9 +1,11 @@
 import inspect
 import json
+import traceback
 from datetime import timedelta
 
 from django.db import transaction
 from django.db.models import Q
+from django.tasks import TaskContext, TaskResult, TaskResultStatus
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
@@ -82,9 +84,12 @@ def claim_ready_jobs(
     queryset = ReadyExecution.objects.using(alias).select_related("job")
     if paused_queue_names:
       queryset = queryset.exclude(queue_name__in=paused_queue_names)
-    queryset = _filter_queue_selectors(queryset, queues)
-    queryset = queryset.order_by("-priority", "id")
-    ready_rows = list(locked_queryset(queryset, use_skip_locked=use_skip_locked)[:limit])
+    ready_rows = _select_ready_rows(
+      queryset,
+      limit=limit,
+      queues=queues,
+      use_skip_locked=use_skip_locked,
+    )
     if not ready_rows:
       return []
 
@@ -96,6 +101,33 @@ def claim_ready_jobs(
   for job in jobs:
     log_event("job.claimed", job_id=str(job.id), queue_name=job.queue_name, priority=job.priority)
   return jobs
+
+
+def execute_claimed_job(job_id, *, backend_alias="default"):
+  alias = get_database_alias(backend_alias)
+  claimed = (
+    ClaimedExecution.objects.using(alias).select_related("job", "process").get(job_id=job_id)
+  )
+  job = claimed.job
+
+  try:
+    task = import_string(job.task_path)
+    args = list(job.payload.get("args", []))
+    kwargs = dict(job.payload.get("kwargs", {}))
+    if task.takes_context:
+      context = TaskContext(task_result=_task_result_for_claimed_job(task, claimed))
+      return_value = task.call(context, *args, **kwargs)
+    else:
+      return_value = task.call(*args, **kwargs)
+  except Exception as exc:
+    return fail_claimed_job(
+      job.id,
+      exc,
+      traceback_text=traceback.format_exc(),
+      backend_alias=job.backend_name,
+    )
+
+  return complete_claimed_job(job.id, return_value, backend_alias=job.backend_name)
 
 
 def complete_claimed_job(job_id, return_value, *, backend_alias="default"):
@@ -388,6 +420,29 @@ def _filter_queue_selectors(queryset, queues):
   return queryset.filter(condition)
 
 
+def _select_ready_rows(queryset, *, limit, queues, use_skip_locked):
+  if queues in (None, (), "*", ["*"], ("*",)):
+    ordered = queryset.order_by("-priority", "id")
+    return list(locked_queryset(ordered, use_skip_locked=use_skip_locked)[:limit])
+
+  selectors = (queues,) if isinstance(queues, str) else tuple(queues)
+  selected_rows = []
+  selected_ids = set()
+
+  for selector in selectors:
+    remaining = limit - len(selected_rows)
+    if remaining <= 0:
+      break
+
+    ordered = queryset.exclude(pk__in=selected_ids).order_by("-priority", "id")
+    filtered = _filter_queue_selectors(ordered, selector)
+    rows = list(locked_queryset(filtered, use_skip_locked=use_skip_locked)[:remaining])
+    selected_rows.extend(rows)
+    selected_ids.update(row.pk for row in rows)
+
+  return selected_rows
+
+
 def _normalize_payload(args, kwargs):
   try:
     return json.loads(json.dumps({"args": list(args), "kwargs": dict(kwargs)}))
@@ -403,3 +458,24 @@ def _task_option(task, name, default=None):
 
 def _exception_path(error):
   return f"{error.__class__.__module__}.{error.__class__.__qualname__}"
+
+
+def _task_result_for_claimed_job(task, claimed):
+  worker_ids = []
+  if claimed.process_id is not None:
+    worker_ids = [claimed.process.name]
+
+  return TaskResult(
+    task=task,
+    id=str(claimed.job.id),
+    status=TaskResultStatus.RUNNING,
+    enqueued_at=claimed.job.created_at,
+    started_at=claimed.created_at,
+    finished_at=None,
+    last_attempted_at=claimed.created_at,
+    args=claimed.job.payload.get("args", []),
+    kwargs=claimed.job.payload.get("kwargs", {}),
+    backend=claimed.job.backend_name,
+    errors=[],
+    worker_ids=worker_ids,
+  )

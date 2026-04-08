@@ -53,9 +53,9 @@ def wait_for_healthy(timeout=60):
 
 # states for progress line display
 STREAMING = 0  # normal: show current line
-JOINING = 1    # saw [100%], waiting to see if next line is summary or failures
-SUMMARY = 2    # showing summary line, freeze on next newline
-FROZEN = 3     # done updating the progress line
+JOINING = 1  # saw [100%], waiting to see if next line is summary or failures
+SUMMARY = 2  # showing summary line, freeze on next newline
+FROZEN = 3  # done updating the progress line
 
 
 def run_tests(backend, idx, backends_count, lock, results):

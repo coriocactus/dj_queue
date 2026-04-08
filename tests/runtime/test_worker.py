@@ -1,0 +1,293 @@
+import time
+from concurrent.futures import Future
+from uuid import uuid4
+
+import pytest
+
+from dj_queue.config import WorkerConfig
+from dj_queue.models import ClaimedExecution, FailedExecution, Job, Process, ReadyExecution
+from dj_queue.runtime.worker import Worker
+from tests.tasks import echo, fail, with_context
+
+pytestmark = pytest.mark.django_db(transaction=True)
+
+
+class InlinePool:
+  def __init__(self, max_workers):
+    self.max_workers = max_workers
+    self.idle_capacity = max_workers
+    self.shutdown_timeout = None
+
+  def submit(self, fn, *args, **kwargs):
+    future = Future()
+    try:
+      future.set_result(fn(*args, **kwargs))
+    except Exception as exc:
+      future.set_exception(exc)
+    return future
+
+  def shutdown(self, timeout):
+    self.shutdown_timeout = timeout
+    return True
+
+
+class FakeSleeper:
+  def __init__(self):
+    self.wake_count = 0
+
+  def wake_up(self):
+    self.wake_count += 1
+
+
+class FakeWakeupBackend:
+  def __init__(self):
+    self.started = 0
+    self.stopped = 0
+
+  def start(self):
+    self.started += 1
+
+  def stop(self):
+    self.stopped += 1
+
+
+def make_ready_job(task=echo, **overrides):
+  payload = {
+    "args": list(overrides.pop("args", [])),
+    "kwargs": dict(overrides.pop("kwargs", {})),
+  }
+  payload.update(overrides.pop("payload", {}))
+
+  job = Job.objects.create(
+    task_path=overrides.pop("task_path", task.module_path),
+    queue_name=overrides.pop("queue_name", task.queue_name),
+    priority=overrides.pop("priority", task.priority),
+    payload=payload,
+    backend_name=overrides.pop("backend_name", task.backend),
+    scheduled_at=overrides.pop("scheduled_at", None),
+    concurrency_key=overrides.pop("concurrency_key", None),
+    finished_at=overrides.pop("finished_at", None),
+    return_value=overrides.pop("return_value", None),
+    **overrides,
+  )
+  ReadyExecution.objects.create(job=job, queue_name=job.queue_name, priority=job.priority)
+  return job
+
+
+def wait_until(predicate, timeout=1):
+  deadline = time.monotonic() + timeout
+  while time.monotonic() < deadline:
+    if predicate():
+      return
+    time.sleep(0.01)
+  assert predicate()
+
+
+def make_worker(config=None, **overrides):
+  if config is None:
+    config = WorkerConfig(queues=("*",), threads=1, processes=1, polling_interval=0.1)
+  return Worker(
+    config,
+    backend_alias=overrides.pop("backend_alias", "default"),
+    name=overrides.pop("name", f"worker-{uuid4()}"),
+    pid=overrides.pop("pid", 12345),
+    hostname=overrides.pop("hostname", "localhost"),
+    sleeper=overrides.pop("sleeper", FakeSleeper()),
+    pool=overrides.pop("pool", InlinePool(config.threads)),
+    wakeup_backend=overrides.pop("wakeup_backend", FakeWakeupBackend()),
+  )
+
+
+def test_worker_registers_process_with_metadata():
+  config = WorkerConfig(queues=("alpha", "beta*"), threads=2, processes=1, polling_interval=0.25)
+  worker = make_worker(config=config, name="worker-1", pid=101, hostname="host")
+
+  process = worker.start()
+
+  assert process.kind == "Worker"
+  assert process.name == "worker-1"
+  assert process.pid == 101
+  assert process.hostname == "host"
+  assert process.metadata == {
+    "queues": ["alpha", "beta*"],
+    "threads": 2,
+    "polling_interval": 0.25,
+  }
+
+  worker.stop()
+  assert Process.objects.filter(pk=process.pk).exists() is False
+
+
+def test_worker_claims_highest_priority_first():
+  low = make_ready_job(args=["low"], priority=0)
+  high = make_ready_job(args=["high"], priority=10)
+  worker = make_worker()
+  worker.start()
+
+  claimed_jobs = worker.poll_once()
+
+  assert [job.id for job in claimed_jobs] == [high.id]
+  assert ClaimedExecution.objects.filter(job=high).exists() is False
+  assert ReadyExecution.objects.filter(job=low).exists() is True
+  worker.stop()
+
+
+def test_worker_respects_ordered_queue_list():
+  alpha = make_ready_job(queue_name="alpha", priority=0)
+  make_ready_job(queue_name="beta", priority=10)
+  worker = make_worker(
+    config=WorkerConfig(queues=("alpha", "beta"), threads=1, processes=1, polling_interval=0.1)
+  )
+  worker.start()
+
+  claimed_jobs = worker.poll_once()
+
+  assert [job.id for job in claimed_jobs] == [alpha.id]
+  worker.stop()
+
+
+def test_worker_executes_success_path():
+  job = make_ready_job(args=["done"])
+  worker = make_worker()
+  worker.start()
+
+  worker.poll_once()
+
+  fresh_job = Job.objects.get(pk=job.pk)
+  assert fresh_job.finished_at is not None
+  assert fresh_job.return_value == "done"
+  assert ClaimedExecution.objects.filter(job=job).exists() is False
+  worker.stop()
+
+
+def test_worker_executes_failure_path():
+  job = make_ready_job(task=fail, args=["boom"])
+  worker = make_worker()
+  worker.start()
+
+  worker.poll_once()
+
+  failed_execution = FailedExecution.objects.get(job=job)
+  assert failed_execution.message == "boom"
+  assert "ValueError" in failed_execution.traceback
+  assert ClaimedExecution.objects.filter(job=job).exists() is False
+  worker.stop()
+
+
+def test_worker_provides_task_context():
+  job = make_ready_job(task=with_context, args=["ctx"])
+  worker = make_worker()
+  worker.start()
+
+  worker.poll_once()
+
+  fresh_job = Job.objects.get(pk=job.pk)
+  assert fresh_job.return_value == {
+    "job_id": str(job.id),
+    "attempt": 1,
+    "value": "ctx",
+  }
+  worker.stop()
+
+
+def test_worker_preserves_finished_job_when_enabled():
+  job = make_ready_job(args=["keep"])
+  worker = make_worker()
+  worker.start()
+
+  worker.poll_once()
+
+  assert Job.objects.filter(pk=job.pk).exists() is True
+  assert Job.objects.get(pk=job.pk).finished_at is not None
+  worker.stop()
+
+
+def test_worker_deletes_finished_job_when_preserve_disabled(settings):
+  settings.TASKS = {
+    **settings.TASKS,
+    "default": {
+      **settings.TASKS["default"],
+      "OPTIONS": {
+        **settings.TASKS["default"]["OPTIONS"],
+        "preserve_finished_jobs": False,
+      },
+    },
+  }
+  job = make_ready_job(args=["gone"])
+  worker = make_worker()
+  worker.start()
+
+  worker.poll_once()
+
+  assert Job.objects.filter(pk=job.pk).exists() is False
+  worker.stop()
+
+
+def test_worker_repolls_immediately_when_pool_frees_capacity():
+  sleeper = FakeSleeper()
+  worker = Worker(
+    WorkerConfig(queues=("*",), threads=1, processes=1, polling_interval=0.1),
+    name="worker-repoll",
+    pid=12345,
+    hostname="localhost",
+    sleeper=sleeper,
+  )
+  make_ready_job(args=["wake"])
+  worker.start()
+  worker._execute_job = lambda job_id: time.sleep(0.05)
+
+  worker.poll_once()
+  wait_until(lambda: sleeper.wake_count > 0)
+
+  worker.stop()
+
+
+def test_worker_uses_wakeup_backend_without_changing_correctness():
+  job = make_ready_job(args=["wakeup"])
+  wakeup_backend = FakeWakeupBackend()
+  worker = make_worker(wakeup_backend=wakeup_backend)
+
+  worker.start()
+  worker.poll_once()
+  worker.stop()
+
+  assert wakeup_backend.started == 1
+  assert wakeup_backend.stopped == 1
+  assert Job.objects.get(pk=job.pk).return_value == "wakeup"
+
+
+def test_worker_graceful_shutdown_drains_pool():
+  worker = Worker(
+    WorkerConfig(queues=("*",), threads=1, processes=1, polling_interval=0.1),
+    name="worker-shutdown",
+    pid=12345,
+    hostname="localhost",
+  )
+  make_ready_job(args=["slow"])
+  worker.start()
+  worker._execute_job = lambda job_id: time.sleep(0.05)
+
+  worker.poll_once()
+  started_at = time.monotonic()
+  drained = worker.stop(timeout=1)
+  elapsed = time.monotonic() - started_at
+
+  assert drained is True
+  assert elapsed >= 0.04
+  assert Process.objects.filter(name="worker-shutdown").exists() is False
+
+
+def test_worker_missing_task_path_fails_job_cleanly():
+  job = make_ready_job(task_path="tests.tasks.missing")
+  worker = make_worker()
+  worker.start()
+
+  worker.poll_once()
+
+  failed_execution = FailedExecution.objects.get(job=job)
+  assert (
+    "No module named" in failed_execution.traceback
+    or "has no attribute" in failed_execution.traceback
+  )
+  assert ClaimedExecution.objects.filter(job=job).exists() is False
+  worker.stop()
