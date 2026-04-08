@@ -1,7 +1,6 @@
 import pytest
 from django.core.management import call_command
 from django.db import connections
-from django.test import override_settings
 
 from dj_queue.models import Job
 from dj_queue.routers import DjQueueRouter
@@ -36,16 +35,6 @@ def _sqlite_databases(tmp_path):
   }
 
 
-def _reset_connections():
-  aliases = list(connections)
-  connections.close_all()
-  for alias in aliases:
-    if hasattr(connections._connections, alias):
-      delattr(connections._connections, alias)
-  connections.__dict__.pop("settings", None)
-  connections._settings = None
-
-
 def _make_job():
   return Job.objects.create(
     task_path="tests.tasks.example",
@@ -67,42 +56,36 @@ def _dj_queue_tables(alias):
   }
 
 
-def test_router_directs_reads_and_writes_to_queue_db(tmp_path, django_db_blocker):
-  with override_settings(
-    DATABASES=_sqlite_databases(tmp_path),
-    TASKS=_queue_tasks(),
-  ):
-    _reset_connections()
-    try:
-      with django_db_blocker.unblock():
-        call_command("migrate", "dj_queue", database="queue", interactive=False, verbosity=0)
+def test_router_directs_reads_and_writes_to_queue_db(
+  tmp_path, django_db_blocker, queue_test_settings
+):
+  queue_test_settings(databases=_sqlite_databases(tmp_path), tasks=_queue_tasks())
 
-        job = _make_job()
-        fetched_job = Job.objects.get(pk=job.pk)
+  with django_db_blocker.unblock():
+    call_command("migrate", "dj_queue", database="queue", interactive=False, verbosity=0)
 
-        assert job._state.db == "queue"
-        assert fetched_job._state.db == "queue"
-        assert Job.objects.using("queue").filter(pk=job.pk).exists() is True
-        assert _dj_queue_tables("default") == set()
-    finally:
-      _reset_connections()
+    job = _make_job()
+    fetched_job = Job.objects.get(pk=job.pk)
+
+    assert job._state.db == "queue"
+    assert fetched_job._state.db == "queue"
+    assert Job.objects.using("queue").filter(pk=job.pk).exists() is True
+    assert _dj_queue_tables("default") == set()
 
 
-def test_router_allows_queue_migrations_only_on_queue_db(tmp_path, django_db_blocker):
-  with override_settings(
-    DATABASES=_sqlite_databases(tmp_path),
-    TASKS=_queue_tasks(),
-  ):
-    _reset_connections()
-    try:
-      with django_db_blocker.unblock():
-        call_command("migrate", "dj_queue", database="queue", interactive=False, verbosity=0)
+def test_router_allows_queue_migrations_only_on_queue_db(
+  tmp_path,
+  django_db_blocker,
+  queue_test_settings,
+):
+  queue_test_settings(databases=_sqlite_databases(tmp_path), tasks=_queue_tasks())
 
-        router = DjQueueRouter()
+  with django_db_blocker.unblock():
+    call_command("migrate", "dj_queue", database="queue", interactive=False, verbosity=0)
 
-        assert router.allow_migrate("queue", "dj_queue") is True
-        assert router.allow_migrate("default", "dj_queue") is False
-        assert "dj_queue_jobs" in _dj_queue_tables("queue")
-        assert _dj_queue_tables("default") == set()
-    finally:
-      _reset_connections()
+    router = DjQueueRouter()
+
+    assert router.allow_migrate("queue", "dj_queue") is True
+    assert router.allow_migrate("default", "dj_queue") is False
+    assert "dj_queue_jobs" in _dj_queue_tables("queue")
+    assert _dj_queue_tables("default") == set()
