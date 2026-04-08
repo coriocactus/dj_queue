@@ -37,7 +37,10 @@ class DjQueueBackend(BaseTaskBackend):
       jobs.append((task, args, kwargs))
 
     created_jobs = enqueue_jobs_bulk(jobs, backend_alias=self.alias)
-    return [self.get_result(str(job.id)) for job in created_jobs]
+    return [
+      _task_result_from_enqueued_job(job, task, dispatched_as)
+      for job, task, dispatched_as in created_jobs
+    ]
 
   def get_result(self, result_id):
     alias = get_database_alias(self.alias)
@@ -121,6 +124,37 @@ def _task_result_from_job(job):
     backend=job.backend_name,
     errors=errors,
     worker_ids=worker_ids,
+  )
+  if status == TaskResultStatus.SUCCESSFUL:
+    object.__setattr__(result, "_return_value", job.return_value)
+  return result
+
+
+def _task_result_from_enqueued_job(job, task, dispatched_as):
+  if hasattr(task, "using"):
+    task = task.using(
+      priority=job.priority,
+      queue_name=job.queue_name,
+      run_after=job.scheduled_at,
+      backend=job.backend_name,
+    )
+
+  status = TaskResultStatus.SUCCESSFUL if dispatched_as == "discarded" else TaskResultStatus.READY
+  finished_at = job.finished_at if status == TaskResultStatus.SUCCESSFUL else None
+
+  result = TaskResult(
+    task=task,
+    id=str(job.id),
+    status=status,
+    enqueued_at=job.created_at,
+    started_at=None,
+    finished_at=finished_at,
+    last_attempted_at=None,
+    args=job.payload.get("args", []),
+    kwargs=job.payload.get("kwargs", {}),
+    backend=job.backend_name,
+    errors=[],
+    worker_ids=[],
   )
   if status == TaskResultStatus.SUCCESSFUL:
     object.__setattr__(result, "_return_value", job.return_value)

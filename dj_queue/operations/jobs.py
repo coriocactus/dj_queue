@@ -3,7 +3,7 @@ import json
 import traceback
 from datetime import timedelta
 
-from django.db import transaction
+from django.db import connections, transaction
 from django.db.models import Q
 from django.tasks import TaskContext, TaskResult, TaskResultStatus
 from django.utils import timezone
@@ -61,10 +61,95 @@ def enqueue_job(task, args, kwargs, *, backend_alias="default"):
 
 
 def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
-  return [
-    enqueue_job(task, args, kwargs, backend_alias=backend_alias)
-    for task, args, kwargs in task_calls
-  ]
+  alias = get_database_alias(backend_alias)
+  now = timezone.now()
+  prepared = []
+
+  for index, (task, args, kwargs) in enumerate(task_calls):
+    payload = _normalize_payload(args, kwargs)
+    concurrency_key = _resolve_concurrency_key(task, args, kwargs)
+    created_at = now + timedelta(microseconds=index)
+    prepared.append(
+      {
+        "task": task,
+        "job": Job(
+          task_path=task.module_path,
+          queue_name=task.queue_name,
+          priority=task.priority,
+          payload=payload,
+          backend_name=backend_alias,
+          scheduled_at=task.run_after,
+          concurrency_key=concurrency_key,
+          created_at=created_at,
+          updated_at=created_at,
+        ),
+      }
+    )
+
+  if not prepared:
+    return []
+
+  ready_rows = []
+  scheduled_rows = []
+  ready_queue_names = []
+
+  with transaction.atomic(using=alias):
+    jobs = [entry["job"] for entry in prepared]
+    _bulk_create(alias, Job, jobs)
+
+    for entry in prepared:
+      job = entry["job"]
+      if job.scheduled_at is not None and job.scheduled_at > now:
+        scheduled_rows.append(
+          ScheduledExecution(
+            job=job,
+            queue_name=job.queue_name,
+            priority=job.priority,
+            scheduled_at=job.scheduled_at,
+            created_at=job.created_at,
+          )
+        )
+        entry["dispatched_as"] = "scheduled"
+        continue
+
+      if not job.concurrency_key:
+        ready_rows.append(
+          ReadyExecution(
+            job=job,
+            queue_name=job.queue_name,
+            priority=job.priority,
+            created_at=job.created_at,
+          )
+        )
+        ready_queue_names.append(job.queue_name)
+        entry["dispatched_as"] = "ready"
+        continue
+
+      dispatched_as = _dispatch_job(job, task=entry["task"], backend_alias=backend_alias, now=now)
+      if dispatched_as == "ready":
+        ready_queue_names.append(job.queue_name)
+      entry["dispatched_as"] = dispatched_as
+
+    _bulk_create(alias, ReadyExecution, ready_rows)
+    _bulk_create(alias, ScheduledExecution, scheduled_rows)
+
+  if ready_queue_names:
+    runtime_notify.notify_ready_queues(
+      tuple(dict.fromkeys(ready_queue_names)),
+      backend_alias=backend_alias,
+    )
+
+  for entry in prepared:
+    job = entry["job"]
+    log_event(
+      "job.enqueued",
+      job_id=str(job.id),
+      task_path=job.task_path,
+      queue_name=job.queue_name,
+      priority=job.priority,
+    )
+
+  return [(entry["job"], entry["task"], entry["dispatched_as"]) for entry in prepared]
 
 
 def claim_ready_jobs(
@@ -289,9 +374,10 @@ def _dispatch_existing_job(job):
   return _dispatch_job(job, task=task, backend_alias=job.backend_name)
 
 
-def _dispatch_job(job, *, task, backend_alias):
+def _dispatch_job(job, *, task, backend_alias, now=None):
   alias = get_database_alias(backend_alias)
-  now = timezone.now()
+  if now is None:
+    now = timezone.now()
 
   if job.scheduled_at is not None and job.scheduled_at > now:
     ScheduledExecution.objects.using(alias).create(
@@ -463,6 +549,18 @@ def _task_option(task, name, default=None):
   if hasattr(task, name):
     return getattr(task, name)
   return getattr(task.func, name, default)
+
+
+def _bulk_create(alias, model, objects):
+  if not objects:
+    return None
+
+  fields = [field for field in model._meta.concrete_fields if not field.generated]
+  batch_size = connections[alias].ops.bulk_batch_size(fields, objects)
+  if batch_size is None or batch_size <= 0:
+    batch_size = len(objects)
+  model.objects.using(alias).bulk_create(objects, batch_size=batch_size)
+  return None
 
 
 def _exception_path(error):
