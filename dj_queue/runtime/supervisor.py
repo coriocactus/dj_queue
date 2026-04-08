@@ -1,5 +1,6 @@
 import os
 import socket
+import threading
 
 from django.utils import timezone
 from datetime import timedelta
@@ -8,7 +9,10 @@ from dj_queue.config import load_backend_config
 from dj_queue.exceptions import ProcessMissingError, ProcessPrunedError
 from dj_queue.models import ClaimedExecution, Process
 from dj_queue.operations.jobs import fail_claimed_job
-from dj_queue.runtime.base import BaseRunner, app_executor
+from dj_queue.runtime.base import BaseRunner, app_executor, handle_thread_error
+from dj_queue.runtime.dispatcher import Dispatcher
+from dj_queue.runtime.scheduler import Scheduler
+from dj_queue.runtime.worker import Worker
 
 
 class Supervisor(BaseRunner):
@@ -125,3 +129,100 @@ class Supervisor(BaseRunner):
       process.delete()
       pruned_processes.append(process)
     return pruned_processes
+
+
+class AsyncSupervisor(Supervisor):
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.runners = []
+    self.runner_threads = []
+
+  def start(self):
+    process = super().start()
+    if self.standalone:
+      self.register_signal_handlers()
+    self.start_runners()
+    return process
+
+  def stop(self):
+    for runner in self.runners:
+      runner.request_stop()
+    for thread in self.runner_threads:
+      thread.join(timeout=1)
+    for runner in self.runners:
+      runner.stop()
+    self.runners.clear()
+    self.runner_threads.clear()
+    return super().stop()
+
+  def register_signal_handlers(self):
+    return None
+
+  def start_runners(self):
+    if self.runners:
+      return self.runners
+
+    for runner in self._build_runners():
+      runner.start()
+      thread = threading.Thread(target=self._run_managed_runner, args=(runner,), daemon=True)
+      self.runners.append(runner)
+      self.runner_threads.append(thread)
+      thread.start()
+    return self.runners
+
+  def _run_managed_runner(self, runner):
+    while not runner._stop_event.is_set():
+      try:
+        runner.poll_once()
+        runner.sleeper.sleep(runner.polling_interval)
+      except Exception as error:
+        handle_thread_error(
+          error,
+          context=f"{runner.hook_prefix}.run",
+          backend_alias=self.backend_alias,
+        )
+        runner.request_stop()
+        return
+
+  def _build_runners(self):
+    runners = []
+
+    for index, worker_config in enumerate(self.config.workers, start=1):
+      for process_index in range(worker_config.processes):
+        suffix = index if worker_config.processes == 1 else f"{index}-{process_index + 1}"
+        runners.append(
+          Worker(
+            worker_config,
+            backend_alias=self.backend_alias,
+            name=f"worker-{suffix}",
+            pid=self.pid,
+            hostname=self.hostname,
+            supervisor=self.process,
+          )
+        )
+
+    for index, dispatcher_config in enumerate(self.config.dispatchers, start=1):
+      runners.append(
+        Dispatcher(
+          dispatcher_config,
+          backend_alias=self.backend_alias,
+          name=f"dispatcher-{index}",
+          pid=self.pid,
+          hostname=self.hostname,
+          supervisor=self.process,
+        )
+      )
+
+    if self.config.scheduler is not None:
+      runners.append(
+        Scheduler(
+          self.config,
+          backend_alias=self.backend_alias,
+          name="scheduler-1",
+          pid=self.pid,
+          hostname=self.hostname,
+          supervisor=self.process,
+        )
+      )
+
+    return runners

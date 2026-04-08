@@ -24,6 +24,7 @@ class Worker(BaseRunner):
     pool=None,
     wakeup_backend=None,
     heartbeat_interval=None,
+    supervisor=None,
   ):
     resolved_name = name or f"worker-{os.getpid()}"
     resolved_pid = pid or os.getpid()
@@ -36,6 +37,7 @@ class Worker(BaseRunner):
       hostname=resolved_hostname,
       sleeper=sleeper,
       heartbeat_interval=heartbeat_interval,
+      supervisor=supervisor,
     )
     self.pool = pool or WorkerPool(config.threads, wake_up=self.sleeper.wake_up)
     self.wakeup_backend = wakeup_backend or build_wakeup_backend(

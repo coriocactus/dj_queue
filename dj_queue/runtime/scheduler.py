@@ -27,6 +27,7 @@ class Scheduler(BaseRunner):
     hostname=None,
     sleeper=None,
     heartbeat_interval=None,
+    supervisor=None,
   ):
     super().__init__(
       config,
@@ -36,6 +37,7 @@ class Scheduler(BaseRunner):
       hostname=hostname or socket.gethostname(),
       sleeper=sleeper,
       heartbeat_interval=heartbeat_interval,
+      supervisor=supervisor,
     )
 
   @classmethod
