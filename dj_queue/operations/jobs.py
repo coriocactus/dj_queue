@@ -94,6 +94,42 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
   if not prepared:
     return []
 
+  if all(
+    entry["job"].scheduled_at is None and not entry["job"].concurrency_key for entry in prepared
+  ):
+    with transaction.atomic(using=alias):
+      jobs = [entry["job"] for entry in prepared]
+      _bulk_create(alias, Job, jobs)
+      _bulk_create(
+        alias,
+        ReadyExecution,
+        [
+          ReadyExecution(
+            job=job,
+            queue_name=job.queue_name,
+            priority=job.priority,
+            created_at=job.created_at,
+          )
+          for job in jobs
+        ],
+      )
+
+    ready_queue_names = tuple(dict.fromkeys(job.queue_name for job in jobs))
+    if ready_queue_names:
+      runtime_notify.notify_ready_queues(ready_queue_names, backend_alias=backend_alias)
+
+    for entry in prepared:
+      job = entry["job"]
+      log_event(
+        "job.enqueued",
+        job_id=str(job.id),
+        task_path=job.task_path,
+        queue_name=job.queue_name,
+        priority=job.priority,
+      )
+
+    return [(entry["job"], entry["task"], "ready") for entry in prepared]
+
   ready_rows = []
   scheduled_rows = []
   ready_queue_names = []
