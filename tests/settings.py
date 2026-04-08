@@ -2,7 +2,10 @@ import importlib
 import os
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+SECRET_KEY = "tests"
 USE_TZ = True
+ROOT_URLCONF = "tests.urls"
+STATIC_URL = "/static/"
 
 DB_BACKEND = os.environ.get("DB_BACKEND", "sqlite")
 MYSQL_FAMILY = {"mysql", "mariadb"}
@@ -51,7 +54,33 @@ _DATABASES = {
 }
 
 DATABASES = {"default": _DATABASES[DB_BACKEND]}
-INSTALLED_APPS = ["dj_queue"]
+INSTALLED_APPS = [
+  "django.contrib.admin",
+  "django.contrib.auth",
+  "django.contrib.contenttypes",
+  "django.contrib.sessions",
+  "django.contrib.messages",
+  "dj_queue",
+]
+MIDDLEWARE = [
+  "django.contrib.sessions.middleware.SessionMiddleware",
+  "django.contrib.auth.middleware.AuthenticationMiddleware",
+  "django.contrib.messages.middleware.MessageMiddleware",
+]
+TEMPLATES = [
+  {
+    "BACKEND": "django.template.backends.django.DjangoTemplates",
+    "DIRS": [],
+    "APP_DIRS": True,
+    "OPTIONS": {
+      "context_processors": [
+        "django.template.context_processors.request",
+        "django.contrib.auth.context_processors.auth",
+        "django.contrib.messages.context_processors.messages",
+      ]
+    },
+  }
+]
 DATABASE_ROUTERS = ["dj_queue.routers.DjQueueRouter"]
 
 TASKS = {
