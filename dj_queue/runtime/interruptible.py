@@ -15,7 +15,11 @@ class InterruptibleSleeper:
     if self._closed:
       return
 
-    ready, _, _ = select.select([self._read_fd], [], [], max(seconds, 0))
+    try:
+      ready, _, _ = select.select([self._read_fd], [], [], max(seconds, 0))
+    except OSError:
+      return
+
     if ready:
       self._drain()
 
@@ -42,5 +46,5 @@ class InterruptibleSleeper:
     try:
       while os.read(self._read_fd, 1024):
         continue
-    except BlockingIOError:
+    except (BlockingIOError, OSError):
       return

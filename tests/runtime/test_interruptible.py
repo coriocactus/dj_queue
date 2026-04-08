@@ -73,3 +73,30 @@ def test_interruptible_create_close_cycles_do_not_leak_descriptors():
     sleeper.close()
 
   assert len(os.listdir("/dev/fd")) <= baseline + 2
+
+
+def test_interruptible_sleep_ignores_closed_descriptor_race():
+  sleeper = InterruptibleSleeper()
+  finished = threading.Event()
+  errors = []
+
+  def run_sleep():
+    try:
+      sleeper.sleep(60)
+    except Exception as exc:
+      errors.append(exc)
+    finally:
+      finished.set()
+
+  thread = threading.Thread(target=run_sleep)
+  thread.start()
+
+  try:
+    time.sleep(0.01)
+    sleeper.wake_up()
+    sleeper.close()
+
+    assert finished.wait(timeout=0.2) is True
+    assert errors == []
+  finally:
+    thread.join(timeout=1)
