@@ -84,6 +84,7 @@ class BaseRunner:
         self.sleeper.sleep(self.polling_interval)
     finally:
       self.stop()
+      close_old_connections()
 
   def stop(self):
     process = self._begin_stop()
