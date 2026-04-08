@@ -132,13 +132,11 @@ def test_kill_worker_mid_execution_recovery(tmp_path, queue_test_settings):
     waitpid=waitpid,
     killer=killer,
   )
-  children = ()
 
   try:
     supervisor.start()
     first_pid = next(iter(supervisor.children))
     first_child = children_by_pid[first_pid]
-    children = tuple(children_by_pid.values())
 
     wait_until(lambda: (control_dir / "started").exists())
     wait_until(
@@ -177,7 +175,6 @@ def test_kill_worker_mid_execution_recovery(tmp_path, queue_test_settings):
     assert ClaimedExecution.objects.filter(job_id=job.id).exists() is False
     assert ReadyExecution.objects.filter(job_id=job.id).exists() is False
 
-    children = tuple(children_by_pid.values())
     stop_path.write_text("stop")
     _join_children((children_by_pid[replacement_pid],), timeout=5)
     supervisor.stop()
