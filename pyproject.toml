@@ -1,14 +1,36 @@
+[build-system]
+requires = ["uv_build>=0.11.4,<0.12"]
+build-backend = "uv_build"
+
 [project]
 name = "dj-queue"
 version = "0.1.0"
 description = "Database-backed task queue backend for Django's django.tasks framework"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Framework :: Django",
+  "Framework :: Django :: 6.0",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
   "croniter>=6.2.2",
   "django>=6.0.0",
   "pyyaml>=6.0.3",
 ]
+
+[project.urls]
+Homepage = "https://github.com/coriocactus/dj_queue"
+Repository = "https://github.com/coriocactus/dj_queue"
+Issues = "https://github.com/coriocactus/dj_queue/issues"
 
 [dependency-groups]
 dev = [
@@ -19,6 +41,9 @@ dev = [
   "pytest-django>=4.12.0",
   "ruff>=0.15.8",
 ]
+
+[tool.uv.build-backend]
+module-root = ""
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "tests.settings"
@@ -33,6 +58,3 @@ markers = [
 target-version = "py312"
 line-length = 99
 indent-width = 2
-
-[tool.uv]
-exclude-newer = "1 week"
