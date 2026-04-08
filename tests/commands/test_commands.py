@@ -247,13 +247,15 @@ def test_health_command_max_age_override_changes_freshness_threshold():
 def test_procline_is_best_effort_when_dependency_missing(monkeypatch):
   imported = []
 
-  def import_module(name):
-    imported.append(name)
-    raise ModuleNotFoundError(name)
+  class FakeImportlib:
+    @staticmethod
+    def import_module(name):
+      imported.append(name)
+      raise ModuleNotFoundError(name)
 
-  monkeypatch.setattr("importlib.import_module", import_module)
+  import dj_queue.runtime.procline as procline
 
-  from dj_queue.runtime.procline import set_process_title
+  monkeypatch.setattr(procline, "importlib", FakeImportlib)
 
-  assert set_process_title("dj-queue worker-1") is False
+  assert procline.set_process_title("dj-queue worker-1") is False
   assert imported == ["setproctitle"]

@@ -180,8 +180,8 @@ def test_full_lifecycle_mixed_queues_scheduled_blocked_and_recurring(monkeypatch
     assert blocked_job.ready is True
 
     promoted_at = future_at + timedelta(seconds=1)
-    with monkeypatch.context() as patch:
-      patch.setattr("dj_queue.operations.jobs.timezone.now", lambda: promoted_at)
+    with monkeypatch.context() as mp:
+      mp.setattr("dj_queue.operations.jobs.timezone.now", lambda: promoted_at)
       dispatcher.poll_once()
 
     future_job.refresh_from_db()

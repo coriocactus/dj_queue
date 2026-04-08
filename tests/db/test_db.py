@@ -1,5 +1,4 @@
 import os
-from unittest.mock import patch
 
 import pytest
 
@@ -62,12 +61,13 @@ def test_sqlite_capabilities_disable_skip_locked_and_notify():
   assert supports_listen_notify("default") is False
 
 
-def test_queue_helpers_use_configured_database_alias(settings):
+def test_queue_helpers_use_configured_database_alias(settings, monkeypatch):
   class FakeConnection:
     def __init__(self, alias):
       self.alias = alias
 
   settings.TASKS = {"default": {"OPTIONS": {"database_alias": "queue"}}}
-  with patch("dj_queue.db.connections", {"queue": FakeConnection("queue")}):
-    assert get_database_alias() == "queue"
-    assert get_queue_connection().alias == "queue"
+  monkeypatch.setattr("dj_queue.db.connections", {"queue": FakeConnection("queue")})
+
+  assert get_database_alias() == "queue"
+  assert get_queue_connection().alias == "queue"
