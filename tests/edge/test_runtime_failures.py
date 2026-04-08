@@ -1,5 +1,4 @@
 from datetime import timedelta
-import time
 from uuid import uuid4
 
 import pytest

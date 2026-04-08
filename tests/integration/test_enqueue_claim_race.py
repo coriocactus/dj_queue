@@ -4,6 +4,7 @@ import time
 
 import pytest
 from django.db import connections
+from django.db.utils import OperationalError
 
 from dj_queue.models import ClaimedExecution, Job, ReadyExecution
 from dj_queue.operations.jobs import claim_ready_jobs
@@ -11,6 +12,11 @@ from tests.tasks import echo
 
 
 pytestmark = pytest.mark.django_db(transaction=True)
+
+
+def _is_transient_claim_error(error):
+  message = str(error).lower()
+  return "deadlock" in message or "lock wait timeout" in message
 
 
 @pytest.mark.skipif(
@@ -52,7 +58,14 @@ def test_concurrent_enqueue_and_claim_no_lost_jobs():
     try:
       start_barrier.wait()
       while True:
-        claimed_jobs = claim_ready_jobs(limit=3)
+        try:
+          claimed_jobs = claim_ready_jobs(limit=3)
+        except OperationalError as error:
+          if not _is_transient_claim_error(error):
+            raise
+          connections.close_all()
+          time.sleep(0.005)
+          continue
         if claimed_jobs:
           with claimed_lock:
             claimed_ids.extend(str(job.id) for job in claimed_jobs)

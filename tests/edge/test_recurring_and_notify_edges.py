@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 from django.utils import timezone
 
-from dj_queue.api import schedule_recurring_task, unschedule_recurring_task
+from dj_queue.api import unschedule_recurring_task
 from dj_queue.models import Job, RecurringExecution, RecurringTask
 from dj_queue.runtime.notify import NoopWakeupBackend, NotifyWakeupBackend, build_wakeup_backend
 from dj_queue.runtime.scheduler import Scheduler, _latest_run_at

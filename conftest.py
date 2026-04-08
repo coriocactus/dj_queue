@@ -27,17 +27,26 @@ def _reset_connections():
 def queue_test_settings(settings):
   original_databases = settings.DATABASES
   original_tasks = settings.TASKS
+  databases_changed = False
+  tasks_changed = False
 
   def apply(*, databases=None, tasks=None):
+    nonlocal databases_changed, tasks_changed
+
     if databases is not None:
       settings.DATABASES = databases
+      databases_changed = True
     if tasks is not None:
       settings.TASKS = tasks
+      tasks_changed = True
     _reset_connections()
 
   try:
     yield apply
   finally:
-    settings.DATABASES = original_databases
-    settings.TASKS = original_tasks
-    _reset_connections()
+    if databases_changed:
+      settings.DATABASES = original_databases
+    if tasks_changed:
+      settings.TASKS = original_tasks
+    if databases_changed or tasks_changed:
+      _reset_connections()

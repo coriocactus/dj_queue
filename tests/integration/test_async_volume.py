@@ -1,4 +1,5 @@
 from collections import Counter
+import os
 
 import pytest
 from django.tasks import TaskResultStatus
@@ -13,6 +14,10 @@ from tests.tasks import echo
 pytestmark = [
   pytest.mark.django_db(transaction=True),
   pytest.mark.postgres,
+  pytest.mark.skipif(
+    os.environ.get("RUN_STRESS_ASYNC_VOLUME") != "1",
+    reason="run separately with RUN_STRESS_ASYNC_VOLUME=1",
+  ),
 ]
 
 
