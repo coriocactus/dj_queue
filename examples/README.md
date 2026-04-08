@@ -2,6 +2,10 @@
 
 Self-contained examples demonstrating dj_queue features.
 
+`DB_BACKEND` in this directory is an example harness variable, not a public
+`dj_queue` setting. It switches the examples between SQLite, PostgreSQL, MySQL,
+and MariaDB.
+
 ## Quickstart
 
 From project root:
