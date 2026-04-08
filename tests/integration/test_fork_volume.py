@@ -79,6 +79,7 @@ def _run_drain_runner(runner_class_path, kwargs, task_count, databases, tasks_se
       time.sleep(runner.polling_interval)
   finally:
     runner.stop(timeout=5)
+    connections.close_all()
 
 
 def _join_children(children, timeout):
@@ -95,8 +96,7 @@ def _terminate_children(children):
   for child in children:
     if child.is_alive():
       child.terminate()
-  for child in children:
-    child.join(timeout=1)
+  _join_children(children, timeout=5)
 
 
 def test_10k_tasks_fork_mode_no_duplicates(tmp_path, queue_test_settings):

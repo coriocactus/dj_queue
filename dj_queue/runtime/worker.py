@@ -1,5 +1,6 @@
 import os
 import socket
+import threading
 
 from dj_queue.config import load_backend_config
 from dj_queue.operations.jobs import claim_ready_jobs, execute_claimed_job
@@ -81,9 +82,20 @@ class Worker(BaseRunner):
     if process is None:
       return True
 
-    drained = self.pool.shutdown(timeout)
+    finish_lock = threading.Lock()
+
+    def finish():
+      with finish_lock:
+        if self.process is None:
+          return None
+        with app_executor():
+          self._finish_stop(process)
+      return None
+
     self.wakeup_backend.stop()
-    self._finish_stop(process)
+    drained = self.pool.shutdown(timeout, on_drained=finish)
+    if drained:
+      finish()
     return drained
 
   def process_metadata(self):

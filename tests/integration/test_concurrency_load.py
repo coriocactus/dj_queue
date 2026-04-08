@@ -55,8 +55,10 @@ class BlockingPool:
     threading.Thread(target=run, daemon=True).start()
     return future
 
-  def shutdown(self, timeout):
+  def shutdown(self, timeout, *, on_drained=None):
     self._release.set()
+    if on_drained is not None:
+      on_drained()
     return True
 
 

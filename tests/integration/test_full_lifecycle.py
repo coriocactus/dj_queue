@@ -30,7 +30,9 @@ class InlinePool:
       future.set_exception(exc)
     return future
 
-  def shutdown(self, timeout):
+  def shutdown(self, timeout, *, on_drained=None):
+    if on_drained is not None:
+      on_drained()
     return True
 
 

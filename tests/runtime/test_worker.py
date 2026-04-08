@@ -1,3 +1,4 @@
+import threading
 import time
 from concurrent.futures import Future
 from uuid import uuid4
@@ -26,8 +27,10 @@ class InlinePool:
       future.set_exception(exc)
     return future
 
-  def shutdown(self, timeout):
+  def shutdown(self, timeout, *, on_drained=None):
     self.shutdown_timeout = timeout
+    if on_drained is not None:
+      on_drained()
     return True
 
 
@@ -275,6 +278,29 @@ def test_worker_graceful_shutdown_drains_pool():
   assert drained is True
   assert elapsed >= 0.04
   assert Process.objects.filter(name="worker-shutdown").exists() is False
+
+
+def test_worker_timeout_shutdown_keeps_process_until_work_finishes():
+  release = threading.Event()
+  worker = Worker(
+    WorkerConfig(queues=("*",), threads=1, processes=1, polling_interval=0.1),
+    name="worker-timeout-shutdown",
+    pid=12345,
+    hostname="localhost",
+  )
+  make_ready_job(args=["slow-timeout"])
+  worker.start()
+  worker._execute_job = lambda job_id: release.wait(timeout=1)
+
+  worker.poll_once()
+
+  drained = worker.stop(timeout=0.01)
+
+  assert drained is False
+  assert Process.objects.filter(name="worker-timeout-shutdown").exists() is True
+
+  release.set()
+  wait_until(lambda: Process.objects.filter(name="worker-timeout-shutdown").exists() is False)
 
 
 def test_worker_missing_task_path_fails_job_cleanly():

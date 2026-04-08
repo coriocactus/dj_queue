@@ -56,6 +56,7 @@ def _run_polling_runner(runner_class_path, kwargs, databases, tasks_settings, st
       time.sleep(runner.polling_interval)
   finally:
     runner.stop(timeout=5)
+    connections.close_all()
 
 
 def _join_children(children, timeout):
@@ -72,8 +73,7 @@ def _terminate_children(children):
   for child in children:
     if child.is_alive():
       child.terminate()
-  for child in children:
-    child.join(timeout=1)
+  _join_children(children, timeout=5)
 
 
 def test_kill_worker_mid_execution_recovery(tmp_path, queue_test_settings):
