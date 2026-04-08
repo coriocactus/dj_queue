@@ -1,4 +1,5 @@
 import os
+import signal
 import socket
 import threading
 
@@ -6,7 +7,7 @@ from django.utils import timezone
 from datetime import timedelta
 
 from dj_queue.config import load_backend_config
-from dj_queue.exceptions import ProcessMissingError, ProcessPrunedError
+from dj_queue.exceptions import ProcessExitError, ProcessMissingError, ProcessPrunedError
 from dj_queue.models import ClaimedExecution, Process
 from dj_queue.operations.jobs import fail_claimed_job
 from dj_queue.runtime.base import BaseRunner, app_executor
@@ -227,3 +228,179 @@ class AsyncSupervisor(Supervisor):
       )
 
     return runners
+
+
+class ForkSupervisor(Supervisor):
+  def __init__(
+    self,
+    *args,
+    launcher=None,
+    waitpid=None,
+    killer=None,
+    exit_fn=None,
+    **kwargs,
+  ):
+    super().__init__(*args, **kwargs)
+    self.children = {}
+    self._launcher = launcher or self._default_launcher
+    self._waitpid = waitpid or os.waitpid
+    self._killer = killer or os.kill
+    self._exit_fn = exit_fn or os._exit
+
+  @classmethod
+  def from_backend_config(
+    cls,
+    *,
+    backend_alias="default",
+    tasks_settings=None,
+    cli_overrides=None,
+    env=None,
+    name=None,
+    pid=None,
+    hostname=None,
+    standalone=True,
+    launcher=None,
+    waitpid=None,
+    killer=None,
+    exit_fn=None,
+  ):
+    config = load_backend_config(
+      backend_alias,
+      tasks_settings=tasks_settings,
+      cli_overrides=cli_overrides,
+      env=env,
+    )
+    return cls(
+      config,
+      backend_alias=backend_alias,
+      name=name,
+      pid=pid,
+      hostname=hostname,
+      standalone=standalone,
+      launcher=launcher,
+      waitpid=waitpid,
+      killer=killer,
+      exit_fn=exit_fn,
+    )
+
+  def start(self):
+    process = super().start()
+    if self.standalone:
+      self.register_signal_handlers()
+    self.start_children()
+    return process
+
+  def stop(self):
+    for pid in tuple(self.children):
+      try:
+        self._killer(pid, signal.SIGTERM)
+      except ProcessLookupError:
+        pass
+    self.children.clear()
+    return super().stop()
+
+  def register_signal_handlers(self):
+    return None
+
+  def start_children(self):
+    if self.children:
+      return self.children
+
+    for spec in self._build_runner_specs():
+      pid = self._launcher(spec)
+      self.children[pid] = spec
+    return self.children
+
+  def check_children(self):
+    try:
+      pid, _status = self._waitpid(-1, os.WNOHANG)
+    except ChildProcessError:
+      return None
+
+    if not pid:
+      return None
+
+    spec = self.children.pop(pid)
+    self._fail_claimed_jobs_for_pid(pid)
+    replacement_pid = self._launcher(spec)
+    self.children[replacement_pid] = spec
+    return replacement_pid
+
+  def _fail_claimed_jobs_for_pid(self, pid):
+    process = Process.objects.filter(pid=pid).first()
+    if process is None:
+      return []
+
+    claimed_job_ids = list(
+      ClaimedExecution.objects.filter(process=process).values_list("job_id", flat=True)
+    )
+    failed_jobs = []
+    with app_executor():
+      for job_id in claimed_job_ids:
+        failed_jobs.append(
+          fail_claimed_job(
+            job_id,
+            ProcessExitError("child process exited"),
+            traceback_text="child process exited",
+            backend_alias=self.backend_alias,
+          )
+        )
+    process.delete()
+    return failed_jobs
+
+  def _build_runner_specs(self):
+    specs = []
+
+    for index, worker_config in enumerate(self.config.workers, start=1):
+      for process_index in range(worker_config.processes):
+        suffix = index if worker_config.processes == 1 else f"{index}-{process_index + 1}"
+        specs.append(
+          {
+            "kind": "worker",
+            "runner_class": Worker,
+            "kwargs": {
+              "config": worker_config,
+              "backend_alias": self.backend_alias,
+              "name": f"worker-{suffix}",
+              "hostname": self.hostname,
+            },
+          }
+        )
+
+    for index, dispatcher_config in enumerate(self.config.dispatchers, start=1):
+      specs.append(
+        {
+          "kind": "dispatcher",
+          "runner_class": Dispatcher,
+          "kwargs": {
+            "config": dispatcher_config,
+            "backend_alias": self.backend_alias,
+            "name": f"dispatcher-{index}",
+            "hostname": self.hostname,
+          },
+        }
+      )
+
+    if self.config.scheduler is not None:
+      specs.append(
+        {
+          "kind": "scheduler",
+          "runner_class": Scheduler,
+          "kwargs": {
+            "config": self.config,
+            "backend_alias": self.backend_alias,
+            "name": "scheduler-1",
+            "hostname": self.hostname,
+          },
+        }
+      )
+
+    return specs
+
+  def _default_launcher(self, spec):
+    pid = os.fork()
+    if pid == 0:
+      runner = spec["runner_class"](**spec["kwargs"])
+      runner.run()
+      self._exit_fn(0)
+    return pid

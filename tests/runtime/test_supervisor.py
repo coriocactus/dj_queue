@@ -6,9 +6,9 @@ import pytest
 from django.utils import timezone
 
 from dj_queue.config import load_backend_config
-from dj_queue.exceptions import ProcessMissingError, ProcessPrunedError
+from dj_queue.exceptions import ProcessExitError, ProcessMissingError, ProcessPrunedError
 from dj_queue.models import ClaimedExecution, FailedExecution, Job, Process
-from dj_queue.runtime.supervisor import AsyncSupervisor, Supervisor
+from dj_queue.runtime.supervisor import AsyncSupervisor, ForkSupervisor, Supervisor
 from tests.tasks import limited
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -65,9 +65,11 @@ def async_tasks_settings(*, workers=None, dispatchers=None, recurring=None):
       "OPTIONS": {
         "mode": "async",
         "workers": workers
-        or [{"queues": "*", "threads": 1, "processes": 1, "polling_interval": 0.1}],
+        if workers is not None
+        else [{"queues": "*", "threads": 1, "processes": 1, "polling_interval": 0.1}],
         "dispatchers": dispatchers
-        or [{"batch_size": 10, "polling_interval": 1, "concurrency_maintenance": False}],
+        if dispatchers is not None
+        else [{"batch_size": 10, "polling_interval": 1, "concurrency_maintenance": False}],
         "scheduler": {"dynamic_tasks_enabled": False, "polling_interval": 5},
         "recurring": recurring or {},
         "preserve_finished_jobs": False,
@@ -85,6 +87,30 @@ def build_async_supervisor(*, tasks_settings, standalone=True, name=None):
     pid=65432,
     hostname="localhost",
     standalone=standalone,
+  )
+
+
+def build_fork_supervisor(
+  *,
+  tasks_settings,
+  standalone=True,
+  name=None,
+  launcher=None,
+  waitpid=None,
+  killer=None,
+  exit_fn=None,
+):
+  return ForkSupervisor.from_backend_config(
+    backend_alias="default",
+    tasks_settings=tasks_settings,
+    name=name or f"fork-supervisor-{uuid4()}",
+    pid=76543,
+    hostname="localhost",
+    standalone=standalone,
+    launcher=launcher,
+    waitpid=waitpid,
+    killer=killer,
+    exit_fn=exit_fn,
   )
 
 
@@ -204,3 +230,64 @@ def test_embedded_async_supervisor_does_not_register_signal_handlers(monkeypatch
   wait_until(lambda: Process.objects.filter(supervisor=process).count() == 2)
   assert called == []
   supervisor.stop()
+
+
+def test_fork_supervisor_starts_configured_children():
+  launched = []
+
+  def launcher(spec):
+    launched.append(spec)
+    return 80000 + len(launched)
+
+  supervisor = build_fork_supervisor(
+    tasks_settings=async_tasks_settings(
+      recurring={
+        "static-task": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "* * * * *",
+        }
+      }
+    ),
+    launcher=launcher,
+  )
+
+  process = supervisor.start()
+
+  assert Process.objects.filter(pk=process.pk, kind="Supervisor").exists() is True
+  assert [spec["kind"] for spec in launched] == ["worker", "dispatcher", "scheduler"]
+  assert sorted(supervisor.children) == [80001, 80002, 80003]
+  supervisor.stop()
+
+
+def test_dead_child_fails_claimed_jobs_and_replaces_runner():
+  launched = []
+  waitpid_results = [(90001, 0)]
+
+  def launcher(spec):
+    launched.append(spec)
+    return 90000 + len(launched)
+
+  def waitpid(_pid, _flags):
+    if waitpid_results:
+      return waitpid_results.pop(0)
+    raise ChildProcessError
+
+  supervisor = build_fork_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[], recurring={}),
+    launcher=launcher,
+    waitpid=waitpid,
+  )
+  supervisor.start()
+  child_process = make_process(pid=90001, name="worker-1")
+  job = make_job(task_path="tests.tasks.echo")
+  ClaimedExecution.objects.create(job=job, process=child_process)
+
+  replaced = supervisor.check_children()
+
+  failed_execution = FailedExecution.objects.get(job=job)
+  assert replaced == 90002
+  assert failed_execution.exception_class == (
+    f"{ProcessExitError.__module__}.{ProcessExitError.__qualname__}"
+  )
+  assert supervisor.children[90002]["kind"] == "worker"
+  assert Process.objects.filter(pk=child_process.pk).exists() is False
