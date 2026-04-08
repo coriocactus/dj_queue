@@ -1,7 +1,7 @@
 import pytest
 from django.core.exceptions import ValidationError
 
-from dj_queue import schedule_recurring_task, unschedule_recurring_task
+from dj_queue.api import schedule_recurring_task, unschedule_recurring_task
 from dj_queue.models import RecurringTask
 
 pytestmark = pytest.mark.django_db(transaction=True)
