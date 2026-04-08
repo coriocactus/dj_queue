@@ -249,6 +249,7 @@ def execute_claimed_job(job_id, *, backend_alias="default"):
       return_value = task.call(context, *args, **kwargs)
     else:
       return_value = task.call(*args, **kwargs)
+    return_value = _normalize_return_value(return_value)
   except Exception as exc:
     return fail_claimed_job(
       job.id,
@@ -582,8 +583,15 @@ def _select_ready_rows(queryset, *, limit, queues, use_skip_locked):
 def _normalize_payload(args, kwargs):
   try:
     return json.loads(json.dumps({"args": list(args), "kwargs": dict(kwargs)}))
-  except TypeError as exc:
+  except (TypeError, ValueError) as exc:
     raise EnqueueError("payload must be JSON round-trippable") from exc
+
+
+def _normalize_return_value(return_value):
+  try:
+    return json.loads(json.dumps(return_value))
+  except (TypeError, ValueError) as exc:
+    raise ValueError("return value must be JSON round-trippable") from exc
 
 
 def _task_option(task, name, default=None):

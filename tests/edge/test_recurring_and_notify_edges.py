@@ -111,6 +111,57 @@ def test_listen_notify_ignored_on_non_postgres_backends(settings):
   assert isinstance(backend, NoopWakeupBackend)
 
 
+def test_notify_connection_uses_django_backend_connection_params(monkeypatch):
+  connect_calls = []
+  executed = []
+
+  class FakeCursor:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, exc_type, exc, tb):
+      return False
+
+    def execute(self, sql):
+      executed.append(sql)
+
+  class FakeConnection:
+    def __init__(self):
+      self.autocommit = False
+
+    def cursor(self):
+      return FakeCursor()
+
+    def close(self):
+      return None
+
+  class FakeDatabase:
+    @staticmethod
+    def connect(**params):
+      connect_calls.append(params)
+      return FakeConnection()
+
+  class FakeWrapper:
+    Database = FakeDatabase
+
+    def ensure_connection(self):
+      return None
+
+    def get_connection_params(self):
+      return {"dbname": "queue", "sslmode": "require", "service": "primary"}
+
+  monkeypatch.setattr("dj_queue.runtime.notify.get_database_alias", lambda backend_alias: "queue")
+  monkeypatch.setattr("dj_queue.runtime.notify.connections", {"queue": FakeWrapper()})
+
+  backend = NotifyWakeupBackend(backend_alias="default", wake_up=lambda: None)
+
+  connection = backend._open_connection()
+
+  assert connect_calls == [{"dbname": "queue", "sslmode": "require", "service": "primary"}]
+  assert connection.autocommit is True
+  assert executed == ["LISTEN dj_queue_ready"]
+
+
 @pytest.mark.postgres
 def test_notify_watcher_shutdown_is_clean():
   backend = build_wakeup_backend(backend_alias="default", queues=("*",), wake_up=lambda: None)

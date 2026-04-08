@@ -8,7 +8,7 @@ import pytest
 from dj_queue.config import WorkerConfig
 from dj_queue.models import ClaimedExecution, FailedExecution, Job, Process, ReadyExecution
 from dj_queue.runtime.worker import Worker
-from tests.tasks import echo, fail, with_context
+from tests.tasks import echo, fail, non_json_result, with_context
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -174,6 +174,20 @@ def test_worker_executes_failure_path():
   assert failed_execution.message == "boom"
   assert "ValueError" in failed_execution.traceback
   assert ClaimedExecution.objects.filter(job=job).exists() is False
+  worker.stop()
+
+
+def test_worker_fails_non_json_result_instead_of_stranding_claim():
+  job = make_ready_job(task=non_json_result)
+  worker = make_worker()
+  worker.start()
+
+  worker.poll_once()
+
+  failed_execution = FailedExecution.objects.get(job=job)
+  assert failed_execution.message == "return value must be JSON round-trippable"
+  assert ClaimedExecution.objects.filter(job=job).exists() is False
+  assert Job.objects.get(pk=job.pk).finished_at is None
   worker.stop()
 
 

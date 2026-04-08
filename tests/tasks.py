@@ -11,6 +11,11 @@ def echo(value=None):
 
 
 @task
+def non_json_result():
+  return object()
+
+
+@task
 def add(left, right):
   return left + right
 

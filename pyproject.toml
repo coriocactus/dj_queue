@@ -32,6 +32,9 @@ Homepage = "https://github.com/coriocactus/dj_queue"
 Repository = "https://github.com/coriocactus/dj_queue"
 Issues = "https://github.com/coriocactus/dj_queue/issues"
 
+[project.optional-dependencies]
+postgres = ["psycopg>=3.3.3"]
+
 [dependency-groups]
 dev = [
   "cryptography>=46.0.6",

@@ -1,6 +1,8 @@
 import importlib
+import pkgutil
 
 import django
+import dj_queue
 from django.apps import apps
 from django.conf import settings
 from django.core.management import get_commands
@@ -11,7 +13,14 @@ if not settings.configured:
     SECRET_KEY="smoke",
     USE_TZ=True,
     DATABASES={"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}},
-    INSTALLED_APPS=["dj_queue"],
+    INSTALLED_APPS=[
+      "django.contrib.admin",
+      "django.contrib.auth",
+      "django.contrib.contenttypes",
+      "django.contrib.sessions",
+      "django.contrib.messages",
+      "dj_queue",
+    ],
     TASKS={
       "default": {
         "BACKEND": "dj_queue.backend.DjQueueBackend",
@@ -23,16 +32,8 @@ if not settings.configured:
 
 django.setup()
 
-for module_name in (
-  "dj_queue",
-  "dj_queue.api",
-  "dj_queue.backend",
-  "dj_queue.config",
-  "dj_queue.db",
-  "dj_queue.models",
-  "dj_queue.operations",
-  "dj_queue.runtime",
-  "dj_queue.contrib",
+for module_name in sorted(
+  ["dj_queue", *[module.name for module in pkgutil.walk_packages(dj_queue.__path__, "dj_queue.")]]
 ):
   importlib.import_module(module_name)
 

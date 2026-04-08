@@ -41,6 +41,20 @@ Install the package:
 pip install dj-queue
 ```
 
+Backend-specific extras are available when you want `dj_queue` to install a
+database adapter for you:
+
+```bash
+pip install "dj-queue[postgres]"
+```
+
+Notes:
+
+- `postgres` installs `psycopg`, which Django's PostgreSQL backend and
+  `dj_queue`'s optional `LISTEN/NOTIFY` wakeups use
+- for MySQL or MariaDB, install and configure a Django-compatible driver in
+  your application following Django's database docs
+
 Add `dj_queue` to `INSTALLED_APPS`, register the router, and point Django's task
 backend at `DjQueueBackend`:
 
@@ -110,6 +124,18 @@ print(fresh_result.return_value)
 ```
 
 When the worker has executed the job, `fresh_result.return_value` will be `10`.
+
+## Data Contract
+
+Job payloads and persisted return values are stored in JSON columns, so they
+must be JSON round-trippable.
+
+- enqueueing args or kwargs that cannot round-trip through JSON fails immediately
+- returning a non-JSON-serializable value marks the job failed instead of
+  leaving it claimed forever
+
+If you need to pass model instances, files, or custom objects, store them
+elsewhere and pass identifiers or serialized data instead.
 
 ## How dj_queue runs
 
@@ -464,6 +490,10 @@ Additional operational tuning is available when needed, including
 `use_skip_locked`, `listen_notify`, `silence_polling`,
 `process_heartbeat_interval`, `process_alive_threshold`, `shutdown_timeout`, and
 `on_thread_error`.
+
+On PostgreSQL, `listen_notify` uses the same Django PostgreSQL driver
+configuration as the main database connection. Install a compatible driver in
+your project, or use `dj-queue[postgres]` to pull in `psycopg`.
 
 Configuration precedence is explicit:
 

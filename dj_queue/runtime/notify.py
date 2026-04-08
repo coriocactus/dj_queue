@@ -1,4 +1,3 @@
-import importlib
 import threading
 
 from django.db import connections
@@ -72,19 +71,8 @@ class NotifyWakeupBackend:
     alias = get_database_alias(self.backend_alias)
     wrapper = connections[alias]
     wrapper.ensure_connection()
-    params = {}
-    for source_key, target_key in {
-      "NAME": "dbname",
-      "USER": "user",
-      "PASSWORD": "password",
-      "HOST": "host",
-      "PORT": "port",
-    }.items():
-      value = wrapper.settings_dict.get(source_key)
-      if value not in (None, ""):
-        params[target_key] = value
-    psycopg = importlib.import_module("psycopg")
-    connection = psycopg.connect(autocommit=True, **params)
+    connection = wrapper.Database.connect(**wrapper.get_connection_params())
+    connection.autocommit = True
     with connection.cursor() as cursor:
       cursor.execute(f"LISTEN {READY_CHANNEL}")
     return connection

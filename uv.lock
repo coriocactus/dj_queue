@@ -152,6 +152,11 @@ dependencies = [
     { name = "pyyaml" },
 ]
 
+[package.optional-dependencies]
+postgres = [
+    { name = "psycopg" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "cryptography" },
@@ -166,8 +171,10 @@ dev = [
 requires-dist = [
     { name = "croniter", specifier = ">=6.2.2" },
     { name = "django", specifier = ">=6.0.0" },
+    { name = "psycopg", marker = "extra == 'postgres'", specifier = ">=3.3.3" },
     { name = "pyyaml", specifier = ">=6.0.3" },
 ]
+provides-extras = ["postgres"]
 
 [package.metadata.requires-dev]
 dev = [
