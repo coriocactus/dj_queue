@@ -1,3 +1,5 @@
+import os
+from pathlib import Path
 import time
 
 from django.tasks import task
@@ -62,3 +64,12 @@ def with_context(context, value=None):
 def sleep_for(seconds):
   time.sleep(seconds)
   return seconds
+
+
+@task
+def record_once(directory, value):
+  path = Path(directory) / f"{value}.txt"
+  descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+  with os.fdopen(descriptor, "w") as handle:
+    handle.write(value)
+  return value
