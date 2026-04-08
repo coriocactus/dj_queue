@@ -7,13 +7,16 @@ from django.utils import timezone
 
 from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias
-from dj_queue.models import Process, RecurringTask
+from dj_queue.models import RecurringTask
 from dj_queue.operations.cleanup import clear_finished_jobs
 from dj_queue.operations.recurring import fire_recurring_task, upsert_static_recurring_tasks
-from dj_queue.runtime.base import app_executor
+from dj_queue.runtime.base import BaseRunner, app_executor
 
 
-class Scheduler:
+class Scheduler(BaseRunner):
+  process_kind = "Scheduler"
+  hook_prefix = "scheduler"
+
   def __init__(
     self,
     config,
@@ -22,13 +25,18 @@ class Scheduler:
     name=None,
     pid=None,
     hostname=None,
+    sleeper=None,
+    heartbeat_interval=None,
   ):
-    self.config = config
-    self.backend_alias = backend_alias
-    self.name = name or f"scheduler-{os.getpid()}"
-    self.pid = pid or os.getpid()
-    self.hostname = hostname or socket.gethostname()
-    self.process = None
+    super().__init__(
+      config,
+      backend_alias=backend_alias,
+      name=name or f"scheduler-{os.getpid()}",
+      pid=pid or os.getpid(),
+      hostname=hostname or socket.gethostname(),
+      sleeper=sleeper,
+      heartbeat_interval=heartbeat_interval,
+    )
 
   @classmethod
   def from_backend_config(
@@ -58,13 +66,17 @@ class Scheduler:
       hostname=hostname,
     )
 
-  def start(self):
-    if self.process is None:
-      self.process = self._register_process()
-    return self.process
-
   def stop(self):
-    self._deregister_process()
+    return super().stop()
+
+  def process_metadata(self):
+    return {
+      "dynamic_tasks_enabled": self.config.scheduler.dynamic_tasks_enabled,
+      "polling_interval": self.config.scheduler.polling_interval,
+      "static_task_count": len(self.config.recurring),
+      "cleanup_enabled": self.config.preserve_finished_jobs
+      and self.config.clear_finished_jobs_after is not None,
+    }
 
   def sync_static_tasks(self):
     upsert_static_recurring_tasks(self.config.recurring, backend_alias=self.backend_alias)
@@ -107,31 +119,6 @@ class Scheduler:
       backend_alias=self.backend_alias,
       now=now,
     )
-
-  def _register_process(self):
-    alias = get_database_alias(self.backend_alias)
-    return Process.objects.using(alias).create(
-      kind="Scheduler",
-      pid=self.pid,
-      hostname=self.hostname,
-      name=self.name,
-      metadata={
-        "dynamic_tasks_enabled": self.config.scheduler.dynamic_tasks_enabled,
-        "polling_interval": self.config.scheduler.polling_interval,
-        "static_task_count": len(self.config.recurring),
-        "cleanup_enabled": self.config.preserve_finished_jobs
-        and self.config.clear_finished_jobs_after is not None,
-      },
-      last_heartbeat_at=timezone.now(),
-    )
-
-  def _deregister_process(self):
-    if self.process is None:
-      return
-
-    alias = get_database_alias(self.backend_alias)
-    Process.objects.using(alias).filter(pk=self.process.pk).delete()
-    self.process = None
 
 
 def _latest_run_at(schedule, now):

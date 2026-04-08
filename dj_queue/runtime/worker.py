@@ -1,19 +1,17 @@
 import os
 import socket
 
-from django.utils import timezone
-
 from dj_queue.config import load_backend_config
-from dj_queue.db import get_database_alias
-from dj_queue.models import Process
 from dj_queue.operations.jobs import claim_ready_jobs, execute_claimed_job
-from dj_queue.runtime.base import app_executor, handle_thread_error
-from dj_queue.runtime.interruptible import InterruptibleSleeper
+from dj_queue.runtime.base import BaseRunner, app_executor, handle_thread_error
 from dj_queue.runtime.notify import build_wakeup_backend
 from dj_queue.runtime.pool import WorkerPool
 
 
-class Worker:
+class Worker(BaseRunner):
+  process_kind = "Worker"
+  hook_prefix = "worker"
+
   def __init__(
     self,
     config,
@@ -25,26 +23,31 @@ class Worker:
     sleeper=None,
     pool=None,
     wakeup_backend=None,
+    heartbeat_interval=None,
   ):
-    self.config = config
-    self.backend_alias = backend_alias
-    self.name = name or f"worker-{os.getpid()}"
-    self.pid = pid or os.getpid()
-    self.hostname = hostname or socket.gethostname()
-    self.sleeper = sleeper or InterruptibleSleeper()
+    resolved_name = name or f"worker-{os.getpid()}"
+    resolved_pid = pid or os.getpid()
+    resolved_hostname = hostname or socket.gethostname()
+    super().__init__(
+      config,
+      backend_alias=backend_alias,
+      name=resolved_name,
+      pid=resolved_pid,
+      hostname=resolved_hostname,
+      sleeper=sleeper,
+      heartbeat_interval=heartbeat_interval,
+    )
     self.pool = pool or WorkerPool(config.threads, wake_up=self.sleeper.wake_up)
     self.wakeup_backend = wakeup_backend or build_wakeup_backend(
       backend_alias=backend_alias,
       queues=config.queues,
       wake_up=self.sleeper.wake_up,
     )
-    self.process = None
 
   def start(self):
-    if self.process is None:
-      self.process = self._register_process()
+    process = super().start()
     self.wakeup_backend.start()
-    return self.process
+    return process
 
   def poll_once(self):
     if self.process is None:
@@ -71,10 +74,21 @@ class Worker:
     if timeout is None:
       timeout = load_backend_config(self.backend_alias).shutdown_timeout
 
+    process = self._begin_stop()
+    if process is None:
+      return True
+
     drained = self.pool.shutdown(timeout)
     self.wakeup_backend.stop()
-    self._deregister_process()
+    self._finish_stop(process)
     return drained
+
+  def process_metadata(self):
+    return {
+      "queues": list(self.config.queues),
+      "threads": self.config.threads,
+      "polling_interval": self.config.polling_interval,
+    }
 
   def _execute_job(self, job_id):
     with app_executor():
@@ -85,26 +99,3 @@ class Worker:
       future.result()
     except Exception as exc:
       handle_thread_error(exc, context="worker.execute", backend_alias=self.backend_alias)
-
-  def _register_process(self):
-    alias = get_database_alias(self.backend_alias)
-    return Process.objects.using(alias).create(
-      kind="Worker",
-      pid=self.pid,
-      hostname=self.hostname,
-      name=self.name,
-      metadata={
-        "queues": list(self.config.queues),
-        "threads": self.config.threads,
-        "polling_interval": self.config.polling_interval,
-      },
-      last_heartbeat_at=timezone.now(),
-    )
-
-  def _deregister_process(self):
-    if self.process is None:
-      return
-
-    alias = get_database_alias(self.backend_alias)
-    Process.objects.using(alias).filter(pk=self.process.pk).delete()
-    self.process = None

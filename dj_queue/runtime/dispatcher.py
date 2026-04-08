@@ -3,17 +3,18 @@ import socket
 
 from django.utils import timezone
 
-from dj_queue.db import get_database_alias
-from dj_queue.models import Process
 from dj_queue.operations.concurrency import (
   cleanup_expired_semaphores,
   promote_expired_blocked_jobs,
 )
 from dj_queue.operations.jobs import promote_scheduled_jobs
-from dj_queue.runtime.base import app_executor
+from dj_queue.runtime.base import BaseRunner, app_executor
 
 
-class Dispatcher:
+class Dispatcher(BaseRunner):
+  process_kind = "Dispatcher"
+  hook_prefix = "dispatcher"
+
   def __init__(
     self,
     config,
@@ -22,19 +23,19 @@ class Dispatcher:
     name=None,
     pid=None,
     hostname=None,
+    sleeper=None,
+    heartbeat_interval=None,
   ):
-    self.config = config
-    self.backend_alias = backend_alias
-    self.name = name or f"dispatcher-{os.getpid()}"
-    self.pid = pid or os.getpid()
-    self.hostname = hostname or socket.gethostname()
-    self.process = None
+    super().__init__(
+      config,
+      backend_alias=backend_alias,
+      name=name or f"dispatcher-{os.getpid()}",
+      pid=pid or os.getpid(),
+      hostname=hostname or socket.gethostname(),
+      sleeper=sleeper,
+      heartbeat_interval=heartbeat_interval,
+    )
     self._last_maintenance_at = None
-
-  def start(self):
-    if self.process is None:
-      self.process = self._register_process()
-    return self.process
 
   def poll_once(self):
     if self.process is None:
@@ -55,7 +56,15 @@ class Dispatcher:
     return promoted_jobs
 
   def stop(self):
-    self._deregister_process()
+    return super().stop()
+
+  def process_metadata(self):
+    return {
+      "batch_size": self.config.batch_size,
+      "polling_interval": self.config.polling_interval,
+      "concurrency_maintenance": self.config.concurrency_maintenance,
+      "concurrency_maintenance_interval": self.config.concurrency_maintenance_interval,
+    }
 
   def _maintenance_due(self):
     if not self.config.concurrency_maintenance:
@@ -65,27 +74,3 @@ class Dispatcher:
     return (
       timezone.now() - self._last_maintenance_at
     ).total_seconds() >= self.config.concurrency_maintenance_interval
-
-  def _register_process(self):
-    alias = get_database_alias(self.backend_alias)
-    return Process.objects.using(alias).create(
-      kind="Dispatcher",
-      pid=self.pid,
-      hostname=self.hostname,
-      name=self.name,
-      metadata={
-        "batch_size": self.config.batch_size,
-        "polling_interval": self.config.polling_interval,
-        "concurrency_maintenance": self.config.concurrency_maintenance,
-        "concurrency_maintenance_interval": self.config.concurrency_maintenance_interval,
-      },
-      last_heartbeat_at=timezone.now(),
-    )
-
-  def _deregister_process(self):
-    if self.process is None:
-      return
-
-    alias = get_database_alias(self.backend_alias)
-    Process.objects.using(alias).filter(pk=self.process.pk).delete()
-    self.process = None
