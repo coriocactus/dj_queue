@@ -13,6 +13,7 @@ from dj_queue.operations.jobs import fail_claimed_job
 from dj_queue.runtime.base import BaseRunner, app_executor
 from dj_queue.runtime.dispatcher import Dispatcher
 from dj_queue.runtime.errors import handle_thread_error
+from dj_queue.runtime.pidfile import PidFile
 from dj_queue.runtime.scheduler import Scheduler
 from dj_queue.runtime.worker import Worker
 
@@ -43,6 +44,7 @@ class Supervisor(BaseRunner):
       heartbeat_interval=heartbeat_interval,
     )
     self.standalone = standalone
+    self.pidfile = None
 
   @classmethod
   def from_backend_config(
@@ -73,6 +75,7 @@ class Supervisor(BaseRunner):
     )
 
   def start(self):
+    self._acquire_pidfile()
     process = super().start()
     self.fail_startup_orphaned_jobs()
     return process
@@ -88,6 +91,22 @@ class Supervisor(BaseRunner):
       "dispatcher_count": len(self.config.dispatchers),
       "has_scheduler": self.config.scheduler is not None,
     }
+
+  def _acquire_pidfile(self):
+    if not self.standalone:
+      return None
+    if self.config.supervisor_pidfile is None:
+      return None
+    if self.pidfile is None:
+      self.pidfile = PidFile(self.config.supervisor_pidfile, pid=self.pid)
+      self.pidfile.acquire()
+    return self.pidfile
+
+  def _finish_stop(self, process):
+    super()._finish_stop(process)
+    if self.pidfile is not None:
+      self.pidfile.release()
+      self.pidfile = None
 
   def fail_startup_orphaned_jobs(self):
     orphaned_job_ids = list(

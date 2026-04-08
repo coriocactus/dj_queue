@@ -74,6 +74,7 @@ def async_tasks_settings(*, workers=None, dispatchers=None, recurring=None):
         "recurring": recurring or {},
         "preserve_finished_jobs": False,
         "clear_finished_jobs_after": None,
+        "supervisor_pidfile": None,
       },
     }
   }
@@ -326,3 +327,32 @@ def test_sigquit_takes_immediate_exit_path():
   supervisor.handle_sigquit()
 
   assert exited == [1]
+
+
+def test_pidfile_created_and_deleted_for_standalone_supervisor(tmp_path):
+  pidfile = tmp_path / "run" / "dj_queue.pid"
+  tasks_settings = async_tasks_settings(recurring={})
+  tasks_settings["default"]["OPTIONS"]["supervisor_pidfile"] = str(pidfile)
+  supervisor = build_fork_supervisor(tasks_settings=tasks_settings, launcher=lambda spec: 93000)
+
+  supervisor.start()
+
+  assert pidfile.read_text() == str(supervisor.pid)
+
+  supervisor.stop()
+
+  assert pidfile.exists() is False
+
+
+def test_stale_pidfile_is_overwritten(tmp_path):
+  pidfile = tmp_path / "run" / "dj_queue.pid"
+  pidfile.parent.mkdir(parents=True, exist_ok=True)
+  pidfile.write_text("999999")
+  tasks_settings = async_tasks_settings(recurring={})
+  tasks_settings["default"]["OPTIONS"]["supervisor_pidfile"] = str(pidfile)
+  supervisor = build_fork_supervisor(tasks_settings=tasks_settings, launcher=lambda spec: 94000)
+
+  supervisor.start()
+
+  assert pidfile.read_text() == str(supervisor.pid)
+  supervisor.stop()
