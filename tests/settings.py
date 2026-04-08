@@ -1,5 +1,5 @@
+import importlib
 import os
-import pymysql
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 USE_TZ = True
@@ -14,6 +14,7 @@ if DB_BACKEND in MYSQL_FAMILY:
   DEFAULT_DB_PASSWORD = "root"
 
 if DB_BACKEND in MYSQL_FAMILY:
+  pymysql = importlib.import_module("pymysql")
   pymysql.version_info = (2, 2, 1, "final", 0)
   pymysql.__version__ = "2.2.1"
   pymysql.install_as_MySQLdb()
