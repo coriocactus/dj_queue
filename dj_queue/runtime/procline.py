@@ -1,1 +1,11 @@
-"""Process title helpers live here in later phases."""
+import importlib
+
+
+def set_process_title(title):
+  try:
+    setproctitle = importlib.import_module("setproctitle")
+  except ModuleNotFoundError:
+    return False
+
+  setproctitle.setproctitle(title)
+  return True

@@ -8,6 +8,7 @@ from datetime import timedelta
 
 from dj_queue.config import load_backend_config
 from dj_queue.exceptions import ProcessExitError, ProcessMissingError, ProcessPrunedError
+from dj_queue.log import log_event
 from dj_queue.models import ClaimedExecution, Process
 from dj_queue.operations.jobs import fail_claimed_job
 from dj_queue.runtime.base import BaseRunner, app_executor
@@ -21,6 +22,7 @@ from dj_queue.runtime.worker import Worker
 class Supervisor(BaseRunner):
   process_kind = "Supervisor"
   hook_prefix = "supervisor"
+  polling_interval = 0.1
 
   def __init__(
     self,
@@ -81,7 +83,15 @@ class Supervisor(BaseRunner):
     return process
 
   def poll_once(self):
-    return []
+    pruned_processes = self.prune_stale_process_rows()
+    for process in pruned_processes:
+      log_event(
+        "process.pruned",
+        backend_alias=self.backend_alias,
+        process_name=process.name,
+        pid=process.pid,
+      )
+    return pruned_processes
 
   def process_metadata(self):
     return {
@@ -357,7 +367,18 @@ class ForkSupervisor(Supervisor):
     self._fail_claimed_jobs_for_pid(pid)
     replacement_pid = self._launcher(spec)
     self.children[replacement_pid] = spec
+    log_event(
+      "process.replaced",
+      backend_alias=self.backend_alias,
+      old_pid=pid,
+      new_pid=replacement_pid,
+      kind=spec["kind"],
+    )
     return replacement_pid
+
+  def poll_once(self):
+    super().poll_once()
+    return self.check_children()
 
   def _fail_claimed_jobs_for_pid(self, pid):
     process = Process.objects.filter(pid=pid).first()
