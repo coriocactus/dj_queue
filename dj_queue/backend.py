@@ -1,3 +1,5 @@
+from asgiref.sync import sync_to_async
+from django.db import close_old_connections
 from django.tasks import TaskResult, TaskResultStatus
 from django.tasks.backends.base import BaseTaskBackend
 from django.tasks.base import TaskError
@@ -19,6 +21,14 @@ class DjQueueBackend(BaseTaskBackend):
     self.validate_task(task)
     job = enqueue_job(task, args, kwargs, backend_alias=self.alias)
     return self.get_result(str(job.id))
+
+  async def aenqueue(self, task, args, kwargs):
+    return await sync_to_async(_async_backend_call, thread_sensitive=True)(
+      self.enqueue,
+      task=task,
+      args=args,
+      kwargs=kwargs,
+    )
 
   def enqueue_all(self, task_calls):
     jobs = []
@@ -47,6 +57,19 @@ class DjQueueBackend(BaseTaskBackend):
       raise TaskResultDoesNotExist(str(result_id)) from exc
 
     return _task_result_from_job(job)
+
+  async def aget_result(self, result_id):
+    return await sync_to_async(_async_backend_call, thread_sensitive=True)(
+      self.get_result,
+      result_id=result_id,
+    )
+
+
+def _async_backend_call(method, /, **kwargs):
+  try:
+    return method(**kwargs)
+  finally:
+    close_old_connections()
 
 
 def _task_result_from_job(job):

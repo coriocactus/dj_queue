@@ -18,7 +18,7 @@ def semaphore_acquire(
   alias = get_database_alias(backend_alias)
   expires_at = timezone.now() + timedelta(seconds=duration_seconds)
 
-  for _ in range(2):
+  for attempt in range(2):
     try:
       with transaction.atomic(using=alias):
         semaphore = Semaphore.objects.using(alias).select_for_update().filter(key=key).first()
@@ -39,6 +39,10 @@ def semaphore_acquire(
         semaphore.save(using=alias, update_fields=["value", "expires_at", "updated_at"])
         return True
     except IntegrityError:
+      # two workers can both miss the row, then race to create the unique key
+      # retry once so the loser can load the row created by the winner
+      if attempt == 0:
+        continue
       continue
 
   return False
