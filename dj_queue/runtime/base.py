@@ -1,17 +1,15 @@
 from contextlib import contextmanager
-import logging
 import threading
 
 from django.db import close_old_connections
 from django.utils import timezone
-from django.utils.module_loading import import_string
 
 from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias
+from dj_queue.hooks import fire_hooks
 from dj_queue.models import Process
+from dj_queue.runtime.errors import handle_thread_error
 from dj_queue.runtime.interruptible import InterruptibleSleeper
-
-logger = logging.getLogger("dj_queue")
 
 
 @contextmanager
@@ -21,38 +19,6 @@ def app_executor():
     yield
   finally:
     close_old_connections()
-
-
-def handle_thread_error(error, *, context="", backend_alias="default"):
-  callback_path = load_backend_config(backend_alias).on_thread_error
-  if callback_path:
-    try:
-      callback = import_string(callback_path)
-      callback(error)
-      return
-    except Exception:
-      logger.exception(
-        "on_thread_error callback raised",
-        extra={
-          "event": "dj_queue.thread_error_callback_failed",
-          "backend_alias": backend_alias,
-          "thread_error_context": context,
-          "on_thread_error": callback_path,
-          "thread_error_type": error.__class__.__name__,
-        },
-      )
-      return
-
-  logger.error(
-    "dj_queue infrastructure error",
-    exc_info=(error.__class__, error, error.__traceback__),
-    extra={
-      "event": "dj_queue.thread_error",
-      "backend_alias": backend_alias,
-      "thread_error_context": context,
-      "thread_error_type": error.__class__.__name__,
-    },
-  )
 
 
 class BaseRunner:
@@ -93,8 +59,6 @@ class BaseRunner:
 
   def start(self):
     if self.process is None:
-      from dj_queue.hooks import fire_hooks
-
       self.process = self._register_process()
       self._start_heartbeat_thread()
       fire_hooks(f"{self.hook_prefix}.start", self.process, backend_alias=self.backend_alias)
@@ -161,8 +125,6 @@ class BaseRunner:
     self.request_stop()
     process = self.process
     if process is not None and self._started:
-      from dj_queue.hooks import fire_hooks
-
       fire_hooks(f"{self.hook_prefix}.stop", process, backend_alias=self.backend_alias)
     self._stop_heartbeat_thread()
     return process
@@ -170,8 +132,6 @@ class BaseRunner:
   def _finish_stop(self, process):
     self._deregister_process()
     if process is not None and self._started:
-      from dj_queue.hooks import fire_hooks
-
       fire_hooks(f"{self.hook_prefix}.exit", process, backend_alias=self.backend_alias)
 
     close = getattr(self.sleeper, "close", None)

@@ -2,7 +2,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from typing import Any
 
-from dj_queue.runtime.base import handle_thread_error
+from dj_queue.runtime.errors import handle_thread_error
 
 _hooks: dict[str, list[Callable[..., Any]]] = defaultdict(list)
 

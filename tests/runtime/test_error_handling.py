@@ -2,7 +2,7 @@ import logging
 
 from tests import runtime_callbacks
 
-from dj_queue.runtime.base import handle_thread_error
+from dj_queue.runtime.errors import handle_thread_error
 
 
 def _tasks_with_callback(callback_path):

@@ -9,8 +9,9 @@ from dj_queue.config import load_backend_config
 from dj_queue.exceptions import ProcessMissingError, ProcessPrunedError
 from dj_queue.models import ClaimedExecution, Process
 from dj_queue.operations.jobs import fail_claimed_job
-from dj_queue.runtime.base import BaseRunner, app_executor, handle_thread_error
+from dj_queue.runtime.base import BaseRunner, app_executor
 from dj_queue.runtime.dispatcher import Dispatcher
+from dj_queue.runtime.errors import handle_thread_error
 from dj_queue.runtime.scheduler import Scheduler
 from dj_queue.runtime.worker import Worker
 
