@@ -242,6 +242,7 @@ class ForkSupervisor(Supervisor):
   ):
     super().__init__(*args, **kwargs)
     self.children = {}
+    self._graceful_shutdown_requested = False
     self._launcher = launcher or self._default_launcher
     self._waitpid = waitpid or os.waitpid
     self._killer = killer or os.kill
@@ -300,7 +301,20 @@ class ForkSupervisor(Supervisor):
     return super().stop()
 
   def register_signal_handlers(self):
-    return None
+    signal.signal(signal.SIGTERM, self.handle_sigterm)
+    signal.signal(signal.SIGINT, self.handle_sigterm)
+    signal.signal(signal.SIGQUIT, self.handle_sigquit)
+
+  def handle_sigterm(self, *_args):
+    if self._graceful_shutdown_requested:
+      return False
+
+    self._graceful_shutdown_requested = True
+    self.stop()
+    return True
+
+  def handle_sigquit(self, *_args):
+    self._exit_fn(1)
 
   def start_children(self):
     if self.children:

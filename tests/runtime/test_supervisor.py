@@ -291,3 +291,38 @@ def test_dead_child_fails_claimed_jobs_and_replaces_runner():
   )
   assert supervisor.children[90002]["kind"] == "worker"
   assert Process.objects.filter(pk=child_process.pk).exists() is False
+
+
+def test_repeated_sigterm_is_idempotent():
+  killed = []
+
+  def killer(pid, sig):
+    killed.append((pid, sig))
+
+  supervisor = build_fork_supervisor(
+    tasks_settings=async_tasks_settings(recurring={}),
+    launcher=lambda spec: 91000 + len(killed) + 1,
+    killer=killer,
+  )
+  supervisor.start()
+
+  first = supervisor.handle_sigterm()
+  second = supervisor.handle_sigterm()
+
+  assert first is True
+  assert second is False
+  assert supervisor._graceful_shutdown_requested is True
+
+
+def test_sigquit_takes_immediate_exit_path():
+  exited = []
+  supervisor = build_fork_supervisor(
+    tasks_settings=async_tasks_settings(recurring={}),
+    launcher=lambda spec: 92000,
+    exit_fn=lambda code: exited.append(code),
+  )
+  supervisor.start()
+
+  supervisor.handle_sigquit()
+
+  assert exited == [1]
