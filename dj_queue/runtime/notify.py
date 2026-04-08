@@ -1,6 +1,6 @@
+import importlib
 import threading
 
-import psycopg
 from django.db import connections
 
 from dj_queue.config import load_backend_config
@@ -83,6 +83,7 @@ class NotifyWakeupBackend:
       value = wrapper.settings_dict.get(source_key)
       if value not in (None, ""):
         params[target_key] = value
+    psycopg = importlib.import_module("psycopg")
     connection = psycopg.connect(autocommit=True, **params)
     with connection.cursor() as cursor:
       cursor.execute(f"LISTEN {READY_CHANNEL}")
