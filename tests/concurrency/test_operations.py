@@ -168,6 +168,38 @@ def test_dispatcher_promotes_expired_blocked_jobs():
 
 
 @pytest.mark.django_db
+def test_promote_expired_blocked_jobs_reuses_task_import_for_shared_task_path(monkeypatch):
+  imported = []
+
+  def fake_import_string(path):
+    imported.append(path)
+    from django.utils.module_loading import import_string
+
+    return import_string(path)
+
+  monkeypatch.setattr("dj_queue.operations.concurrency.import_string", fake_import_string)
+
+  for account_id in (1, 2):
+    job = make_job(
+      task=limited,
+      args=[account_id],
+      kwargs={"value": f"later-{account_id}"},
+      concurrency_key=f"account:{account_id}",
+    )
+    BlockedExecution.objects.create(
+      job=job,
+      queue_name=job.queue_name,
+      priority=job.priority,
+      concurrency_key=job.concurrency_key,
+      expires_at=timezone.now() - timedelta(seconds=1),
+    )
+
+  promote_expired_blocked_jobs(batch_size=10)
+
+  assert imported == [limited.module_path]
+
+
+@pytest.mark.django_db
 def test_discarding_ready_job_releases_waiter():
   first = limited.enqueue(1, value="first")
   second = limited.enqueue(1, value="second")

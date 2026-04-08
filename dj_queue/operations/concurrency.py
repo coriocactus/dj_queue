@@ -131,6 +131,7 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
     use_skip_locked = load_backend_config(backend_alias).use_skip_locked
   now = timezone.now()
   promoted_jobs = []
+  task_settings = {}
 
   with transaction.atomic(using=alias):
     queryset = (
@@ -141,28 +142,24 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
     )
     blocked_rows = list(locked_queryset(queryset, use_skip_locked=use_skip_locked)[:batch_size])
 
-  for blocked in blocked_rows:
-    task = import_string(blocked.job.task_path)
-    limit = int(getattr(task.func, "concurrency_limit"))
-    duration_seconds = int(getattr(task.func, "concurrency_duration", 60))
-
-    with transaction.atomic(using=alias):
-      refreshed = (
-        BlockedExecution.objects.using(alias).select_related("job").filter(pk=blocked.pk).first()
-      )
-      if refreshed is None:
-        continue
+    for blocked in blocked_rows:
+      limit, duration_seconds = task_settings.get(blocked.job.task_path, (None, None))
+      if limit is None:
+        task = import_string(blocked.job.task_path)
+        limit = int(getattr(task.func, "concurrency_limit"))
+        duration_seconds = int(getattr(task.func, "concurrency_duration", 60))
+        task_settings[blocked.job.task_path] = (limit, duration_seconds)
 
       if semaphore_acquire(
-        refreshed.concurrency_key,
+        blocked.concurrency_key,
         limit=limit,
         duration_seconds=duration_seconds,
         backend_alias=backend_alias,
       ):
-        job = refreshed.job
-        queue_name = refreshed.queue_name
-        priority = refreshed.priority
-        refreshed.delete(using=alias)
+        job = blocked.job
+        queue_name = blocked.queue_name
+        priority = blocked.priority
+        blocked.delete(using=alias)
         ReadyExecution.objects.using(alias).create(
           job=job,
           queue_name=queue_name,
@@ -170,8 +167,8 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
         )
         promoted_jobs.append(job)
       else:
-        refreshed.expires_at = timezone.now() + timedelta(seconds=duration_seconds)
-        refreshed.save(using=alias, update_fields=["expires_at"])
+        blocked.expires_at = now + timedelta(seconds=duration_seconds)
+        blocked.save(using=alias, update_fields=["expires_at"])
 
   for job in promoted_jobs:
     log_event("job.unblocked", job_id=str(job.id), concurrency_key=job.concurrency_key)
