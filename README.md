@@ -576,12 +576,12 @@ The repository ships real runnable examples in `examples/`.
 
 Recommended entry points:
 
-- `examples/ex01_basic_enqueue.py`
-- `examples/ex07_basic_enqueue_on_commit.py`
-- `examples/ex08_basic_recurring.py`
-- `examples/ex20_advanced_concurrency.py`
-- `examples/ex21_advanced_queue_control.py`
-- `examples/ex24_advanced_multi_db.py`
-- `examples/ex25_advanced_asgi.py`
+- [examples/ex01_basic_enqueue.py](examples/ex01_basic_enqueue.py)
+- [examples/ex07_basic_enqueue_on_commit.py](examples/ex07_basic_enqueue_on_commit.py)
+- [examples/ex08_basic_recurring.py](examples/ex08_basic_recurring.py)
+- [examples/ex20_advanced_concurrency.py](examples/ex20_advanced_concurrency.py)
+- [examples/ex21_advanced_queue_control.py](examples/ex21_advanced_queue_control.py)
+- [examples/ex24_advanced_multi_db.py](examples/ex24_advanced_multi_db.py)
+- [examples/ex25_advanced_asgi.py](examples/ex25_advanced_asgi.py)
 
-The examples index in `examples/README.md` lists the full progression.
+The [examples index](examples/README.md) lists the full progression.
