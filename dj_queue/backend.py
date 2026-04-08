@@ -8,7 +8,7 @@ from django.utils.module_loading import import_string
 
 from dj_queue.db import get_database_alias
 from dj_queue.models import Job
-from dj_queue.operations.jobs import enqueue_job, enqueue_jobs_bulk
+from dj_queue.operations.jobs import enqueue_job_with_dispatch, enqueue_jobs_bulk
 
 
 class DjQueueBackend(BaseTaskBackend):
@@ -19,8 +19,8 @@ class DjQueueBackend(BaseTaskBackend):
 
   def enqueue(self, task, args, kwargs):
     self.validate_task(task)
-    job = enqueue_job(task, args, kwargs, backend_alias=self.alias)
-    return self.get_result(str(job.id))
+    job, dispatched_as = enqueue_job_with_dispatch(task, args, kwargs, backend_alias=self.alias)
+    return _task_result_from_enqueued_job(job, task, dispatched_as)
 
   async def aenqueue(self, task, args, kwargs):
     return await sync_to_async(_async_backend_call, thread_sensitive=True)(

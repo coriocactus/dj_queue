@@ -31,6 +31,11 @@ from dj_queue.runtime import notify as runtime_notify
 
 
 def enqueue_job(task, args, kwargs, *, backend_alias="default"):
+  job, _ = enqueue_job_with_dispatch(task, args, kwargs, backend_alias=backend_alias)
+  return job
+
+
+def enqueue_job_with_dispatch(task, args, kwargs, *, backend_alias="default"):
   alias = get_database_alias(backend_alias)
   payload = _normalize_payload(args, kwargs)
   concurrency_key = _resolve_concurrency_key(task, args, kwargs)
@@ -57,7 +62,7 @@ def enqueue_job(task, args, kwargs, *, backend_alias="default"):
     queue_name=job.queue_name,
     priority=job.priority,
   )
-  return job
+  return job, dispatched_as
 
 
 def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):

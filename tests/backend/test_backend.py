@@ -86,6 +86,22 @@ def test_enqueue_immediate_uses_ready_path():
 
 
 @pytest.mark.django_db
+def test_enqueue_immediate_does_not_reread_result(monkeypatch):
+  backend = echo.get_backend()
+
+  def unexpected_get_result(_result_id):
+    raise AssertionError("enqueue should not call get_result")
+
+  monkeypatch.setattr(backend, "get_result", unexpected_get_result)
+
+  result = backend.enqueue(echo, ("ready",), {})
+
+  assert result.status == TaskResultStatus.READY
+  assert result.args == ["ready"]
+  assert result.kwargs == {}
+
+
+@pytest.mark.django_db
 def test_enqueue_future_uses_scheduled_path():
   future = timezone.now() + timedelta(minutes=5)
 
