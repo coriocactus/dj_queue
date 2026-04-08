@@ -2,6 +2,7 @@ import os
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,7 @@ DEFAULT_OPTIONS = {
 
 TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
 FALSY_ENV_VALUES = {"0", "false", "no", "off"}
+CONFIG_ENV_KEYS = ("DJ_QUEUE_CONFIG", "DJ_QUEUE_MODE", "DJ_QUEUE_SKIP_RECURRING")
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,9 +133,31 @@ def load_backend_config(
   env: Mapping[str, str] | None = None,
   tasks_settings: Mapping[str, Any] | None = None,
 ) -> BackendConfig:
-  cli_overrides = cli_overrides or {}
+  if cli_overrides is None:
+    cli_overrides = {}
   if env is None:
     env = os.environ
+  if tasks_settings is None:
+    tasks_settings = getattr(settings, "TASKS", {})
+
+  return _load_backend_config_cached(
+    backend_alias,
+    _freeze_value(cli_overrides),
+    _freeze_value({key: env.get(key) for key in CONFIG_ENV_KEYS if env.get(key) is not None}),
+    _freeze_value(tasks_settings),
+  )
+
+
+@lru_cache(maxsize=None)
+def _load_backend_config_cached(
+  backend_alias: str,
+  cli_overrides_key,
+  env_key,
+  tasks_settings_key,
+) -> BackendConfig:
+  cli_overrides = _thaw_value(cli_overrides_key)
+  env = _thaw_value(env_key)
+  tasks_settings = _thaw_value(tasks_settings_key)
   backend_block = _backend_block(tasks_settings, backend_alias)
   resolved_options = _resolved_options(backend_block, cli_overrides, env)
 
@@ -425,3 +449,28 @@ def _optional_int(value: Any) -> int | None:
   if value is None:
     return None
   return int(value)
+
+
+def _freeze_value(value):
+  if isinstance(value, Mapping):
+    return ("dict", tuple((str(key), _freeze_value(item)) for key, item in sorted(value.items())))
+  if isinstance(value, list):
+    return ("list", tuple(_freeze_value(item) for item in value))
+  if isinstance(value, tuple):
+    return ("tuple", tuple(_freeze_value(item) for item in value))
+  if isinstance(value, Path):
+    return ("path", str(value))
+  return ("value", value)
+
+
+def _thaw_value(value):
+  kind, payload = value
+  if kind == "dict":
+    return {key: _thaw_value(item) for key, item in payload}
+  if kind == "list":
+    return [_thaw_value(item) for item in payload]
+  if kind == "tuple":
+    return tuple(_thaw_value(item) for item in payload)
+  if kind == "path":
+    return payload
+  return payload

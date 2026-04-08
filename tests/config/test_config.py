@@ -131,3 +131,51 @@ def test_boolean_environment_values_parse_truthy_and_falsy_forms(settings, value
   config = load_backend_config(env={"DJ_QUEUE_SKIP_RECURRING": value})
 
   assert (config.scheduler is None) is skip_recurring
+
+
+def test_load_backend_config_caches_repeated_inputs(settings, monkeypatch):
+  settings.TASKS = {
+    "default": {
+      "OPTIONS": {
+        "mode": "fork",
+      },
+    },
+  }
+  calls = []
+
+  def fake_load_yaml_options(path):
+    calls.append(path)
+    return {}
+
+  monkeypatch.setattr("dj_queue.config._load_yaml_options", fake_load_yaml_options)
+
+  first = load_backend_config(env={"DJ_QUEUE_CONFIG": "/tmp/dj-queue.yaml"})
+  second = load_backend_config(env={"DJ_QUEUE_CONFIG": "/tmp/dj-queue.yaml"})
+
+  assert first == second
+  assert calls == ["/tmp/dj-queue.yaml"]
+
+
+def test_load_backend_config_cache_invalidates_when_settings_change(settings):
+  settings.TASKS = {
+    "default": {
+      "OPTIONS": {
+        "database_alias": "queue_a",
+      },
+    },
+  }
+
+  first = load_backend_config()
+
+  settings.TASKS = {
+    "default": {
+      "OPTIONS": {
+        "database_alias": "queue_b",
+      },
+    },
+  }
+
+  second = load_backend_config()
+
+  assert first.database_alias == "queue_a"
+  assert second.database_alias == "queue_b"
