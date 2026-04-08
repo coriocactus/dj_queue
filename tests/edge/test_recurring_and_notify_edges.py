@@ -94,7 +94,18 @@ def test_recurring_reservation_without_job_backfill_does_not_double_fire(monkeyp
   assert RecurringExecution.objects.filter(task_key="static-task", run_at=run_at).count() == 1
 
 
-def test_listen_notify_ignored_on_non_postgres_backends():
+def test_listen_notify_ignored_on_non_postgres_backends(settings):
+  settings.TASKS = {
+    **settings.TASKS,
+    "default": {
+      **settings.TASKS["default"],
+      "OPTIONS": {
+        **settings.TASKS["default"]["OPTIONS"],
+        "listen_notify": False,
+      },
+    },
+  }
+
   backend = build_wakeup_backend(backend_alias="default", queues=("*",), wake_up=lambda: None)
 
   assert isinstance(backend, NoopWakeupBackend)
