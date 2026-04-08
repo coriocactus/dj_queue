@@ -111,8 +111,6 @@ def schedule_recurring_task(
       "static": False,
     },
   )
-  recurring_task.full_clean()
-  recurring_task.save(using=alias)
   return recurring_task
 
 

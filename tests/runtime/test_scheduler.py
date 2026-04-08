@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timedelta
 from uuid import uuid4
 
@@ -112,6 +113,29 @@ def test_scheduler_persists_static_tasks():
 
   assert RecurringTask.objects.filter(key="static-task").exists() is False
   assert RecurringTask.objects.filter(key="replacement-task", static=True).exists() is True
+
+
+def test_scheduler_static_sync_is_idempotent_when_unchanged():
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      recurring={
+        "static-task": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "* * * * *",
+          "args": ["hello"],
+          "queue_name": "maintenance",
+        }
+      }
+    )
+  )
+
+  scheduler.sync_static_tasks()
+  first_updated_at = RecurringTask.objects.get(key="static-task").updated_at
+
+  time.sleep(0.01)
+  scheduler.sync_static_tasks()
+
+  assert RecurringTask.objects.get(key="static-task").updated_at == first_updated_at
 
 
 def test_scheduler_fires_static_task():

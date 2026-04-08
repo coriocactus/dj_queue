@@ -47,3 +47,22 @@ def test_invalid_cron_is_rejected():
       task_path="tests.tasks.echo",
       schedule="not a cron",
     )
+
+
+def test_schedule_recurring_task_validates_once(monkeypatch):
+  calls = []
+  original_full_clean = RecurringTask.full_clean
+
+  def counted_full_clean(self, *args, **kwargs):
+    calls.append(self.key)
+    return original_full_clean(self, *args, **kwargs)
+
+  monkeypatch.setattr(RecurringTask, "full_clean", counted_full_clean)
+
+  schedule_recurring_task(
+    key="dynamic-task",
+    task_path="tests.tasks.echo",
+    schedule="* * * * *",
+  )
+
+  assert calls == ["dynamic-task"]
