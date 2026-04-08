@@ -44,6 +44,8 @@ def fire_recurring_task(recurring_task, run_at, *, backend_alias="default"):
         run_at=run_at,
       )
     except IntegrityError:
+      # treat an existing reservation row as authoritative even if its job backfill
+      # has not happened yet, so duplicate scheduler ticks never enqueue twice
       return None
 
     task = import_string(recurring_task.task_path).using(
