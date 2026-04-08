@@ -73,3 +73,12 @@ def record_once(directory, value):
   with os.fdopen(descriptor, "w") as handle:
     handle.write(value)
   return value
+
+
+@task
+def signal_and_wait(directory, value):
+  control_dir = Path(directory)
+  (control_dir / "started").write_text(value)
+  while (control_dir / "release").exists() is False:
+    time.sleep(0.01)
+  return value
