@@ -65,9 +65,16 @@
 - 🔁 Not a `django.tasks` backend.
 - 🔁 ORM mode uses receipt and lock-timeout updates rather than `SKIP LOCKED` row claiming.
 
+**Solid Queue**
+
+- 👑 State-table data model, `SKIP LOCKED` claiming, fork/async supervision, semaphore concurrency, recurring tasks.
+- 🔁 dj_queue adds result storage, async enqueueing, and PostgreSQL `LISTEN/NOTIFY` wakeups.
+- 🔁 dj_queue centralizes state transitions in a single operations layer rather than spreading them across models.
+
 ### When to use something else
 
 - **Celery**: you need canvas workflows, broad broker support, or already run Redis/RabbitMQ
 - **Procrastinate**: you're PostgreSQL-only, want async workers, and don't need `django.tasks`
 - **RQ**: you already run Redis or Valkey and want simplicity over tight Django integration
 - **django-tasks-db**: you want the smallest possible database-backed `django.tasks` backend
+- **Solid Queue**: you are a Railshead
