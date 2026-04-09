@@ -1,6 +1,6 @@
 # dj_queue examples
 
-Self-contained examples demonstrating dj_queue features.
+Self-contained examples demonstrating `dj_queue` features.
 
 `DB_BACKEND` in this directory is an example harness variable, not a public
 `dj_queue` setting. It switches the examples between SQLite, PostgreSQL, MySQL,
@@ -46,5 +46,5 @@ DB_BACKEND=mariadb examples/ex01_basic_enqueue.py
 | `ex23_advanced_error_handling.py` | failed job inspection, retry, discard | failed metadata, then a ready retry, then full discard |
 | `ex24_advanced_multi_db.py` | `database_alias` plus `DjQueueRouter` on a real two-db setup | queue tables stay off `default` and work lands on `queue` |
 | `ex25_advanced_asgi.py` | real ASGI lifespan startup and shutdown | `lifespan.startup.complete`, successful job execution, `lifespan.shutdown.complete` |
-| `ex26_advanced_uvicorn.py` | a real `uvicorn` process with embedded dj_queue | HTTP enqueue followed by a successful HTTP result poll |
-| `ex27_advanced_gunicorn.py` | a real `gunicorn` worker with embedded dj_queue | HTTP enqueue followed by a successful HTTP result poll |
+| `ex26_advanced_uvicorn.py` | a real `uvicorn` process with embedded `dj_queue` | HTTP enqueue followed by a successful HTTP result poll |
+| `ex27_advanced_gunicorn.py` | a real `gunicorn` worker with embedded `dj_queue` | HTTP enqueue followed by a successful HTTP result poll |

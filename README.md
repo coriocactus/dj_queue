@@ -1,7 +1,6 @@
 # dj_queue
 
-`dj_queue` is a database-backed task queue backend for Django's `django.tasks`
-framework.
+`dj_queue` is a database-backed task queue backend for the `django.tasks` framework.
 
 It keeps the queue, live execution state, runtime metadata, and task results in
 your database.
@@ -10,26 +9,22 @@ your database.
 - PostgreSQL is the first-class production backend
 - MySQL 8+, MariaDB 10.6+, and SQLite are supported
 - immediate, scheduled, recurring, and concurrency-limited work
-- fork and async runtime modes
-- multi-database aware from day one
 
-`dj_queue` is inspired by Rails solid_queue, but shaped to fit Django's task
-backend API and long-running process model.
+`dj_queue` is inspired by Rails' [Solid Queue](https://github.com/rails/solid_queue), 
+but shaped to fit Django's [task backend API](https://docs.djangoproject.com/en/6.0/topics/tasks/).
 
 ## Why dj_queue
 
-The database is the queue.
+Django applications already depend on the database as the durable system of
+record. `dj_queue` lets background work follow the same model.
 
-That gives `dj_queue` a narrow, explicit shape:
+It has a narrow, explicit shape:
 
 - application code uses Django's `@task` API
 - `DjQueueBackend` stores jobs and results in Django-managed tables
 - workers, dispatchers, and schedulers all share one operations layer
 - PostgreSQL can use `LISTEN/NOTIFY` and `SKIP LOCKED` as optimizations
 - polling remains the correctness path on every supported database
-
-If your application already depends on the database being the durable system of
-record, `dj_queue` lets background work follow the same model.
 
 ## Installation
 
@@ -77,6 +72,9 @@ TASKS = {
 }
 ```
 
+The router is optional when using the default database, but harmless to include
+and required for [multi-database setups](#multi-database-setup).
+
 Run migrations:
 
 ```bash
@@ -89,9 +87,7 @@ Define a task with Django's `@task` decorator:
 
 ```python
 # myapp/tasks.py
-
 from django.tasks import task
-
 
 @task
 def add(a, b):
@@ -125,19 +121,76 @@ print(fresh_result.return_value)
 
 When the worker has executed the job, `fresh_result.return_value` will be `10`.
 
-## Data Contract
+## Common Patterns
 
-Job payloads and persisted return values are stored in JSON columns, so they
-must be JSON round-trippable.
+### Scheduled jobs
 
-- enqueueing args or kwargs that cannot round-trip through JSON fails immediately
-- returning a non-JSON-serializable value marks the job failed instead of
-  leaving it claimed forever
+Use `run_after` to keep work out of the ready queue until a future time:
 
-If you need to pass model instances, files, or custom objects, store them
-elsewhere and pass identifiers or serialized data instead.
+```python
+from datetime import timedelta
+from django.utils import timezone
+from myapp.tasks import send_digest
 
-## How dj_queue runs
+future = timezone.now() + timedelta(hours=1)
+send_digest.using(run_after=future).enqueue("daily")
+```
+
+### Priorities and named queues
+
+Use `priority` and `queue_name` on the task call itself:
+
+```python
+from myapp.tasks import deliver_email
+
+deliver_email.using(queue_name="email", priority=10).enqueue("welcome")
+deliver_email.using(queue_name="email", priority=-5).enqueue("digest")
+```
+
+### Bulk enqueue
+
+Use `enqueue_all()` when you need one backend call to submit many jobs:
+
+```python
+from myapp.tasks import process_item
+
+results = process_item.get_backend().enqueue_all(
+  [(process_item, [item_id], {}) for item_id in range(5)]
+)
+```
+
+### Enqueue after commit
+
+`enqueue()` writes immediately. If a task depends on rows that are still inside
+the current transaction, use `enqueue_on_commit()`:
+
+```python
+from django.db import transaction
+from dj_queue.api import enqueue_on_commit
+from myapp.tasks import send_receipt
+
+with transaction.atomic():
+  order = create_order()
+  enqueue_on_commit(send_receipt, order.id)
+```
+
+### Examples
+
+The repository ships real runnable examples in `examples/`.
+
+Recommended entry points:
+
+- [examples/ex01_basic_enqueue.py](examples/ex01_basic_enqueue.py)
+- [examples/ex07_basic_enqueue_on_commit.py](examples/ex07_basic_enqueue_on_commit.py)
+- [examples/ex08_basic_recurring.py](examples/ex08_basic_recurring.py)
+- [examples/ex20_advanced_concurrency.py](examples/ex20_advanced_concurrency.py)
+- [examples/ex21_advanced_queue_control.py](examples/ex21_advanced_queue_control.py)
+- [examples/ex24_advanced_multi_db.py](examples/ex24_advanced_multi_db.py)
+- [examples/ex25_advanced_asgi.py](examples/ex25_advanced_asgi.py)
+
+The [examples index](examples/README.md) lists the full progression.
+
+## How it Works
 
 `python manage.py dj_queue` starts a supervisor for one backend alias.
 
@@ -174,77 +227,7 @@ If you're familiar with Solid Queue, the same high-level tradeoff is described
 in its [fork vs async mode](https://github.com/rails/solid_queue?tab=readme-ov-file#fork-vs-async-mode)
 section.
 
-## Choose a setup
-
-Once migrations are in place, start processing jobs with `python manage.py dj_queue`
-on the machine that should do the work. With the default configuration, this
-starts the supervisor, workers, and dispatcher for the default backend alias and
-processes all queues.
-
-For most deployments, start with a standalone `dj_queue` process. Reach for a
-dedicated queue database before you reach for embedded mode.
-
-- single database, standalone process: easiest way to start. Use the app
-  database and run `python manage.py dj_queue`
-- dedicated queue database: recommended production default. Keep queue tables
-  and runtime traffic on `database_alias`. See [Multi-Database Setup](#multi-database-setup)
-- embedded server mode: run `dj_queue` inside ASGI or Gunicorn when you want
-  queue execution colocated with the server process. See [Embedded Server Mode](#embedded-server-mode)
-
-For small deployments, running `dj_queue` on the same machine as the web server
-is often enough. When you need more capacity, multiple machines can point at
-the same queue database. Full `python manage.py dj_queue` instances coordinate
-through database locking, so workers and dispatchers share load safely and
-recurring firing stays deduplicated across schedulers.
-
-In practice, keep recurring settings identical on every full node and prefer one
-full instance plus additional `python manage.py dj_queue --only-work` nodes.
-Add `--only-dispatch` nodes only when you need more scheduled-job promotion or
-concurrency-maintenance throughput.
-
-## Common Patterns
-
-### Scheduled jobs
-
-Use `run_after` to keep work out of the ready queue until a future time:
-
-```python
-from datetime import timedelta
-
-from django.utils import timezone
-
-from myapp.tasks import send_digest
-
-future = timezone.now() + timedelta(hours=1)
-send_digest.using(run_after=future).enqueue("daily")
-```
-
-### Priorities and named queues
-
-Use `priority` and `queue_name` on the task call itself:
-
-```python
-from myapp.tasks import deliver_email
-
-deliver_email.using(queue_name="email", priority=10).enqueue("welcome")
-deliver_email.using(queue_name="email", priority=-5).enqueue("digest")
-```
-
-### Bulk enqueue
-
-Use `enqueue_all()` when you need one backend call to submit many jobs:
-
-```python
-from myapp.tasks import process_item
-
-results = process_item.get_backend().enqueue_all(
-  [(process_item, [item_id], {}) for item_id in range(5)]
-)
-```
-
-## Ordering and transactions
-
-Queue ordering rules:
+### Claiming order
 
 - within one selected queue, higher numeric `priority` is claimed first
 - across multiple queue selectors, selector order wins
@@ -255,19 +238,29 @@ For example, a worker configured with `queues: ["email", "default"]` will
 prefer ready work from `email` before `default`, even if `default` contains
 higher-priority rows.
 
-`enqueue()` writes immediately. If a task depends on rows that are still inside
-the current transaction, use `enqueue_on_commit()`:
+## Database Support
 
-```python
-from django.db import transaction
+| Backend | Support level | Notes |
+|---|---|---|
+| PostgreSQL | first-class | polling, `SKIP LOCKED`, and optional `LISTEN/NOTIFY` |
+| MySQL 8+ | supported | polling plus `SKIP LOCKED` |
+| MariaDB 10.6+ | supported | polling plus `SKIP LOCKED` |
+| SQLite | supported with limits | polling only, serialized writes, no `SKIP LOCKED`, no `LISTEN/NOTIFY`; practical for development, CI, and smaller deployments |
 
-from dj_queue.api import enqueue_on_commit
-from myapp.tasks import send_receipt
+Polling is the portability path everywhere. Backend-specific features improve
+latency and throughput but are not correctness requirements.
 
-with transaction.atomic():
-  order = create_order()
-  enqueue_on_commit(send_receipt, order.id)
-```
+## Data Contract
+
+Job payloads and persisted return values are stored in JSON columns, so they
+must be JSON round-trippable.
+
+- enqueueing args or kwargs that cannot round-trip through JSON fails immediately
+- returning a non-JSON-serializable value marks the job failed instead of
+  leaving it claimed forever
+
+If you need to pass model instances, files, or custom objects, store them
+elsewhere and pass identifiers or serialized data instead.
 
 ## Recurring Tasks
 
@@ -326,17 +319,17 @@ separate recurring service.
 
 ## Concurrency Controls
 
-Tasks can opt into database-backed concurrency limits by defining concurrency
-metadata on the wrapped function:
+Tasks can opt into database-backed concurrency limits.
+
+`django.tasks` has no standard way to pass backend-specific options through the
+`@task` decorator, so `dj_queue` reads them as attributes on the wrapped function:
 
 ```python
 from django.tasks import task
 
-
 @task
 def sync_account(account_id, action):
   return f"{account_id}:{action}"
-
 
 sync_account.func.concurrency_key = "account:{account_id}"
 sync_account.func.concurrency_limit = 1
@@ -382,7 +375,7 @@ If Django admin is installed, `dj_queue` also registers the main operational
 models there, including jobs, failed executions, processes, recurring tasks,
 pauses, and semaphores.
 
-## Failed jobs
+## Failed Jobs
 
 When a task raises, `dj_queue` keeps the job and its failed execution row in the
 queue database, including the exception class, message, and traceback.
@@ -452,7 +445,6 @@ Wrap your ASGI application with `DjQueueLifespan`:
 
 ```python
 from django.core.asgi import get_asgi_application
-
 from dj_queue.contrib.asgi import DjQueueLifespan
 
 django_application = get_asgi_application()
@@ -465,7 +457,6 @@ Import the provided hooks in your Gunicorn config:
 
 ```python
 # gunicorn.conf.py
-
 from dj_queue.contrib.gunicorn import post_fork, worker_exit
 ```
 
@@ -473,6 +464,32 @@ Both embedded integrations use `AsyncSupervisor(standalone=False)` and leave
 signal handling to the host server.
 
 ## Configuration
+
+Once migrations are in place, start processing jobs with `python manage.py dj_queue`
+on the machine that should do the work. With the default configuration, this
+starts the supervisor, workers, and dispatcher for the default backend alias and
+processes all queues.
+
+For most deployments, start with a standalone `dj_queue` process. Reach for a
+dedicated queue database before you reach for embedded mode.
+
+- single database, standalone process: easiest way to start. Use the app
+  database and run `python manage.py dj_queue`
+- dedicated queue database: recommended production default. Keep queue tables
+  and runtime traffic on `database_alias`. See [Multi-Database Setup](#multi-database-setup)
+- embedded server mode: run `dj_queue` inside ASGI or Gunicorn when you want
+  queue execution colocated with the server process. See [Embedded Server Mode](#embedded-server-mode)
+
+For small deployments, running `dj_queue` on the same machine as the web server
+is often enough. When you need more capacity, multiple machines can point at
+the same queue database. Full `python manage.py dj_queue` instances coordinate
+through database locking, so workers and dispatchers share load safely and
+recurring firing stays deduplicated across schedulers.
+
+In practice, keep recurring settings identical on every full node and prefer one
+full instance plus additional `python manage.py dj_queue --only-work` nodes.
+Add `--only-dispatch` nodes only when you need more scheduled-job promotion or
+concurrency-maintenance throughput.
 
 The main configuration lives in `TASKS[backend_alias]["OPTIONS"]`.
 
@@ -504,11 +521,11 @@ Configuration precedence is explicit:
 
 ### YAML file config
 
-You can point `dj_queue` at a YAML file with either `--config` or
-`DJ_QUEUE_CONFIG`:
-
 ```bash
+# via cli
 python manage.py dj_queue --config /etc/dj_queue.yml
+
+# or via environment variable
 DJ_QUEUE_CONFIG=/etc/dj_queue.yml python manage.py dj_queue
 ```
 
@@ -558,30 +575,6 @@ Environment overrides currently supported by `dj_queue` itself:
 - `DJ_QUEUE_MODE`
 - `DJ_QUEUE_SKIP_RECURRING`
 
-## Database Support
+## License
 
-| Backend | Support level | Notes |
-|---|---|---|
-| PostgreSQL | first-class | polling, `SKIP LOCKED`, and optional `LISTEN/NOTIFY` |
-| MySQL 8+ | supported | polling plus `SKIP LOCKED` |
-| MariaDB 10.6+ | supported | polling plus `SKIP LOCKED` |
-| SQLite | supported with limits | polling only, serialized writes, no `SKIP LOCKED`, no `LISTEN/NOTIFY`; practical for development, CI, and smaller deployments |
-
-Polling is the portability path everywhere. Backend-specific features improve
-latency and throughput but are not correctness requirements.
-
-## Examples
-
-The repository ships real runnable examples in `examples/`.
-
-Recommended entry points:
-
-- [examples/ex01_basic_enqueue.py](examples/ex01_basic_enqueue.py)
-- [examples/ex07_basic_enqueue_on_commit.py](examples/ex07_basic_enqueue_on_commit.py)
-- [examples/ex08_basic_recurring.py](examples/ex08_basic_recurring.py)
-- [examples/ex20_advanced_concurrency.py](examples/ex20_advanced_concurrency.py)
-- [examples/ex21_advanced_queue_control.py](examples/ex21_advanced_queue_control.py)
-- [examples/ex24_advanced_multi_db.py](examples/ex24_advanced_multi_db.py)
-- [examples/ex25_advanced_asgi.py](examples/ex25_advanced_asgi.py)
-
-The [examples index](examples/README.md) lists the full progression.
+MIT
