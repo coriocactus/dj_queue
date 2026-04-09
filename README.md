@@ -3,7 +3,8 @@
 `dj_queue` is a database-backed task queue backend for the `django.tasks` framework.
 
 It keeps the queue, live execution state, runtime metadata, and task results in
-your database.
+your database. By default, finished jobs stay there until scheduler cleanup
+prunes them after `86400` seconds.
 
 - no Redis, RabbitMQ, or separate result store
 - PostgreSQL is the first-class production backend
@@ -25,6 +26,9 @@ It has a narrow, explicit shape:
 - workers, dispatchers, and schedulers all share one operations layer
 - PostgreSQL can use `LISTEN/NOTIFY` and `SKIP LOCKED` as optimizations
 - polling remains the correctness path on every supported database
+
+For detailed comparisons with Celery, RQ, Procrastinate, and other alternatives,
+see [COMPARISONS.md](COMPARISONS.md).
 
 ## Installation
 
@@ -380,8 +384,8 @@ pauses, and semaphores.
 When a task raises, `dj_queue` keeps the job and its failed execution row in the
 queue database, including the exception class, message, and traceback.
 
-You can retry or discard failed jobs through Django admin or the operations
-layer:
+You can retry failed jobs through Django admin, or retry and discard them
+through the operations layer:
 
 ```python
 from dj_queue.operations.jobs import discard_failed_job, retry_failed_job
@@ -469,8 +473,8 @@ signal handling to the host server.
 
 Once migrations are in place, start processing jobs with `python manage.py dj_queue`
 on the machine that should do the work. With the default configuration, this
-starts the supervisor, workers, and dispatcher for the default backend alias and
-processes all queues.
+starts the supervisor, workers, dispatcher, and scheduler for the default
+backend alias and processes all queues.
 
 For most deployments, start with a standalone `dj_queue` process. Reach for a
 dedicated queue database before you reach for embedded mode.
