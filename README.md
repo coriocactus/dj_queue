@@ -1,5 +1,11 @@
 # dj_queue
 
+[![CI](https://github.com/coriocactus/dj_queue/actions/workflows/ci.yml/badge.svg)](https://github.com/coriocactus/dj_queue/actions/workflows/ci.yml)
+![PyPI](https://img.shields.io/pypi/v/dj-queue.svg)
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/dj-queue.svg)
+![PyPI - Status](https://img.shields.io/pypi/status/dj-queue.svg)
+![PyPI - License](https://img.shields.io/pypi/l/dj-queue.svg)
+
 `dj_queue` is a database-backed task queue backend for the `django.tasks` framework.
 
 It keeps the queue, live execution state, runtime metadata, and task results in
