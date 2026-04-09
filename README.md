@@ -10,7 +10,7 @@ your database.
 - MySQL 8+, MariaDB 10.6+, and SQLite are supported
 - immediate, scheduled, recurring, and concurrency-limited work
 
-`dj_queue` is inspired by Rails' [Solid Queue](https://github.com/rails/solid_queue), 
+`dj_queue` is inspired by Rails' [Solid Queue](https://github.com/rails/solid_queue),
 but shaped to fit Django's [task backend API](https://docs.djangoproject.com/en/6.0/topics/tasks/).
 
 ## Why dj_queue
@@ -223,9 +223,9 @@ Mode and topology notes:
 - `--only-dispatch` starts dispatchers without workers or scheduler
 - `--skip-recurring` starts without the scheduler
 
-If you're familiar with Solid Queue, the same high-level tradeoff is described
-in its [fork vs async mode](https://github.com/rails/solid_queue?tab=readme-ov-file#fork-vs-async-mode)
-section.
+`fork` runs each worker, dispatcher, and scheduler as a separate OS process.
+`async` runs them as threads in one process, i.e., lower memory, less isolation.
+Default is `fork`. Use `async` for embedded mode or memory-constrained environments.
 
 ### Claiming order
 
@@ -465,6 +465,8 @@ signal handling to the host server.
 
 ## Configuration
 
+### Deployment topology
+
 Once migrations are in place, start processing jobs with `python manage.py dj_queue`
 on the machine that should do the work. With the default configuration, this
 starts the supervisor, workers, and dispatcher for the default backend alias and
@@ -491,6 +493,8 @@ full instance plus additional `python manage.py dj_queue --only-work` nodes.
 Add `--only-dispatch` nodes only when you need more scheduled-job promotion or
 concurrency-maintenance throughput.
 
+### Options
+
 The main configuration lives in `TASKS[backend_alias]["OPTIONS"]`.
 
 Start with these options:
@@ -511,6 +515,8 @@ Additional operational tuning is available when needed, including
 On PostgreSQL, `listen_notify` uses the same Django PostgreSQL driver
 configuration as the main database connection. Install a compatible driver in
 your project, or use `dj-queue[postgres]` to pull in `psycopg`.
+
+### Precedence
 
 Configuration precedence is explicit:
 
