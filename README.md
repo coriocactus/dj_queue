@@ -8,9 +8,7 @@
 
 `dj_queue` is a database-backed task queue backend for the `django.tasks` framework.
 
-It keeps the queue, live execution state, runtime metadata, and task results in
-your database. By default, finished jobs stay there until scheduler cleanup
-prunes them after `86400` seconds.
+It keeps the queue, live execution state, runtime metadata, and task results in your database.
 
 - no Redis, RabbitMQ, or separate result store
 - PostgreSQL is the first-class production backend
@@ -514,8 +512,7 @@ Start with these options:
 - `dispatchers`: scheduled promotion and concurrency maintenance settings
 - `scheduler`: dynamic recurring polling settings
 - `database_alias`: database alias for queue tables and runtime activity
-- `preserve_finished_jobs` and `clear_finished_jobs_after`: result retention and
-  cleanup
+- `preserve_finished_jobs` and `clear_finished_jobs_after`: result retention and cleanup
 
 Additional operational tuning is available when needed, including
 `use_skip_locked`, `listen_notify`, `silence_polling`,
