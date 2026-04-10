@@ -6,9 +6,23 @@
   {{ block.super }}
   <link rel="stylesheet" type="text/css" href="{% static 'admin/css/changelists.css' %}">
   <style>
-    .djq-dashboard {
+    #content-main.djq-dashboard {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      overflow-x: hidden;
       display: grid;
       gap: 1.25rem;
+      box-sizing: border-box;
+    }
+
+    .djq-hero,
+    .djq-summary-grid,
+    .djq-section {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
     }
 
     .djq-hero {
@@ -21,14 +35,15 @@
 
     @media (min-width: 1100px) {
       .djq-hero {
-        grid-template-columns: minmax(0, 2fr) minmax(20rem, 1fr);
+        grid-template-columns: minmax(0, 1.9fr) minmax(18rem, 0.95fr);
         align-items: start;
       }
     }
 
     .djq-hero-main {
       display: grid;
-      gap: 0.9rem;
+      gap: 0.95rem;
+      min-width: 0;
     }
 
     .djq-eyebrow {
@@ -54,74 +69,91 @@
       line-height: 1.5;
     }
 
-    .djq-backend-bar {
-      display: flex;
-      gap: 0.75rem;
-      align-items: center;
-      flex-wrap: wrap;
-      padding: 0.85rem 1rem;
+    .djq-backend-strip {
+      display: grid;
+      gap: 0.9rem;
+      padding: 1rem;
       border: 1px solid rgba(38, 75, 94, 0.12);
-      background: rgba(255, 255, 255, 0.72);
+      background: rgba(255, 255, 255, 0.84);
+      min-width: 0;
     }
 
-    .djq-backend-bar form {
-      display: inline-flex;
-      gap: 0.5rem;
+    @media (min-width: 900px) {
+      .djq-backend-strip {
+        grid-template-columns: minmax(16rem, 20rem) minmax(0, 1fr);
+        align-items: start;
+      }
+    }
+
+    .djq-backend-switch {
+      display: grid;
+      gap: 0.4rem;
+      align-content: start;
+    }
+
+    .djq-backend-switch label {
+      color: #264b5e;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .djq-backend-switch form {
+      display: flex;
+      gap: 0.6rem;
       align-items: center;
       flex-wrap: wrap;
       margin: 0;
     }
 
-    .djq-backend-label {
+    .djq-backend-switch select {
+      min-width: 14rem;
+      max-width: 100%;
+    }
+
+    .djq-backend-caption {
+      margin: 0;
+      color: #4c5b66;
+      font-size: 0.86rem;
+      line-height: 1.45;
+    }
+
+    .djq-backend-facts {
+      display: grid;
+      gap: 0.7rem 0.9rem;
+      grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+      margin: 0;
+      min-width: 0;
+    }
+
+    .djq-backend-facts div {
+      min-width: 0;
+    }
+
+    .djq-backend-facts dt {
+      margin: 0;
+      color: #4c5b66;
+      font-size: 0.76rem;
       font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
     }
 
-    .djq-current-backend {
-      display: inline-flex;
-      gap: 0.5rem;
-      align-items: baseline;
-      padding: 0.3rem 0.6rem;
-      border-radius: 999px;
-      background: rgba(38, 75, 94, 0.08);
-      color: #264b5e;
-      font-weight: 700;
-    }
-
-    .djq-current-backend code {
-      font-size: 0.84rem;
-    }
-
-    .djq-chip-list,
-    .djq-raw-links,
-    .djq-section-links,
-    .djq-queue-controls {
-      display: flex;
-      gap: 0.5rem;
-      flex-wrap: wrap;
-      align-items: center;
-    }
-
-    .djq-chip {
-      display: inline-flex;
-      gap: 0.45rem;
-      align-items: center;
-      padding: 0.3rem 0.6rem;
-      border: 1px solid rgba(38, 75, 94, 0.12);
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.9);
-      font-size: 0.83rem;
-      white-space: nowrap;
-    }
-
-    .djq-chip strong {
-      color: #264b5e;
+    .djq-backend-facts dd {
+      margin: 0.2rem 0 0;
+      color: #1f1f1f;
+      font-size: 0.95rem;
+      line-height: 1.3;
+      word-break: break-word;
     }
 
     .djq-shared-note,
     .djq-raw-panel {
       padding: 0.95rem 1rem;
       border: 1px solid rgba(38, 75, 94, 0.12);
-      background: rgba(255, 255, 255, 0.78);
+      background: rgba(255, 255, 255, 0.82);
+      min-width: 0;
     }
 
     .djq-shared-note {
@@ -136,12 +168,17 @@
 
     .djq-raw-panel {
       display: grid;
-      gap: 0.85rem;
+      gap: 0.9rem;
     }
 
     .djq-raw-panel h2,
-    .djq-section-head h2 {
+    .djq-section-head h2,
+    .djq-summary-card h2 {
       margin: 0;
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
     }
 
     .djq-raw-group {
@@ -151,10 +188,20 @@
 
     .djq-raw-group h3 {
       margin: 0;
-      font-size: 0.88rem;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
       color: #4c5b66;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .djq-raw-links,
+    .djq-queue-controls,
+    .djq-paginator-links {
+      display: flex;
+      gap: 0.6rem;
+      align-items: center;
+      flex-wrap: wrap;
     }
 
     .djq-summary-grid {
@@ -167,19 +214,11 @@
       padding: 0.95rem 1rem;
       border: 1px solid rgba(38, 75, 94, 0.12);
       background: rgba(255, 255, 255, 0.9);
+      min-width: 0;
     }
 
-    .djq-summary-card h2,
     .djq-summary-card p {
       margin: 0;
-    }
-
-    .djq-summary-card h2 {
-      color: #4c5b66;
-      font-size: 0.82rem;
-      font-weight: 700;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
     }
 
     .djq-summary-value {
@@ -197,53 +236,95 @@
     }
 
     .djq-section {
-      padding-bottom: 0.5rem;
+      overflow: hidden;
     }
 
     .djq-section-head {
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
+      align-items: baseline;
       gap: 0.75rem;
       flex-wrap: wrap;
-      padding: 1rem 1rem 0.85rem;
+      padding: 1rem;
+      border-bottom: 1px solid rgba(38, 75, 94, 0.1);
+      background: rgba(38, 75, 94, 0.04);
     }
 
     .djq-section-copy {
-      margin: 0.2rem 0 0;
+      margin: 0.25rem 0 0;
       color: #4c5b66;
       font-size: 0.9rem;
       line-height: 1.45;
     }
 
-    .djq-section-meta {
-      display: grid;
-      justify-items: end;
-      gap: 0.5rem;
-      min-width: 15rem;
-    }
-
     .djq-section-count {
       color: #4c5b66;
-      font-size: 0.86rem;
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
     }
 
     .djq-table-wrap {
+      max-width: 100%;
       overflow-x: auto;
-      padding: 0 1rem;
+      -webkit-overflow-scrolling: touch;
     }
 
     .djq-table {
       width: 100%;
-      min-width: 52rem;
-      table-layout: auto;
       border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    .djq-table th,
+    .djq-table td {
+      overflow-wrap: anywhere;
     }
 
     .djq-table code {
       white-space: pre-wrap;
       word-break: break-word;
       font-size: 0.82rem;
+    }
+
+    .djq-col-name {
+      width: 13rem;
+    }
+
+    .djq-col-controls {
+      width: 11rem;
+    }
+
+    .djq-col-metadata {
+      width: 18rem;
+    }
+
+    .djq-process-row-group {
+      background: rgba(38, 75, 94, 0.04);
+    }
+
+    .djq-process-row-child th:first-child {
+      position: relative;
+      padding-left: 2rem;
+    }
+
+    .djq-process-row-child th:first-child::before {
+      content: "";
+      position: absolute;
+      left: 0.9rem;
+      top: 0.7rem;
+      bottom: 0.7rem;
+      width: 2px;
+      background: rgba(38, 75, 94, 0.16);
+    }
+
+    .djq-process-meta {
+      display: block;
+      margin-top: 0.15rem;
+      color: #4c5b66;
+      font-size: 0.78rem;
+      font-weight: 400;
     }
 
     .djq-status-live {
@@ -262,18 +343,55 @@
       align-items: center;
       gap: 0.75rem;
       flex-wrap: wrap;
-      padding: 0.85rem 1rem 0;
+      padding: 0.85rem 1rem 1rem;
+      border-top: 1px solid rgba(38, 75, 94, 0.08);
     }
 
-    .djq-paginator p {
+    .djq-paginator p,
+    .djq-empty {
       margin: 0;
       color: #4c5b66;
       font-size: 0.86rem;
+      line-height: 1.45;
     }
 
     .djq-empty {
-      padding: 0 1rem 1rem;
-      color: #4c5b66;
+      padding: 1rem;
+    }
+
+    @media (max-width: 1280px) {
+      .djq-col-oldest,
+      .djq-col-blocked-until,
+      .djq-col-finished,
+      .djq-col-metadata {
+        display: none;
+      }
+    }
+
+    @media (max-width: 1100px) {
+      .djq-col-workers,
+      .djq-col-last-run,
+      .djq-col-next-run,
+      .djq-col-hostname {
+        display: none;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .djq-col-latency,
+      .djq-col-pid {
+        display: none;
+      }
+
+      .djq-summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 640px) {
+      .djq-summary-grid {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 {% endblock %}
@@ -298,26 +416,28 @@
           Use the raw tables only when you need exhaustive browsing or lower-level debugging.
         </p>
 
-        <div class="djq-backend-bar">
-          <form method="get">
-            <label class="djq-backend-label" for="id_backend">backend</label>
-            <select id="id_backend" name="backend">
-              {% for choice in backend_choices %}
-                <option value="{{ choice.alias }}"{% if choice.alias == backend_alias %} selected{% endif %}>{{ choice.alias }} (db {{ choice.database_alias }})</option>
-              {% endfor %}
-            </select>
-            <button type="submit" class="button">Switch</button>
-          </form>
-          <span class="djq-current-backend">
-            <span>current</span>
-            <code>{{ backend_alias }}</code>
-          </span>
-        </div>
+        <div class="djq-backend-strip">
+          <div class="djq-backend-switch">
+            <label for="id_backend">backend</label>
+            <form method="get">
+              <select id="id_backend" name="backend" onchange="this.form.submit()">
+                {% for choice in backend_choices %}
+                  <option value="{{ choice.alias }}"{% if choice.alias == backend_alias %} selected{% endif %}>{{ choice.alias }} (db {{ choice.database_alias }})</option>
+                {% endfor %}
+              </select>
+              <noscript><button type="submit" class="button">Switch</button></noscript>
+            </form>
+            <p class="djq-backend-caption">Selecting a backend changes job-state views by backend alias and control-plane views by queue database alias.</p>
+          </div>
 
-        <div class="djq-chip-list">
-          {% for chip in status_chips %}
-            <span class="djq-chip"><strong>{{ chip.label }}</strong> {{ chip.value }}</span>
-          {% endfor %}
+          <dl class="djq-backend-facts">
+            {% for fact in backend_facts %}
+              <div>
+                <dt>{{ fact.label }}</dt>
+                <dd>{{ fact.value }}</dd>
+              </div>
+            {% endfor %}
+          </dl>
         </div>
 
         {% if shared_aliases|length > 1 %}
@@ -372,14 +492,7 @@
           <h2>queues</h2>
           <p class="djq-section-copy">Live queue pressure, pause state, and first-line controls for this backend.</p>
         </div>
-        <div class="djq-section-meta">
-          <span class="djq-section-count">{{ queue_section.start_index }}-{{ queue_section.end_index }} of {{ queue_section.total_count }}</span>
-          <div class="djq-section-links">
-            <a href="{% url 'admin:dj_queue_job_changelist' %}?backend_name__exact={{ backend_alias }}">raw jobs</a>
-            <a href="{% url 'admin:dj_queue_failedexecution_changelist' %}?job__backend_name__exact={{ backend_alias }}">failed rows</a>
-            <a href="{% url 'admin:dj_queue_pause_changelist' %}">pause rows</a>
-          </div>
-        </div>
+        <span class="djq-section-count">{% if queue_section.total_count %}{{ queue_section.start_index }}-{{ queue_section.end_index }} of {{ queue_section.total_count }}{% else %}0 of 0{% endif %}</span>
       </div>
 
       {% if queue_section.rows %}
@@ -387,37 +500,37 @@
           <table class="djq-table" id="result_list">
             <thead>
               <tr>
-                <th>name</th>
+                <th class="djq-col-name">name</th>
                 <th>ready</th>
                 <th>claimed</th>
                 <th>scheduled</th>
                 <th>blocked</th>
                 <th>failed</th>
-                <th>finished</th>
+                <th class="djq-col-finished">finished</th>
                 <th>paused</th>
-                <th>latency</th>
-                <th>workers</th>
-                <th>oldest scheduled</th>
-                <th>blocked until</th>
-                <th>controls</th>
+                <th class="djq-col-latency">latency</th>
+                <th class="djq-col-workers">workers</th>
+                <th class="djq-col-oldest">oldest scheduled</th>
+                <th class="djq-col-blocked-until">blocked until</th>
+                <th class="djq-col-controls">controls</th>
               </tr>
             </thead>
             <tbody>
               {% for queue in queue_section.rows %}
                 <tr class="{% cycle 'row1' 'row2' %}">
-                  <th><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=ready">{{ queue.name }}</a></th>
+                  <th class="djq-col-name"><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=ready">{{ queue.name }}</a></th>
                   <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=ready">{{ queue.ready_count }}</a></td>
                   <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=claimed">{{ queue.claimed_count }}</a></td>
                   <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=scheduled">{{ queue.scheduled_count }}</a></td>
                   <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=blocked">{{ queue.blocked_count }}</a></td>
                   <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=failed">{{ queue.failed_count }}</a></td>
-                  <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=finished">{{ queue.finished_count }}</a></td>
+                  <td class="djq-col-finished"><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=finished">{{ queue.finished_count }}</a></td>
                   <td>{{ queue.paused|yesno:"yes,no" }}</td>
-                  <td>{% if queue.latency_seconds != None %}{{ queue.latency_seconds|floatformat:1 }}s{% else %}-{% endif %}</td>
-                  <td>{{ queue.live_worker_count }}</td>
-                  <td>{{ queue.oldest_scheduled_at|date:"Y-m-d H:i:s"|default:"-" }}</td>
-                  <td>{{ queue.oldest_blocked_at|date:"Y-m-d H:i:s"|default:"-" }}</td>
-                  <td>
+                  <td class="djq-col-latency">{% if queue.latency_seconds != None %}{{ queue.latency_seconds|floatformat:1 }}s{% else %}-{% endif %}</td>
+                  <td class="djq-col-workers">{{ queue.live_worker_count }}</td>
+                  <td class="djq-col-oldest">{{ queue.oldest_scheduled_at|date:"Y-m-d H:i:s"|default:"-" }}</td>
+                  <td class="djq-col-blocked-until">{{ queue.oldest_blocked_at|date:"Y-m-d H:i:s"|default:"-" }}</td>
+                  <td class="djq-col-controls">
                     <div class="djq-queue-controls">
                       <form method="post" action="{% url 'admin:dj_queue_dashboard_queue_action' queue.name %}">
                         {% csrf_token %}
@@ -443,7 +556,7 @@
         {% if queue_section.previous_query or queue_section.next_query %}
           <div class="djq-paginator">
             <p>Overview tables stay paged so large backends do not turn this screen into an unbounded changelist.</p>
-            <div class="djq-section-links">
+            <div class="djq-paginator-links">
               {% if queue_section.previous_query %}
                 <a href="?{{ queue_section.previous_query }}#{{ queue_section.anchor }}">previous</a>
               {% endif %}
@@ -462,14 +575,9 @@
       <div class="djq-section-head">
         <div>
           <h2>processes</h2>
-          <p class="djq-section-copy">Heartbeat freshness and runtime metadata for workers, dispatchers, schedulers, and supervisors.</p>
+          <p class="djq-section-copy">Supervisor-first runtime topology so workers, dispatchers, and schedulers read as one grouped runtime.</p>
         </div>
-        <div class="djq-section-meta">
-          <span class="djq-section-count">{{ process_section.start_index }}-{{ process_section.end_index }} of {{ process_section.total_count }}</span>
-          <div class="djq-section-links">
-            <a href="{% url 'admin:dj_queue_process_changelist' %}">raw processes</a>
-          </div>
-        </div>
+        <span class="djq-section-count">{% if process_section.total_count %}{{ process_section.start_index }}-{{ process_section.end_index }} of {{ process_section.total_count }}{% else %}0 of 0{% endif %}</span>
       </div>
 
       {% if process_section.rows %}
@@ -477,27 +585,28 @@
           <table class="djq-table" id="result_list">
             <thead>
               <tr>
-                <th>name</th>
+                <th class="djq-col-name">name</th>
                 <th>kind</th>
                 <th>status</th>
                 <th>heartbeat</th>
-                <th>hostname</th>
-                <th>pid</th>
-                <th>supervisor</th>
-                <th>metadata</th>
+                <th class="djq-col-hostname">hostname</th>
+                <th class="djq-col-pid">pid</th>
+                <th class="djq-col-metadata">metadata</th>
               </tr>
             </thead>
             <tbody>
               {% for process in process_section.rows %}
-                <tr class="{% cycle 'row1' 'row2' %}">
-                  <th>{{ process.name }}</th>
+                <tr class="{% cycle 'row1' 'row2' %}{% if process.is_group_head %} djq-process-row-group{% endif %}{% if process.is_child %} djq-process-row-child{% endif %}">
+                  <th class="djq-col-name">
+                    {{ process.name }}
+                    {% if process.is_child %}<span class="djq-process-meta">under {{ process.group_parent_name }}</span>{% endif %}
+                  </th>
                   <td>{{ process.kind }}</td>
                   <td><span class="{% if process.is_live %}djq-status-live{% else %}djq-status-stale{% endif %}">{% if process.is_live %}live{% else %}stale{% endif %}</span></td>
                   <td>{{ process.last_heartbeat_at|date:"Y-m-d H:i:s" }} ({{ process.heartbeat_age_seconds|floatformat:1 }}s ago)</td>
-                  <td>{{ process.hostname }}</td>
-                  <td>{{ process.pid }}</td>
-                  <td>{{ process.supervisor_name|default:"-" }}</td>
-                  <td><code>{{ process.metadata_json }}</code></td>
+                  <td class="djq-col-hostname">{{ process.hostname }}</td>
+                  <td class="djq-col-pid">{{ process.pid }}</td>
+                  <td class="djq-col-metadata"><code>{{ process.metadata_json }}</code></td>
                 </tr>
               {% endfor %}
             </tbody>
@@ -506,7 +615,7 @@
         {% if process_section.previous_query or process_section.next_query %}
           <div class="djq-paginator">
             <p>Process rows are paged here; use raw processes for exhaustive inspection.</p>
-            <div class="djq-section-links">
+            <div class="djq-paginator-links">
               {% if process_section.previous_query %}
                 <a href="?{{ process_section.previous_query }}#{{ process_section.anchor }}">previous</a>
               {% endif %}
@@ -527,12 +636,7 @@
           <h2>recurring tasks</h2>
           <p class="djq-section-copy">Scheduled work defined for this queue database, with next-fire context for operators.</p>
         </div>
-        <div class="djq-section-meta">
-          <span class="djq-section-count">{{ recurring_section.start_index }}-{{ recurring_section.end_index }} of {{ recurring_section.total_count }}</span>
-          <div class="djq-section-links">
-            <a href="{% url 'admin:dj_queue_recurringtask_changelist' %}">raw recurring tasks</a>
-          </div>
-        </div>
+        <span class="djq-section-count">{% if recurring_section.total_count %}{{ recurring_section.start_index }}-{{ recurring_section.end_index }} of {{ recurring_section.total_count }}{% else %}0 of 0{% endif %}</span>
       </div>
 
       {% if recurring_section.rows %}
@@ -540,25 +644,25 @@
           <table class="djq-table" id="result_list">
             <thead>
               <tr>
-                <th>key</th>
+                <th class="djq-col-name">key</th>
                 <th>task</th>
                 <th>queue</th>
                 <th>schedule</th>
                 <th>type</th>
-                <th>last run</th>
-                <th>next run</th>
+                <th class="djq-col-last-run">last run</th>
+                <th class="djq-col-next-run">next run</th>
               </tr>
             </thead>
             <tbody>
               {% for task in recurring_section.rows %}
                 <tr class="{% cycle 'row1' 'row2' %}">
-                  <th>{{ task.key }}</th>
+                  <th class="djq-col-name">{{ task.key }}</th>
                   <td>{{ task.task_path }}</td>
                   <td>{{ task.queue_name }}</td>
                   <td><code>{{ task.schedule }}</code></td>
                   <td>{% if task.static %}static{% else %}dynamic{% endif %}</td>
-                  <td>{{ task.last_run_at|default:"-" }}</td>
-                  <td>{{ task.next_run_at|default:"-" }}</td>
+                  <td class="djq-col-last-run">{{ task.last_run_at|default:"-" }}</td>
+                  <td class="djq-col-next-run">{{ task.next_run_at|default:"-" }}</td>
                 </tr>
               {% endfor %}
             </tbody>
@@ -567,7 +671,7 @@
         {% if recurring_section.previous_query or recurring_section.next_query %}
           <div class="djq-paginator">
             <p>Recurring tasks are paged here; use raw recurring tasks for exhaustive inspection.</p>
-            <div class="djq-section-links">
+            <div class="djq-paginator-links">
               {% if recurring_section.previous_query %}
                 <a href="?{{ recurring_section.previous_query }}#{{ recurring_section.anchor }}">previous</a>
               {% endif %}
@@ -588,12 +692,7 @@
           <h2>semaphores</h2>
           <p class="djq-section-copy">Concurrency state for hot keys, including waiters and expiry windows.</p>
         </div>
-        <div class="djq-section-meta">
-          <span class="djq-section-count">{{ semaphore_section.start_index }}-{{ semaphore_section.end_index }} of {{ semaphore_section.total_count }}</span>
-          <div class="djq-section-links">
-            <a href="{% url 'admin:dj_queue_semaphore_changelist' %}">raw semaphores</a>
-          </div>
-        </div>
+        <span class="djq-section-count">{% if semaphore_section.total_count %}{{ semaphore_section.start_index }}-{{ semaphore_section.end_index }} of {{ semaphore_section.total_count }}{% else %}0 of 0{% endif %}</span>
       </div>
 
       {% if semaphore_section.rows %}
@@ -601,7 +700,7 @@
           <table class="djq-table" id="result_list">
             <thead>
               <tr>
-                <th>key</th>
+                <th class="djq-col-name">key</th>
                 <th>available</th>
                 <th>limit</th>
                 <th>blocked waiters</th>
@@ -611,7 +710,7 @@
             <tbody>
               {% for semaphore in semaphore_section.rows %}
                 <tr class="{% cycle 'row1' 'row2' %}">
-                  <th>{{ semaphore.key }}</th>
+                  <th class="djq-col-name">{{ semaphore.key }}</th>
                   <td>{{ semaphore.available_slots }}</td>
                   <td>{{ semaphore.limit }}</td>
                   <td>{{ semaphore.blocked_waiters }}</td>
@@ -624,7 +723,7 @@
         {% if semaphore_section.previous_query or semaphore_section.next_query %}
           <div class="djq-paginator">
             <p>Semaphore rows are paged here; use raw semaphores for exhaustive inspection.</p>
-            <div class="djq-section-links">
+            <div class="djq-paginator-links">
               {% if semaphore_section.previous_query %}
                 <a href="?{{ semaphore_section.previous_query }}#{{ semaphore_section.anchor }}">previous</a>
               {% endif %}

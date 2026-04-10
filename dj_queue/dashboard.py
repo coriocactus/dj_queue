@@ -130,7 +130,7 @@ def dashboard_context(*, backend_alias, query_params=None):
       recurring_rows=recurring_rows,
       semaphore_rows=semaphore_rows,
     ),
-    "status_chips": _status_chips(
+    "backend_facts": _backend_facts(
       config=config,
       queue_database_alias=queue_database_alias,
       recurring_count=len(recurring_rows),
@@ -327,13 +327,13 @@ def _summary_cards(*, queue_rows, process_rows, recurring_rows, semaphore_rows):
   )
 
 
-def _status_chips(*, config, queue_database_alias, recurring_count, semaphore_count):
+def _backend_facts(*, config, queue_database_alias, recurring_count, semaphore_count):
   retention = "disabled"
   if config.clear_finished_jobs_after is not None:
     retention = f"{config.clear_finished_jobs_after}s"
 
   return (
-    {"label": "backend mode", "value": config.mode},
+    {"label": "mode", "value": config.mode},
     {"label": "queue db", "value": queue_database_alias},
     {"label": "scheduler", "value": "enabled" if config.has_scheduler_work else "disabled"},
     {"label": "notify", "value": "on" if config.listen_notify else "off"},
@@ -490,25 +490,63 @@ def _queue_rows(*, backend_alias, now, process_cutoff):
 
 def _process_rows(*, backend_alias, now, process_cutoff):
   alias = get_database_alias(backend_alias)
+  processes = list(Process.objects.using(alias).select_related("supervisor").order_by("name"))
+  children = defaultdict(list)
+  roots = []
+
+  for process in processes:
+    row = _process_row(process, now=now, process_cutoff=process_cutoff)
+    if process.supervisor_id is not None:
+      children[process.supervisor_id].append(row)
+      continue
+    roots.append(row)
+
   rows = []
-  for process in (
-    Process.objects.using(alias).select_related("supervisor").order_by("kind", "name")
-  ):
-    age_seconds = max((now - process.last_heartbeat_at).total_seconds(), 0.0)
-    rows.append(
-      {
-        "name": process.name,
-        "kind": process.kind,
-        "pid": process.pid,
-        "hostname": process.hostname,
-        "metadata_json": json.dumps(process.metadata, sort_keys=True),
-        "last_heartbeat_at": process.last_heartbeat_at,
-        "heartbeat_age_seconds": age_seconds,
-        "is_live": process.last_heartbeat_at >= process_cutoff,
-        "supervisor_name": process.supervisor.name if process.supervisor_id else None,
-      }
-    )
+  grouped_roots = sorted(
+    roots,
+    key=lambda row: (
+      0 if row["kind"] == "Supervisor" else 1,
+      row["name"],
+    ),
+  )
+  for root in grouped_roots:
+    root["is_group_head"] = bool(children.get(root["id"]))
+    root["is_child"] = False
+    rows.append(root)
+    for child in sorted(
+      children.get(root["id"], []),
+      key=lambda row: (_process_kind_order(row["kind"]), row["name"]),
+    ):
+      child["is_group_head"] = False
+      child["is_child"] = True
+      child["group_parent_name"] = root["name"]
+      rows.append(child)
   return rows
+
+
+def _process_row(process, *, now, process_cutoff):
+  age_seconds = max((now - process.last_heartbeat_at).total_seconds(), 0.0)
+  return {
+    "id": process.id,
+    "name": process.name,
+    "kind": process.kind,
+    "pid": process.pid,
+    "hostname": process.hostname,
+    "metadata_json": json.dumps(process.metadata, sort_keys=True),
+    "last_heartbeat_at": process.last_heartbeat_at,
+    "heartbeat_age_seconds": age_seconds,
+    "is_live": process.last_heartbeat_at >= process_cutoff,
+    "supervisor_name": process.supervisor.name if process.supervisor_id else None,
+  }
+
+
+def _process_kind_order(kind):
+  order = {
+    "Dispatcher": 0,
+    "Scheduler": 1,
+    "Worker": 2,
+  }
+  return order.get(kind, 99)
 
 
 def _recurring_rows(*, backend_alias, now):
