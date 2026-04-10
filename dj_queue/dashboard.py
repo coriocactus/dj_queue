@@ -495,6 +495,7 @@ def _process_rows(*, backend_alias, now, process_cutoff):
   grouped_roots = sorted(
     roots,
     key=lambda row: (
+      0 if row["is_live"] else 1,
       0 if row["kind"] == "Supervisor" else 1,
       row["name"],
     ),
@@ -505,7 +506,7 @@ def _process_rows(*, backend_alias, now, process_cutoff):
     rows.append(root)
     for child in sorted(
       children.get(root["id"], []),
-      key=lambda row: (_process_kind_order(row["kind"]), row["name"]),
+      key=lambda row: (0 if row["is_live"] else 1, _process_kind_order(row["kind"]), row["name"]),
     ):
       child["is_group_head"] = False
       child["is_child"] = True

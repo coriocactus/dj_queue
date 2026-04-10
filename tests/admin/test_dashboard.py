@@ -169,6 +169,32 @@ def test_dashboard_processes_group_children_under_supervisor(admin_client):
   assert "under supervisor-1" in content
 
 
+def test_dashboard_processes_sort_live_rows_first(admin_client):
+  now = timezone.now()
+  Process.objects.create(
+    kind="Supervisor",
+    pid=201,
+    hostname="localhost",
+    name="stale-supervisor",
+    metadata={"mode": "async"},
+    last_heartbeat_at=now - timedelta(minutes=10),
+  )
+  Process.objects.create(
+    kind="Supervisor",
+    pid=202,
+    hostname="localhost",
+    name="live-supervisor",
+    metadata={"mode": "async"},
+    last_heartbeat_at=now,
+  )
+
+  response = admin_client.get(reverse("admin:dj_queue_dashboard_changelist"))
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert content.index("live-supervisor") < content.index("stale-supervisor")
+
+
 def test_dashboard_overview_pages_large_sections(admin_client):
   for index in range(19):
     make_ready_job(queue_name=f"queue-{index:02d}")
