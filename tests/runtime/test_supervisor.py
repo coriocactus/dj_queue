@@ -3,6 +3,7 @@ import time
 from uuid import uuid4
 
 import pytest
+from django.db.utils import OperationalError
 from django.utils import timezone
 
 from dj_queue.config import load_backend_config
@@ -118,10 +119,20 @@ def build_fork_supervisor(
 def wait_until(predicate, timeout=1):
   deadline = time.monotonic() + timeout
   while time.monotonic() < deadline:
-    if predicate():
-      return
+    try:
+      if predicate():
+        return
+    except OperationalError as error:
+      if "locked" not in str(error).lower():
+        raise
     time.sleep(0.01)
-  assert predicate()
+
+  try:
+    assert predicate()
+  except OperationalError as error:
+    if "locked" not in str(error).lower():
+      raise
+    pytest.fail(f"timed out waiting for predicate after database lock: {error}")
 
 
 def test_startup_orphan_cleanup_fails_leftover_claimed_jobs():
@@ -172,6 +183,7 @@ def test_prune_stale_process_rows_fails_their_claimed_jobs():
   supervisor.stop()
 
 
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 def test_async_supervisor_starts_configured_runners_in_one_pid():
   supervisor = build_async_supervisor(
     tasks_settings=async_tasks_settings(
@@ -200,40 +212,56 @@ def test_async_supervisor_restarts_crashed_runner_and_fails_its_claimed_jobs():
     tasks_settings=async_tasks_settings(dispatchers=[]),
   )
   process = supervisor.start()
-  wait_until(lambda: Process.objects.filter(supervisor=process, kind="Worker").count() == 1)
 
-  # grab the worker and attach a claimed job, then force a crash
-  worker = supervisor.runners[0]
-  original_process_pk = worker.process.pk
-  job = make_job(task_path="tests.tasks.echo", queue_name="default")
-  ClaimedExecution.objects.create(job=job, process=worker.process)
-  original_poll = worker.poll_once
+  try:
+    wait_until(lambda: Process.objects.filter(supervisor=process, kind="Worker").count() == 1)
 
-  crash_count = 0
+    # grab the worker and attach a claimed job, then force a crash
+    worker = supervisor.runners[0]
+    original_process_pk = worker.process.pk
+    job = make_job(task_path="tests.tasks.echo", queue_name="default")
+    ClaimedExecution.objects.create(job=job, process=worker.process)
+    original_poll = worker.poll_once
 
-  def crashing_poll():
-    nonlocal crash_count
-    crash_count += 1
-    if crash_count == 1:
-      raise RuntimeError("simulated worker crash")
-    return original_poll()
+    crash_count = 0
 
-  worker.poll_once = crashing_poll
+    def crashing_poll():
+      nonlocal crash_count
+      crash_count += 1
+      if crash_count == 1:
+        raise RuntimeError("simulated worker crash")
+      return original_poll()
 
-  # wait for the crash to be detected and a new process row to appear
-  wait_until(lambda: crash_count >= 1, timeout=2)
-  wait_until(
-    lambda: (
-      Process.objects.filter(supervisor=process, kind="Worker").count() == 1
-      and not Process.objects.filter(pk=original_process_pk).exists()
-    ),
-    timeout=2,
-  )
+    worker.poll_once = crashing_poll
 
-  # the old process row was cleaned up and a fresh one registered
-  new_worker_process = Process.objects.get(supervisor=process, kind="Worker")
-  assert new_worker_process.pk != original_process_pk
-  assert new_worker_process.name == "worker-1"
+    # wait for the crash to be detected and a replacement runner to register
+    wait_until(lambda: crash_count >= 1, timeout=2)
+    wait_until(
+      lambda: (
+        supervisor.runners[0] is not worker
+        and supervisor.runners[0].process is not None
+        and supervisor.runners[0].process.pk != original_process_pk
+        and not Process.objects.filter(pk=original_process_pk).exists()
+      ),
+      timeout=2,
+    )
+
+    # the old runner was replaced and the replacement process row is registered
+    replacement_worker = supervisor.runners[0]
+    new_worker_process = replacement_worker.process
+    assert new_worker_process is not None
+    assert new_worker_process.pk != original_process_pk
+    assert new_worker_process.name == "worker-1"
+    assert (
+      Process.objects.filter(
+        pk=new_worker_process.pk,
+        supervisor=process,
+        kind="Worker",
+      ).exists()
+      is True
+    )
+  finally:
+    supervisor.stop()
 
   # the claimed job was failed, not left orphaned
   assert ClaimedExecution.objects.filter(job=job).exists() is False
@@ -241,7 +269,8 @@ def test_async_supervisor_restarts_crashed_runner_and_fails_its_claimed_jobs():
   assert failed.exception_class == (
     f"{ProcessExitError.__module__}.{ProcessExitError.__qualname__}"
   )
-  supervisor.stop()
+
+  assert Process.objects.filter(supervisor=process, kind="Worker").exists() is False
 
 
 def test_async_supervisor_stop_does_not_restart_runner_after_stop_request():
@@ -249,18 +278,20 @@ def test_async_supervisor_stop_does_not_restart_runner_after_stop_request():
     tasks_settings=async_tasks_settings(dispatchers=[]),
   )
   process = supervisor.start()
-  wait_until(lambda: Process.objects.filter(supervisor=process, kind="Worker").count() == 1)
 
-  worker = supervisor.runners[0]
-  original_process_pk = worker.process.pk
+  try:
+    wait_until(lambda: Process.objects.filter(supervisor=process, kind="Worker").count() == 1)
 
-  def crashing_poll():
-    raise RuntimeError("simulated worker crash")
+    worker = supervisor.runners[0]
+    original_process_pk = worker.process.pk
 
-  worker.poll_once = crashing_poll
-  wait_until(lambda: not Process.objects.filter(pk=original_process_pk).exists(), timeout=2)
+    def crashing_poll():
+      raise RuntimeError("simulated worker crash")
 
-  supervisor.stop()
+    worker.poll_once = crashing_poll
+    wait_until(lambda: not Process.objects.filter(pk=original_process_pk).exists(), timeout=2)
+  finally:
+    supervisor.stop()
 
   assert Process.objects.filter(supervisor=process, kind="Worker").exists() is False
 
@@ -280,6 +311,7 @@ def test_async_mode_ignores_processes_greater_than_one():
   supervisor.stop()
 
 
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 def test_standalone_supervisor_registers_self_and_children():
   supervisor = build_async_supervisor(tasks_settings=async_tasks_settings(), standalone=True)
 

@@ -1,4 +1,4 @@
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import threading
 
 from django.db import close_old_connections, connections
@@ -19,6 +19,15 @@ def app_executor():
     yield
   finally:
     connections.close_all()
+
+
+_sqlite_process_write_lock = threading.Lock()
+
+
+def _process_write_context(alias):
+  if connections[alias].vendor == "sqlite":
+    return _sqlite_process_write_lock
+  return nullcontext()
 
 
 class BaseRunner:
@@ -141,22 +150,24 @@ class BaseRunner:
 
   def _register_process(self):
     alias = get_database_alias(self.backend_alias)
-    return Process.objects.using(alias).create(
-      kind=self.process_kind,
-      pid=self.pid,
-      hostname=self.hostname,
-      name=self.name,
-      metadata=self.process_metadata(),
-      supervisor=self.supervisor,
-      last_heartbeat_at=timezone.now(),
-    )
+    with _process_write_context(alias):
+      return Process.objects.using(alias).create(
+        kind=self.process_kind,
+        pid=self.pid,
+        hostname=self.hostname,
+        name=self.name,
+        metadata=self.process_metadata(),
+        supervisor=self.supervisor,
+        last_heartbeat_at=timezone.now(),
+      )
 
   def _deregister_process(self):
     if self.process is None:
       return
 
     alias = get_database_alias(self.backend_alias)
-    Process.objects.using(alias).filter(pk=self.process.pk).delete()
+    with _process_write_context(alias):
+      Process.objects.using(alias).filter(pk=self.process.pk).delete()
     self.process = None
 
   def _start_heartbeat_thread(self):
@@ -179,11 +190,12 @@ class BaseRunner:
         return
       try:
         with app_executor():
-          updated = (
-            Process.objects.using(alias)
-            .filter(pk=self.process.pk)
-            .update(last_heartbeat_at=timezone.now())
-          )
+          with _process_write_context(alias):
+            updated = (
+              Process.objects.using(alias)
+              .filter(pk=self.process.pk)
+              .update(last_heartbeat_at=timezone.now())
+            )
       except Exception as error:
         handle_thread_error(
           error,

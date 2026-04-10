@@ -231,10 +231,20 @@ class AsyncSupervisor(Supervisor):
           process_name=runner.name,
           kind=runner.process_kind,
         )
-        runner = self._rebuild_runner(runner)
+        replacement = self._rebuild_runner(runner)
+        self._replace_runner(runner, replacement)
+        runner = replacement
         runner.start()
     finally:
-      runner.stop()
+      if not self._stop_event.is_set():
+        runner.stop()
+
+  def _replace_runner(self, current, replacement):
+    try:
+      index = self.runners.index(current)
+    except ValueError:
+      return
+    self.runners[index] = replacement
 
   def _fail_crashed_runner_jobs(self, runner):
     if runner.process is None:
