@@ -53,3 +53,11 @@ class Pause(models.Model):
 
   class Meta:
     db_table = "dj_queue_pauses"
+
+
+class Dashboard(models.Model):
+  class Meta:
+    managed = False
+    default_permissions = ()
+    verbose_name = "dashboard"
+    verbose_name_plural = "dashboard"

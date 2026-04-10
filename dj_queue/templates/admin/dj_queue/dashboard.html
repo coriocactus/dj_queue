@@ -1,0 +1,291 @@
+{% extends "admin/base_site.html" %}
+
+{% load static %}
+
+{% block extrastyle %}
+  {{ block.super }}
+  <link rel="stylesheet" type="text/css" href="{% static 'admin/css/changelists.css' %}">
+  <style>
+    .dashboard-toolbar,
+    .queue-controls {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 1rem;
+    }
+
+    .queue-controls form,
+    .inline-form {
+      display: inline-flex;
+      gap: 0.5rem;
+      align-items: center;
+      margin: 0;
+    }
+
+    .dashboard-note {
+      margin-bottom: 1rem;
+      padding: 0.75rem 1rem;
+      border: 1px solid var(--hairline-color, #d4d4d4);
+      background: var(--darkened-bg, #f6f6f6);
+    }
+
+    .dashboard-summary {
+      margin-bottom: 1rem;
+    }
+
+    .dashboard-summary code,
+    td code {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .status-live {
+      color: #0b6b2d;
+      font-weight: 600;
+    }
+
+    .status-stale {
+      color: #8a4b00;
+      font-weight: 600;
+    }
+  </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+  <div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">Home</a>
+    &rsaquo; dj queue
+  </div>
+{% endblock %}
+
+{% block content_title %}<h1>dj queue dashboard</h1>{% endblock %}
+
+{% block content %}
+  <div id="content-main">
+    <div class="dashboard-toolbar">
+      <form method="get" class="inline-form">
+        <label for="id_backend"><strong>backend</strong></label>
+        <select id="id_backend" name="backend">
+          {% for choice in backend_choices %}
+            <option value="{{ choice.alias }}"{% if choice.alias == backend_alias %} selected{% endif %}>
+              {{ choice.alias }} (db {{ choice.database_alias }})
+            </option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="button">Switch</button>
+      </form>
+    </div>
+
+    <div class="dashboard-summary module">
+      <table>
+        <tbody>
+          <tr>
+            <th>mode</th>
+            <td>{{ config.mode }}</td>
+            <th>database alias</th>
+            <td>{{ queue_database_alias }}</td>
+          </tr>
+          <tr>
+            <th>listen notify</th>
+            <td>{{ config.listen_notify|yesno:"yes,no" }}</td>
+            <th>skip locked</th>
+            <td>{{ config.use_skip_locked|yesno:"yes,no" }}</td>
+          </tr>
+          <tr>
+            <th>scheduler</th>
+            <td>{{ config.has_scheduler_work|yesno:"enabled,disabled" }}</td>
+            <th>finished retention</th>
+            <td>{{ config.clear_finished_jobs_after|default:"disabled" }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    {% if shared_aliases|length > 1 %}
+      <div class="dashboard-note">
+        Control-plane rows for this view are shared on database alias <code>{{ queue_database_alias }}</code> by backends
+        <code>{{ shared_aliases|join:", " }}</code>
+      </div>
+    {% endif %}
+
+    <div class="module" id="queue-summary">
+      <h2>queues</h2>
+      {% if queue_rows %}
+        <div class="results">
+          <table id="result_list">
+            <thead>
+              <tr>
+                <th>name</th>
+                <th>ready</th>
+                <th>claimed</th>
+                <th>scheduled</th>
+                <th>blocked</th>
+                <th>failed</th>
+                <th>finished</th>
+                <th>paused</th>
+                <th>latency</th>
+                <th>workers</th>
+                <th>controls</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for queue in queue_rows %}
+                <tr class="{% cycle 'row1' 'row2' %}">
+                  <th>
+                    <a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=ready">{{ queue.name }}</a>
+                  </th>
+                  <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=ready">{{ queue.ready_count }}</a></td>
+                  <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=claimed">{{ queue.claimed_count }}</a></td>
+                  <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=scheduled">{{ queue.scheduled_count }}</a></td>
+                  <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=blocked">{{ queue.blocked_count }}</a></td>
+                  <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=failed">{{ queue.failed_count }}</a></td>
+                  <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=finished">{{ queue.finished_count }}</a></td>
+                  <td>{{ queue.paused|yesno:"yes,no" }}</td>
+                  <td>
+                    {% if queue.latency_seconds != None %}
+                      {{ queue.latency_seconds|floatformat:1 }}s
+                    {% else %}
+                      -
+                    {% endif %}
+                  </td>
+                  <td>{{ queue.live_worker_count }}</td>
+                  <td>
+                    <div class="queue-controls">
+                      <form method="post" action="{% url 'admin:dj_queue_dashboard_queue_action' queue.name %}">
+                        {% csrf_token %}
+                        <input type="hidden" name="backend" value="{{ backend_alias }}">
+                        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                        <input type="hidden" name="action" value="{% if queue.paused %}resume{% else %}pause{% endif %}">
+                        <button type="submit" class="button">{% if queue.paused %}resume{% else %}pause{% endif %}</button>
+                      </form>
+                      <form method="post" action="{% url 'admin:dj_queue_dashboard_queue_action' queue.name %}">
+                        {% csrf_token %}
+                        <input type="hidden" name="backend" value="{{ backend_alias }}">
+                        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                        <input type="hidden" name="action" value="clear">
+                        <button type="submit" class="button">clear ready</button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="paginator">No queues found for this backend.</p>
+      {% endif %}
+    </div>
+
+    <div class="module" id="process-summary">
+      <h2>processes</h2>
+      {% if process_rows %}
+        <div class="results">
+          <table id="result_list">
+            <thead>
+              <tr>
+                <th>name</th>
+                <th>kind</th>
+                <th>status</th>
+                <th>heartbeat</th>
+                <th>hostname</th>
+                <th>pid</th>
+                <th>supervisor</th>
+                <th>metadata</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for process in process_rows %}
+                <tr class="{% cycle 'row1' 'row2' %}">
+                  <th>{{ process.name }}</th>
+                  <td>{{ process.kind }}</td>
+                  <td>
+                    <span class="{% if process.is_live %}status-live{% else %}status-stale{% endif %}">
+                      {% if process.is_live %}live{% else %}stale{% endif %}
+                    </span>
+                  </td>
+                  <td>{{ process.last_heartbeat_at|date:"Y-m-d H:i:s" }} ({{ process.heartbeat_age_seconds|floatformat:1 }}s ago)</td>
+                  <td>{{ process.hostname }}</td>
+                  <td>{{ process.pid }}</td>
+                  <td>{{ process.supervisor_name|default:"-" }}</td>
+                  <td><code>{{ process.metadata_json }}</code></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="paginator">No registered processes.</p>
+      {% endif %}
+    </div>
+
+    <div class="module" id="recurring-summary">
+      <h2>recurring tasks</h2>
+      {% if recurring_rows %}
+        <div class="results">
+          <table id="result_list">
+            <thead>
+              <tr>
+                <th>key</th>
+                <th>task</th>
+                <th>queue</th>
+                <th>schedule</th>
+                <th>type</th>
+                <th>last run</th>
+                <th>next run</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for task in recurring_rows %}
+                <tr class="{% cycle 'row1' 'row2' %}">
+                  <th>{{ task.key }}</th>
+                  <td>{{ task.task_path }}</td>
+                  <td>{{ task.queue_name }}</td>
+                  <td><code>{{ task.schedule }}</code></td>
+                  <td>{% if task.static %}static{% else %}dynamic{% endif %}</td>
+                  <td>{{ task.last_run_at|default:"-" }}</td>
+                  <td>{{ task.next_run_at|default:"-" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="paginator">No recurring tasks configured.</p>
+      {% endif %}
+    </div>
+
+    <div class="module" id="semaphore-summary">
+      <h2>semaphores</h2>
+      {% if semaphore_rows %}
+        <div class="results">
+          <table id="result_list">
+            <thead>
+              <tr>
+                <th>key</th>
+                <th>available</th>
+                <th>limit</th>
+                <th>blocked waiters</th>
+                <th>expires at</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for semaphore in semaphore_rows %}
+                <tr class="{% cycle 'row1' 'row2' %}">
+                  <th>{{ semaphore.key }}</th>
+                  <td>{{ semaphore.available_slots }}</td>
+                  <td>{{ semaphore.limit }}</td>
+                  <td>{{ semaphore.blocked_waiters }}</td>
+                  <td>{{ semaphore.expires_at|date:"Y-m-d H:i:s" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="paginator">No active semaphores.</p>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

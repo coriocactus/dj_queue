@@ -88,6 +88,23 @@ def test_failed_execution_admin_retry_action(admin_client):
   assert Job.objects.filter(pk=job.pk, ready_execution__isnull=False).exists() is True
 
 
+def test_failed_execution_admin_discard_action(admin_client):
+  job, failed = make_failed_job()
+
+  response = admin_client.post(
+    reverse("admin:dj_queue_failedexecution_changelist"),
+    {
+      "action": "discard_jobs",
+      "_selected_action": [str(failed.pk)],
+    },
+    follow=True,
+  )
+
+  assert response.status_code == 200
+  assert FailedExecution.objects.filter(pk=failed.pk).exists() is False
+  assert Job.objects.filter(pk=job.pk).exists() is False
+
+
 def test_process_admin_displays_metadata(admin_client):
   process = Process.objects.create(
     kind="Worker",

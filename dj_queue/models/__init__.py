@@ -7,11 +7,12 @@ from dj_queue.models.jobs import (
   ScheduledExecution,
 )
 from dj_queue.models.recurring import RecurringExecution, RecurringTask
-from dj_queue.models.runtime import Pause, Process, Semaphore
+from dj_queue.models.runtime import Dashboard, Pause, Process, Semaphore
 
 __all__ = [
   "BlockedExecution",
   "ClaimedExecution",
+  "Dashboard",
   "FailedExecution",
   "Job",
   "Pause",

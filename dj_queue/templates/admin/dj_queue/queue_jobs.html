@@ -1,0 +1,191 @@
+{% extends "admin/base_site.html" %}
+
+{% load static %}
+
+{% block extrastyle %}
+  {{ block.super }}
+  <link rel="stylesheet" type="text/css" href="{% static 'admin/css/changelists.css' %}">
+  <style>
+    .queue-toolbar,
+    .queue-tabs,
+    .queue-actions {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 1rem;
+    }
+
+    .queue-toolbar form,
+    .queue-actions,
+    .queue-actions form {
+      display: inline-flex;
+      gap: 0.5rem;
+      align-items: center;
+      margin: 0;
+    }
+
+    .queue-note {
+      margin-bottom: 1rem;
+      padding: 0.75rem 1rem;
+      border: 1px solid var(--hairline-color, #d4d4d4);
+      background: var(--darkened-bg, #f6f6f6);
+    }
+
+    .queue-tab-current {
+      font-weight: 600;
+    }
+
+    td code {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+  <div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">Home</a>
+    &rsaquo; <a href="{% url 'admin:dj_queue_dashboard_changelist' %}?backend={{ backend_alias }}">dj queue</a>
+    &rsaquo; {{ queue_name }}
+  </div>
+{% endblock %}
+
+{% block content_title %}<h1>{{ queue_name }} {{ state_label }} jobs</h1>{% endblock %}
+
+{% block content %}
+  <div id="content-main">
+    <div class="queue-toolbar">
+      <form method="post" action="{% url 'admin:dj_queue_dashboard_queue_action' queue_name %}">
+        {% csrf_token %}
+        <input type="hidden" name="backend" value="{{ backend_alias }}">
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <input type="hidden" name="action" value="{% if queue_paused %}resume{% else %}pause{% endif %}">
+        <button type="submit" class="button">{% if queue_paused %}resume{% else %}pause{% endif %}</button>
+      </form>
+      <form method="post" action="{% url 'admin:dj_queue_dashboard_queue_action' queue_name %}">
+        {% csrf_token %}
+        <input type="hidden" name="backend" value="{{ backend_alias }}">
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <input type="hidden" name="action" value="clear">
+        <button type="submit" class="button">clear ready</button>
+      </form>
+      <span><strong>backend</strong> {{ backend_alias }} (db {{ queue_database_alias }})</span>
+      <span><strong>paused</strong> {{ queue_paused|yesno:"yes,no" }}</span>
+    </div>
+
+    {% if shared_aliases|length > 1 %}
+      <div class="queue-note">
+        Control-plane rows for this view are shared on database alias <code>{{ queue_database_alias }}</code> by backends
+        <code>{{ shared_aliases|join:", " }}</code>
+      </div>
+    {% endif %}
+
+    <div class="queue-tabs">
+      {% for tab in state_tabs %}
+        {% if tab.selected %}
+          <span class="queue-tab-current">{{ tab.label }} ({{ tab.count }})</span>
+        {% else %}
+          <a href="{% url 'admin:dj_queue_dashboard_queue' queue_name %}?backend={{ backend_alias }}&state={{ tab.name }}">{{ tab.label }} ({{ tab.count }})</a>
+        {% endif %}
+      {% endfor %}
+    </div>
+
+    <div class="module">
+      <div class="changelist-form-container">
+        <form method="post" action="{% url 'admin:dj_queue_dashboard_job_action' queue_name %}">
+          {% csrf_token %}
+          <input type="hidden" name="backend" value="{{ backend_alias }}">
+          <input type="hidden" name="state" value="{{ state }}">
+          <input type="hidden" name="next" value="{{ request.get_full_path }}">
+
+          {% if job_actions %}
+            <div class="queue-actions">
+              <label for="id_action"><strong>action</strong></label>
+              <select id="id_action" name="action">
+                {% for action in job_actions %}
+                  <option value="{{ action.name }}">{{ action.label }}</option>
+                {% endfor %}
+              </select>
+              <button type="submit" class="button">Apply</button>
+            </div>
+          {% endif %}
+
+          {% if jobs %}
+            <div class="results">
+              <table id="result_list">
+                <thead>
+                  <tr>
+                    {% if job_actions %}<th></th>{% endif %}
+                    <th>id</th>
+                    <th>task</th>
+                    <th>priority</th>
+                    <th>created</th>
+                    {% if state == "claimed" %}
+                      <th>process</th>
+                      <th>started</th>
+                    {% elif state == "scheduled" %}
+                      <th>scheduled at</th>
+                    {% elif state == "blocked" %}
+                      <th>concurrency key</th>
+                      <th>expires at</th>
+                    {% elif state == "failed" %}
+                      <th>exception</th>
+                      <th>message</th>
+                    {% elif state == "finished" %}
+                      <th>finished at</th>
+                      <th>return value</th>
+                    {% endif %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for job in jobs %}
+                    <tr class="{% cycle 'row1' 'row2' %}">
+                      {% if job_actions %}
+                        <td><input type="checkbox" name="job_ids" value="{{ job.id }}"></td>
+                      {% endif %}
+                      <th><code>{{ job.id }}</code></th>
+                      <td>{{ job.task_path }}</td>
+                      <td>{{ job.priority }}</td>
+                      <td>{{ job.created_at|date:"Y-m-d H:i:s" }}</td>
+                      {% if state == "claimed" %}
+                        <td>{{ job.claimed_execution.process.name|default:"-" }}</td>
+                        <td>{{ job.claimed_execution.created_at|date:"Y-m-d H:i:s" }}</td>
+                      {% elif state == "scheduled" %}
+                        <td>{{ job.scheduled_execution.scheduled_at|date:"Y-m-d H:i:s" }}</td>
+                      {% elif state == "blocked" %}
+                        <td>{{ job.blocked_execution.concurrency_key }}</td>
+                        <td>{{ job.blocked_execution.expires_at|date:"Y-m-d H:i:s" }}</td>
+                      {% elif state == "failed" %}
+                        <td>{{ job.failed_execution.exception_class }}</td>
+                        <td>{{ job.failed_execution.message }}</td>
+                      {% elif state == "finished" %}
+                        <td>{{ job.finished_at|date:"Y-m-d H:i:s" }}</td>
+                        <td><code>{{ job.return_value }}</code></td>
+                      {% endif %}
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <p class="paginator">No {{ state_label }} jobs in {{ queue_name }}.</p>
+          {% endif %}
+
+          {% if page_obj.paginator.num_pages > 1 %}
+            <p class="paginator">
+              {% for page_number in page_obj.paginator.page_range %}
+                {% if page_number == page_obj.number %}
+                  <span class="this-page">{{ page_number }}</span>
+                {% else %}
+                  <a href="{% url 'admin:dj_queue_dashboard_queue' queue_name %}?backend={{ backend_alias }}&state={{ state }}&page={{ page_number }}">{{ page_number }}</a>
+                {% endif %}
+              {% endfor %}
+              {{ page_obj.paginator.count }} jobs
+            </p>
+          {% endif %}
+        </form>
+      </div>
+    </div>
+  </div>
+{% endblock %}
