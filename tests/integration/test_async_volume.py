@@ -36,6 +36,7 @@ def _queue_tasks(database_alias="default"):
         "scheduler": None,
         "process_heartbeat_interval": 0,
         "process_alive_threshold": 5,
+        "shutdown_timeout": 60,
         "preserve_finished_jobs": True,
         "clear_finished_jobs_after": None,
       },
@@ -80,8 +81,12 @@ def test_10k_tasks_async_mode_no_duplicates(queue_test_settings):
 
   try:
     wait_until(
-      lambda: Job.objects.filter(finished_at__isnull=False).count() == task_count,
-      timeout=120,
+      lambda: (
+        Job.objects.filter(finished_at__isnull=False).count() == task_count
+        and ReadyExecution.objects.count() == 0
+        and ClaimedExecution.objects.count() == 0
+      ),
+      timeout=240,
     )
 
     assert Process.objects.filter(kind="Worker").count() == 4
