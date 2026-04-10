@@ -10,7 +10,7 @@ from django.utils import timezone
 
 from dj_queue.api import QueueInfo, schedule_recurring_task, unschedule_recurring_task
 from dj_queue.config import load_backend_config
-from dj_queue.exceptions import ProcessExitError
+from dj_queue.exceptions import ProcessExitError, ProcessMissingError, ProcessPrunedError
 from dj_queue.models import (
   BlockedExecution,
   ClaimedExecution,
@@ -23,6 +23,7 @@ from dj_queue.models import (
   ScheduledExecution,
   Semaphore,
 )
+from dj_queue.operations.jobs import retry_failed_job
 from dj_queue.runtime.supervisor import AsyncSupervisor
 from tests.tasks import echo, limited
 
@@ -158,7 +159,7 @@ class RuntimeSimulation:
     self.claimed_job_ids_by_pause = {}
     self.active_recurring_keys = set()
     self.crash_count = 0
-    self.expected_crash_failures = 0
+    self.recovered_failure_classes = set()
     self.supervisor = AsyncSupervisor.from_backend_config(
       backend_alias="default",
       tasks_settings=simulation_tasks_settings(),
@@ -209,6 +210,8 @@ class RuntimeSimulation:
       self.scheduler_tick,
       self.complete_worker_task,
       self.crash_random_runner,
+      self.prune_random_runner,
+      self.retry_random_failed_job,
       self.advance_time,
       self.supervisor_tick,
     )
@@ -323,6 +326,19 @@ class RuntimeSimulation:
     runner = self.rng.choice(crashable)
     self._crash_runner(runner)
 
+  def prune_random_runner(self):
+    prunable = [runner for runner in self.supervisor.runners if runner.process is not None]
+    if not prunable:
+      return
+    runner = self.rng.choice(prunable)
+    self._prune_runner(runner)
+
+  def retry_random_failed_job(self):
+    failed_job_ids = list(FailedExecution.objects.values_list("job_id", flat=True))
+    if not failed_job_ids:
+      return
+    retry_failed_job(self.rng.choice(failed_job_ids))
+
   def supervisor_tick(self):
     self.supervisor.poll_once()
 
@@ -379,17 +395,45 @@ class RuntimeSimulation:
       assert failed_exit_classes == {
         f"{ProcessExitError.__module__}.{ProcessExitError.__qualname__}"
       }
-    assert crash_failures.count() >= self.expected_crash_failures
+
+    pruned_failures = FailedExecution.objects.filter(message__contains="process heartbeat expired")
+    pruned_classes = set(pruned_failures.values_list("exception_class", flat=True))
+    if pruned_classes:
+      assert pruned_classes == {
+        f"{ProcessPrunedError.__module__}.{ProcessPrunedError.__qualname__}"
+      }
+
+    missing_failures = FailedExecution.objects.filter(
+      message__contains="process no longer registered at supervisor startup"
+    )
+    missing_classes = set(missing_failures.values_list("exception_class", flat=True))
+    if missing_classes:
+      assert missing_classes == {
+        f"{ProcessMissingError.__module__}.{ProcessMissingError.__qualname__}"
+      }
+    observed_failure_classes = failed_exit_classes | pruned_classes | missing_classes
+    assert observed_failure_classes.issubset(
+      {
+        f"{ProcessExitError.__module__}.{ProcessExitError.__qualname__}",
+        f"{ProcessPrunedError.__module__}.{ProcessPrunedError.__qualname__}",
+        f"{ProcessMissingError.__module__}.{ProcessMissingError.__qualname__}",
+      }
+    )
+    self.recovered_failure_classes.update(observed_failure_classes)
 
   def _crash_runner(self, runner):
     self.crash_count += 1
+    expected_failures = 0
     if runner.process_kind == "Worker" and runner.process is not None:
-      self.expected_crash_failures += ClaimedExecution.objects.filter(
-        process=runner.process
-      ).count()
+      expected_failures = ClaimedExecution.objects.filter(process=runner.process).count()
     if runner.process_kind == "Worker":
       runner.pool.clear()
     self.supervisor._fail_crashed_runner_jobs(runner)
+    if expected_failures:
+      assert (
+        FailedExecution.objects.filter(message__contains="runner thread crashed").count()
+        >= expected_failures
+      )
     runner.stop(timeout=0) if runner.process_kind == "Worker" else runner.stop()
     replacement = self.supervisor._rebuild_runner(runner)
     replacement.sleeper = FakeSleeper()
@@ -399,6 +443,43 @@ class RuntimeSimulation:
     replacement.start()
     self.supervisor._replace_runner(runner, replacement)
     assert replacement.process is not None
+
+  def _prune_runner(self, runner):
+    if runner.process is None:
+      return
+
+    stale_process = runner.process
+    if runner.process_kind == "Worker":
+      runner.pool.clear()
+
+    stale_process.last_heartbeat_at = self.now - timedelta(days=365)
+    stale_process.save(update_fields=["last_heartbeat_at"])
+    self.supervisor.prune_stale_process_rows(now=self.now)
+    assert Process.objects.filter(pk=stale_process.pk).exists() is False
+
+    replacement = self.supervisor._rebuild_runner(runner)
+    replacement.sleeper = FakeSleeper()
+    if replacement.process_kind == "Worker":
+      replacement.pool = ManualWorkerPool(replacement.config.threads)
+      replacement.wakeup_backend = FakeWakeupBackend()
+    replacement.start()
+    self.supervisor._replace_runner(runner, replacement)
+    assert replacement.process is not None
+
+  def inject_startup_orphan(self):
+    orphan_job = limited.enqueue(1, value=self._next_value("orphan"))
+    worker = next(runner for runner in self.supervisor.runners if runner.process_kind == "Worker")
+    worker.poll_once()
+    worker.pool.clear()
+    claimed = ClaimedExecution.objects.get(job_id=orphan_job.id)
+    claimed.process = None
+    claimed.save(update_fields=["process"])
+    self.supervisor.fail_startup_orphaned_jobs()
+    failed = FailedExecution.objects.get(job_id=orphan_job.id)
+    assert failed.exception_class == (
+      f"{ProcessMissingError.__module__}.{ProcessMissingError.__qualname__}"
+    )
+    return orphan_job.id
 
   def _patch_time(self):
     self.monkeypatch.setattr("dj_queue.runtime.dispatcher.timezone.now", lambda: self.now)
@@ -435,6 +516,10 @@ def test_seeded_runtime_simulation_preserves_invariants(seed, monkeypatch):
   simulation.start()
 
   try:
+    orphan_job_id = simulation.inject_startup_orphan()
+    simulation.assert_invariants()
+    assert FailedExecution.objects.filter(job_id=orphan_job_id).exists() is True
+
     simulation.run(steps=SIMULATION_STEPS)
     simulation.drain()
   finally:
