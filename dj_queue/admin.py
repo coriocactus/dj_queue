@@ -154,6 +154,12 @@ class DashboardAdmin(admin.ModelAdmin):
 
 
 class HiddenSidebarAdminMixin:
+  def has_add_permission(self, request):
+    return False
+
+  def has_delete_permission(self, request, obj=None):
+    return False
+
   def get_model_perms(self, request):
     if not self.has_view_permission(request):
       return {}

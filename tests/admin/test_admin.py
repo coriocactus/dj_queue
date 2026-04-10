@@ -137,6 +137,16 @@ def test_process_admin_displays_metadata(admin_client):
   assert "threads" in content
 
 
+def test_process_admin_hides_add_button(admin_client):
+  make_process(last_heartbeat_at="2026-04-08T00:00:00Z")
+
+  response = admin_client.get(reverse("admin:dj_queue_process_changelist"))
+
+  assert response.status_code == 200
+  assert response.context["has_add_permission"] is False
+  assert "Add process" not in response.content.decode()
+
+
 def test_admin_index_hides_raw_dj_queue_models(admin_client):
   response = admin_client.get(reverse("admin:index"))
 

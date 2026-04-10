@@ -350,9 +350,11 @@ def _overview_section(*, rows, page_param, page_size, query_params, anchor):
   page_obj = paginator.get_page(query_params.get(page_param, 1))
   start_index = 0
   end_index = 0
+  summary_text = "0"
   if paginator.count:
     start_index = (page_obj.number - 1) * page_size + 1
     end_index = start_index + len(page_obj.object_list) - 1
+    summary_text = f"{start_index}-{end_index} of {paginator.count}"
 
   previous_query = None
   if page_obj.has_previous():
@@ -376,6 +378,7 @@ def _overview_section(*, rows, page_param, page_size, query_params, anchor):
     "total_count": paginator.count,
     "start_index": start_index,
     "end_index": end_index,
+    "summary_text": summary_text,
     "previous_query": previous_query,
     "next_query": next_query,
     "anchor": anchor,

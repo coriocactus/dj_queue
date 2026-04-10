@@ -29,10 +29,7 @@ def parse_args(argv):
   )
   parser.add_argument(
     "--db",
-    default=os.environ.get(
-      "DJ_QUEUE_DEV_ADMIN_DB",
-      str(PROJECT_ROOT / ".dev" / "dj_queue_admin.sqlite3"),
-    ),
+    default=os.environ.get("DJ_QUEUE_DEV_ADMIN_DB"),
   )
   parser.add_argument(
     "--username",
@@ -45,12 +42,36 @@ def parse_args(argv):
   parser.add_argument(
     "--no-seed",
     action="store_true",
+    default=_env_flag("DJ_QUEUE_DEV_ADMIN_NO_SEED", False),
     help="Keep existing dj_queue rows instead of reseeding demo data on startup.",
   )
-  return parser.parse_args(argv)
+  parser.add_argument(
+    "--reload",
+    dest="reload",
+    action="store_true",
+    default=_env_flag("DJ_QUEUE_DEV_ADMIN_RELOAD", True),
+    help="Reload on Python or template changes while developing the dashboard.",
+  )
+  parser.add_argument(
+    "--no-reload",
+    dest="reload",
+    action="store_false",
+    help="Disable code reload.",
+  )
+  args = parser.parse_args(argv)
+  if args.db is None:
+    args.db = str(PROJECT_ROOT / ".dev" / f"dj_queue_admin_{args.port}.sqlite3")
+  return args
 
 
-ARGS = parse_args(sys.argv[1:])
+def _env_flag(name, default):
+  raw = os.environ.get(name)
+  if raw is None:
+    return default
+  return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+ARGS = parse_args(sys.argv[1:] if __name__ == "__main__" else [])
 DB_PATH = Path(ARGS.db).expanduser().resolve()
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
@@ -112,20 +133,13 @@ if not settings.configured:
           "mode": "async",
           "workers": [
             {
-              "queues": "*",
+              "queues": ["interactive", "maintenance", "reports"],
               "threads": 1,
               "processes": 1,
               "polling_interval": 0.05,
-            }
+            },
           ],
-          "dispatchers": [
-            {
-              "batch_size": 100,
-              "polling_interval": 0.5,
-              "concurrency_maintenance": True,
-              "concurrency_maintenance_interval": 60,
-            }
-          ],
+          "dispatchers": [],
           "scheduler": {
             "dynamic_tasks_enabled": False,
             "polling_interval": 5,
@@ -134,10 +148,30 @@ if not settings.configured:
           "preserve_finished_jobs": True,
           "clear_finished_jobs_after": None,
           "process_heartbeat_interval": 1,
-          "process_alive_threshold": 5,
+          "process_alive_threshold": 120,
           "listen_notify": False,
         },
-      }
+      },
+      "critical": {
+        "BACKEND": "dj_queue.backend.DjQueueBackend",
+        "QUEUES": ["critical-paused", "alerts", "critical-review"],
+        "OPTIONS": {
+          "database_alias": "default",
+          "mode": "async",
+          "workers": [],
+          "dispatchers": [],
+          "scheduler": {
+            "dynamic_tasks_enabled": True,
+            "polling_interval": 10,
+          },
+          "recurring": {},
+          "preserve_finished_jobs": True,
+          "clear_finished_jobs_after": None,
+          "process_heartbeat_interval": 1,
+          "process_alive_threshold": 120,
+          "listen_notify": False,
+        },
+      },
     },
   )
 
@@ -175,7 +209,7 @@ from dj_queue.models import (  # noqa: E402
   ScheduledExecution,
   Semaphore,
 )
-from tests.tasks import add  # noqa: E402
+from tests.tasks import add, echo, fail, sleep_for  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +222,19 @@ def bootstrap():
   ensure_superuser(ARGS.username, ARGS.password)
   if not ARGS.no_seed:
     seed_demo_data()
+
+
+def export_runtime_env():
+  os.environ["DJ_QUEUE_DEV_ADMIN_HOST"] = ARGS.host
+  os.environ["DJ_QUEUE_DEV_ADMIN_PORT"] = str(ARGS.port)
+  os.environ["DJ_QUEUE_DEV_ADMIN_DB"] = str(DB_PATH)
+  os.environ["DJ_QUEUE_DEV_ADMIN_USER"] = ARGS.username
+  os.environ["DJ_QUEUE_DEV_ADMIN_PASSWORD"] = ARGS.password
+  os.environ["DJ_QUEUE_DEV_ADMIN_RELOAD"] = "1" if ARGS.reload else "0"
+  if ARGS.no_seed:
+    os.environ["DJ_QUEUE_DEV_ADMIN_NO_SEED"] = "1"
+  else:
+    os.environ.pop("DJ_QUEUE_DEV_ADMIN_NO_SEED", None)
 
 
 def ensure_superuser(username, password):
@@ -242,12 +289,27 @@ def seed_demo_data():
   Semaphore.objects.all().delete()
 
   Pause.objects.create(queue_name="paused-demo")
+  Pause.objects.create(queue_name="critical-paused")
+
   Semaphore.objects.create(
     key="account:demo",
     value=1,
     limit=2,
     expires_at=now + timedelta(minutes=10),
   )
+  Semaphore.objects.create(
+    key="account:reporting",
+    value=0,
+    limit=1,
+    expires_at=now + timedelta(minutes=20),
+  )
+  Semaphore.objects.create(
+    key="mailer:burst",
+    value=2,
+    limit=3,
+    expires_at=now + timedelta(minutes=5),
+  )
+
   RecurringTask.objects.create(
     key="demo-nightly",
     task_path="tests.tasks.echo",
@@ -258,48 +320,165 @@ def seed_demo_data():
     description="demo recurring task",
     static=False,
   )
-
-  ready_job = make_job(queue_name="paused-demo", priority=10, args=["ready-demo"])
-  ReadyExecution.objects.create(
-    job=ready_job,
-    queue_name=ready_job.queue_name,
-    priority=ready_job.priority,
-  )
-
-  scheduled_job = make_job(
-    queue_name="scheduled-demo",
+  RecurringTask.objects.create(
+    key="demo-hourly-report",
+    task_path="tests.tasks.echo",
+    payload={"args": ["hourly-report"], "kwargs": {}},
+    schedule="0 * * * *",
+    queue_name="reports",
     priority=5,
-    scheduled_at=now + timedelta(hours=1),
-    args=["scheduled-demo"],
+    description="hourly report build",
+    static=True,
   )
-  ScheduledExecution.objects.create(
-    job=scheduled_job,
-    queue_name=scheduled_job.queue_name,
-    priority=scheduled_job.priority,
-    scheduled_at=scheduled_job.scheduled_at,
-  )
-
-  blocked_job = make_job(
-    queue_name="blocked-demo",
-    priority=1,
-    concurrency_key="account:demo",
-    args=["blocked-demo"],
-  )
-  BlockedExecution.objects.create(
-    job=blocked_job,
-    queue_name=blocked_job.queue_name,
-    priority=blocked_job.priority,
-    concurrency_key=blocked_job.concurrency_key,
-    expires_at=now + timedelta(minutes=15),
+  RecurringTask.objects.create(
+    key="critical-audit",
+    task_path="tests.tasks.echo",
+    payload={"args": ["audit"], "kwargs": {}},
+    schedule="*/15 * * * *",
+    queue_name="critical-review",
+    priority=10,
+    description="critical backend audit sweep",
+    static=False,
   )
 
-  failed_job = make_job(queue_name="failed-demo", args=["boom"])
-  FailedExecution.objects.create(
-    job=failed_job,
-    exception_class="builtins.ValueError",
-    message="boom",
-    traceback="traceback",
+  RecurringExecution.objects.create(task_key="demo-nightly", run_at=now - timedelta(hours=9))
+  RecurringExecution.objects.create(
+    task_key="demo-hourly-report", run_at=now - timedelta(minutes=40)
   )
+  RecurringExecution.objects.create(task_key="critical-audit", run_at=now - timedelta(minutes=5))
+
+  legacy_supervisor = Process.objects.create(
+    kind="Supervisor",
+    pid=88001,
+    hostname="legacy-host.local",
+    name="legacy-supervisor-1",
+    metadata={
+      "mode": "async",
+      "worker_count": 2,
+      "dispatcher_count": 1,
+      "has_scheduler": True,
+    },
+    last_heartbeat_at=now - timedelta(seconds=18),
+  )
+  Process.objects.create(
+    kind="Dispatcher",
+    pid=88011,
+    hostname="legacy-host.local",
+    name="legacy-dispatcher-1",
+    metadata={"batch_size": 50, "polling_interval": 1.0},
+    supervisor=legacy_supervisor,
+    last_heartbeat_at=now - timedelta(seconds=17),
+  )
+  Process.objects.create(
+    kind="Scheduler",
+    pid=88012,
+    hostname="legacy-host.local",
+    name="legacy-scheduler-1",
+    metadata={"dynamic_tasks_enabled": True, "polling_interval": 5},
+    supervisor=legacy_supervisor,
+    last_heartbeat_at=now - timedelta(seconds=17),
+  )
+  Process.objects.create(
+    kind="Worker",
+    pid=88021,
+    hostname="legacy-host.local",
+    name="legacy-worker-1",
+    metadata={"queues": ["interactive", "reports"], "threads": 1},
+    supervisor=legacy_supervisor,
+    last_heartbeat_at=now - timedelta(seconds=16),
+  )
+  Process.objects.create(
+    kind="Worker",
+    pid=88022,
+    hostname="legacy-host.local",
+    name="legacy-worker-2",
+    metadata={"queues": ["maintenance"], "threads": 1},
+    supervisor=legacy_supervisor,
+    last_heartbeat_at=now - timedelta(seconds=15),
+  )
+
+  for index in range(3):
+    ready_job = make_job(
+      queue_name="paused-demo",
+      priority=10 - index,
+      args=[f"paused-{index}"],
+    )
+    ReadyExecution.objects.create(
+      job=ready_job,
+      queue_name=ready_job.queue_name,
+      priority=ready_job.priority,
+    )
+
+  for index in range(5):
+    ready_job = make_job(
+      queue_name="backfill-import",
+      priority=index % 3,
+      args=[f"backfill-{index}"],
+    )
+    ReadyExecution.objects.create(
+      job=ready_job,
+      queue_name=ready_job.queue_name,
+      priority=ready_job.priority,
+    )
+
+  critical_ready = make_job(
+    backend_name="critical",
+    queue_name="critical-paused",
+    priority=15,
+    args=["critical-ready"],
+  )
+  ReadyExecution.objects.create(
+    job=critical_ready,
+    queue_name=critical_ready.queue_name,
+    priority=critical_ready.priority,
+  )
+
+  for offset, name in ((1, "scheduled-demo"), (6, "reports-later")):
+    scheduled_job = make_job(
+      queue_name=name,
+      priority=5,
+      scheduled_at=now + timedelta(hours=offset),
+      args=[name],
+    )
+    ScheduledExecution.objects.create(
+      job=scheduled_job,
+      queue_name=scheduled_job.queue_name,
+      priority=scheduled_job.priority,
+      scheduled_at=scheduled_job.scheduled_at,
+    )
+
+  blocked_specs = (
+    ("blocked-demo", "demo", "account:demo", 1, 15),
+    ("report-waiters", "reporting", "account:reporting", 4, 25),
+  )
+  for queue_name, account_id, concurrency_key, priority, expiry_minutes in blocked_specs:
+    blocked_job = make_job(
+      task_path="tests.tasks.limited",
+      queue_name=queue_name,
+      priority=priority,
+      concurrency_key=concurrency_key,
+      args=[account_id, queue_name],
+    )
+    BlockedExecution.objects.create(
+      job=blocked_job,
+      queue_name=blocked_job.queue_name,
+      priority=blocked_job.priority,
+      concurrency_key=blocked_job.concurrency_key,
+      expires_at=now + timedelta(minutes=expiry_minutes),
+    )
+
+  failed_specs = (
+    ("failed-demo", "default", "boom"),
+    ("alerts", "critical", "smtp timeout"),
+  )
+  for queue_name, backend_name, message in failed_specs:
+    failed_job = make_job(queue_name=queue_name, backend_name=backend_name, args=[message])
+    FailedExecution.objects.create(
+      job=failed_job,
+      exception_class="builtins.ValueError",
+      message=message,
+      traceback="traceback",
+    )
 
   make_job(
     task_path="tests.tasks.add",
@@ -307,6 +486,21 @@ def seed_demo_data():
     args=[2, 3],
     finished_at=now,
     return_value=5,
+  )
+  make_job(
+    task_path="tests.tasks.echo",
+    queue_name="reports",
+    args=["finished-report"],
+    finished_at=now - timedelta(minutes=3),
+    return_value="finished-report",
+  )
+  make_job(
+    task_path="tests.tasks.echo",
+    backend_name="critical",
+    queue_name="critical-review",
+    args=["finished-critical"],
+    finished_at=now - timedelta(minutes=15),
+    return_value="finished-critical",
   )
 
 
@@ -323,6 +517,8 @@ def index(_request):
         <h1>dj_queue admin dev</h1>
         <p><a href=\"/admin/\">Open Django admin</a></p>
         <p><a href=\"/enqueue/\">Enqueue a live demo job</a></p>
+        <p><a href=\"/enqueue-burst/\">Enqueue a burst of demo jobs</a></p>
+        <p><a href=\"/seed/\">Reset seeded dashboard data</a></p>
         <p>default login: <code>admin</code> / <code>password</code></p>
       </body>
     </html>
@@ -331,13 +527,28 @@ def index(_request):
 
 
 def enqueue_job(_request):
-  task_result = add.enqueue(2, 3)
+  task_result = add.using(queue_name="interactive").enqueue(2, 3)
   return JsonResponse(
     {
       "job_id": str(task_result.id),
       "status": str(getattr(task_result.status, "value", task_result.status)).lower(),
     }
   )
+
+
+def enqueue_burst(_request):
+  results = [
+    echo.using(queue_name="interactive").enqueue("demo-live-a"),
+    echo.using(queue_name="reports").enqueue("demo-live-b"),
+    fail.using(queue_name="interactive").enqueue("burst-failure"),
+    sleep_for.using(queue_name="interactive").enqueue(2),
+  ]
+  return JsonResponse({"job_ids": [str(result.id) for result in results]})
+
+
+def reset_seed(_request):
+  seed_demo_data()
+  return JsonResponse({"seeded": True, "job_count": Job.objects.count()})
 
 
 def result_job(_request, job_id: UUID):
@@ -362,6 +573,8 @@ urlpatterns = [
   path("", index),
   path("admin/", admin.site.urls),
   path("enqueue/", enqueue_job),
+  path("enqueue-burst/", enqueue_burst),
+  path("seed/", reset_seed),
   path("result/<uuid:job_id>/", result_job),
 ]
 
@@ -375,10 +588,26 @@ application = DjQueueLifespan(ASGIStaticFilesHandler(get_asgi_application()))
 
 
 def main():
+  export_runtime_env()
   bootstrap()
   print(f"admin db: {DB_PATH}")
   print(f"admin url: http://{ARGS.host}:{ARGS.port}/admin/")
   print(f"login: {ARGS.username} / {ARGS.password}")
+  if ARGS.reload:
+    uvicorn.run(
+      "bin.dev_admin:application",
+      host=ARGS.host,
+      port=ARGS.port,
+      lifespan="on",
+      log_level="info",
+      reload=True,
+      reload_dirs=[
+        str(PROJECT_ROOT / "bin"),
+        str(PROJECT_ROOT / "dj_queue"),
+        str(PROJECT_ROOT / "tests"),
+      ],
+    )
+    return
   uvicorn.run(application, host=ARGS.host, port=ARGS.port, lifespan="on", log_level="info")
 
 
