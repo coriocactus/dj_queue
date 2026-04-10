@@ -181,6 +181,7 @@ def test_dashboard_overview_pages_large_sections(admin_client):
   assert "queue-17" in content
   assert "queue-18" not in content
   assert "1-18 of 19" in content
+  assert "page 1 of 2" in content
   assert "queues_page=2" in content
 
   second_page = admin_client.get(

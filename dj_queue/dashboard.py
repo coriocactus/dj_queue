@@ -52,27 +52,19 @@ OVERVIEW_PAGE_SIZES = {
 class BackendChoice:
   alias: str
   database_alias: str
-  shared_aliases: tuple[str, ...]
-
-  @property
-  def shared_database(self):
-    return len(self.shared_aliases) > 1
 
 
 def backend_choices():
   aliases = configured_backend_aliases()
-  grouped = defaultdict(list)
   database_aliases = {}
   for alias in aliases:
     database_alias = load_backend_config(alias).database_alias
     database_aliases[alias] = database_alias
-    grouped[database_alias].append(alias)
 
   return [
     BackendChoice(
       alias=alias,
       database_alias=database_aliases[alias],
-      shared_aliases=tuple(grouped[database_aliases[alias]]),
     )
     for alias in aliases
   ]
@@ -92,13 +84,6 @@ def resolve_backend_alias(raw_backend_alias):
   if backend_alias not in aliases:
     raise Http404(f"unknown dj_queue backend {backend_alias!r}")
   return backend_alias
-
-
-def shared_aliases_for_backend(backend_alias):
-  for choice in backend_choices():
-    if choice.alias == backend_alias:
-      return choice.shared_aliases
-  return (backend_alias,)
 
 
 def dashboard_context(*, backend_alias, query_params=None):
@@ -123,7 +108,6 @@ def dashboard_context(*, backend_alias, query_params=None):
     "backend_choices": backend_choices(),
     "config": config,
     "queue_database_alias": queue_database_alias,
-    "shared_aliases": shared_aliases_for_backend(backend_alias),
     "summary_cards": _summary_cards(
       queue_rows=queue_rows,
       process_rows=process_rows,
@@ -200,7 +184,6 @@ def queue_page_context(*, backend_alias, queue_name, state, page_number):
     "backend_choices": backend_choices(),
     "config": config,
     "queue_database_alias": alias,
-    "shared_aliases": shared_aliases_for_backend(backend_alias),
     "queue_name": queue_name,
     "queue_info": queue_info,
     "queue_paused": queue_info.paused,
@@ -348,6 +331,7 @@ def _backend_facts(*, config, queue_database_alias, recurring_count, semaphore_c
 def _overview_section(*, rows, page_param, page_size, query_params, anchor):
   paginator = Paginator(rows, page_size)
   page_obj = paginator.get_page(query_params.get(page_param, 1))
+  page_label = None
   start_index = 0
   end_index = 0
   summary_text = "0"
@@ -355,6 +339,8 @@ def _overview_section(*, rows, page_param, page_size, query_params, anchor):
     start_index = (page_obj.number - 1) * page_size + 1
     end_index = start_index + len(page_obj.object_list) - 1
     summary_text = f"{start_index}-{end_index} of {paginator.count}"
+    if paginator.num_pages > 1:
+      page_label = f"page {page_obj.number} of {paginator.num_pages}"
 
   previous_query = None
   if page_obj.has_previous():
@@ -379,6 +365,7 @@ def _overview_section(*, rows, page_param, page_size, query_params, anchor):
     "start_index": start_index,
     "end_index": end_index,
     "summary_text": summary_text,
+    "page_label": page_label,
     "previous_query": previous_query,
     "next_query": next_query,
     "anchor": anchor,

@@ -12,7 +12,7 @@
       min-width: 0;
       overflow-x: hidden;
       display: grid;
-      gap: 1.25rem;
+      gap: 3rem;
       box-sizing: border-box;
     }
 
@@ -23,6 +23,7 @@
       max-width: 100%;
       min-width: 0;
       box-sizing: border-box;
+      margin-bottom: 0;
     }
 
     .djq-hero {
@@ -31,13 +32,6 @@
       padding: 1.25rem;
       border: 1px solid rgba(38, 75, 94, 0.14);
       background: linear-gradient(180deg, rgba(64, 110, 135, 0.06), rgba(64, 110, 135, 0.02));
-    }
-
-    @media (min-width: 1100px) {
-      .djq-hero {
-        grid-template-columns: minmax(0, 1.9fr) minmax(18rem, 0.95fr);
-        align-items: start;
-      }
     }
 
     .djq-hero-main {
@@ -144,7 +138,6 @@
       word-break: break-word;
     }
 
-    .djq-shared-note,
     .djq-raw-panel {
       padding: 0.95rem 1rem;
       border: 1px solid rgba(38, 75, 94, 0.12);
@@ -152,11 +145,6 @@
       min-width: 0;
     }
 
-    .djq-shared-note {
-      border-left: 4px solid #c98a20;
-    }
-
-    .djq-shared-note p,
     .djq-raw-panel p {
       margin: 0;
       line-height: 1.5;
@@ -167,7 +155,13 @@
       gap: 0.9rem;
     }
 
-    .djq-raw-panel h2,
+    .djq-raw-grid {
+      display: grid;
+      gap: 0.9rem;
+      padding: 1rem;
+      grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+    }
+
     .djq-summary-card h2,
     .djq-section-banner h2 {
       margin: 0;
@@ -243,7 +237,7 @@
     .djq-section-banner h2 {
       display: block;
       width: 100%;
-      padding: 0.72rem 1rem;
+      padding: 0.5rem;
       background: #4f82a0;
       color: #fff;
       box-sizing: border-box;
@@ -251,7 +245,7 @@
 
     .djq-section-copy {
       margin: 0;
-      padding: 0.75rem 1rem;
+      padding: 0.5rem;
       color: #4c5b66;
       font-size: 0.9rem;
       line-height: 1.45;
@@ -265,8 +259,7 @@
     }
 
     .djq-table {
-      width: max-content;
-      min-width: 100%;
+      width: 100%;
       border-collapse: collapse;
       table-layout: auto;
     }
@@ -369,6 +362,21 @@
       line-height: 1.45;
     }
 
+    .djq-paginator-summary {
+      display: flex;
+      gap: 0.6rem;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .djq-page-label {
+      color: #264b5e;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-size: 0.76rem;
+    }
+
     .djq-empty {
       padding: 1rem;
     }
@@ -385,16 +393,16 @@
       }
     }
   </style>
-{% endblock %}
+{% endblock extrastyle %}
 
 {% block breadcrumbs %}
   <div class="breadcrumbs">
     <a href="{% url 'admin:index' %}">Home</a>
-    &rsaquo; dj queue
+    › dj_queue
   </div>
-{% endblock %}
+{% endblock breadcrumbs %}
 
-{% block content_title %}{% endblock %}
+{% block content_title %}{% endblock content_title %}
 
 {% block content %}
   <div id="content-main" class="djq-dashboard">
@@ -404,7 +412,7 @@
         <h1 class="djq-title">dj queue dashboard</h1>
         <p class="djq-subtitle">
           Watch queue pressure, process freshness, and control-plane state for the selected backend without leaving Django admin.
-          Use the raw tables only when you need exhaustive browsing or lower-level debugging.
+          Switch backend context here, then drill into queues or raw changelists only when the overview is not enough.
         </p>
 
         <div class="djq-backend-strip">
@@ -418,7 +426,7 @@
               </select>
               <noscript><button type="submit" class="button">Switch</button></noscript>
             </form>
-            <p class="djq-backend-caption">Selecting a backend changes job-state views by backend alias and control-plane views by queue database alias.</p>
+            <p class="djq-backend-caption">Jobs come from the selected backend. Processes, pauses, recurring tasks, and semaphores come from that backend's queue database.</p>
           </div>
 
           <dl class="djq-backend-facts">
@@ -431,50 +439,17 @@
           </dl>
         </div>
 
-        {% if shared_aliases|length > 1 %}
-          <div class="djq-shared-note">
-            <p>
-              Control-plane rows for this backend live on queue database alias <code>{{ queue_database_alias }}</code> and are shared by
-              <code>{{ shared_aliases|join:", " }}</code>
-            </p>
-          </div>
-        {% endif %}
       </div>
 
-      <aside class="djq-raw-panel">
-        <div>
-          <h2>inspect raw rows</h2>
-          <p>Use the model changelists for exhaustive filtering and record-by-record inspection.</p>
-        </div>
-
-        <div class="djq-raw-group">
-          <h3>queue data</h3>
-          <div class="djq-raw-links">
-            <a href="{% url 'admin:dj_queue_job_changelist' %}?backend_name__exact={{ backend_alias }}">jobs</a>
-            <a href="{% url 'admin:dj_queue_failedexecution_changelist' %}?job__backend_name__exact={{ backend_alias }}">failed executions</a>
-            <a href="{% url 'admin:dj_queue_pause_changelist' %}">pause rows</a>
-          </div>
-        </div>
-
-        <div class="djq-raw-group">
-          <h3>runtime data</h3>
-          <div class="djq-raw-links">
-            <a href="{% url 'admin:dj_queue_process_changelist' %}">processes</a>
-            <a href="{% url 'admin:dj_queue_recurringtask_changelist' %}">recurring tasks</a>
-            <a href="{% url 'admin:dj_queue_semaphore_changelist' %}">semaphores</a>
-          </div>
-        </div>
-      </aside>
-    </section>
-
-    <section class="djq-summary-grid">
-      {% for card in summary_cards %}
+      <section class="djq-summary-grid">
+        {% for card in summary_cards %}
         <div class="djq-summary-card">
           <h2>{{ card.label }}</h2>
           <p class="djq-summary-value">{{ card.value }}</p>
           <p class="djq-summary-detail">{{ card.detail }}</p>
         </div>
-      {% endfor %}
+        {% endfor %}
+      </section>
     </section>
 
     <section class="module djq-section" id="queue-summary">
@@ -539,7 +514,10 @@
           </table>
         </div>
         <div class="paginator djq-paginator">
-          <p>{{ queue_section.summary_text }}</p>
+          <div class="djq-paginator-summary">
+            <p>{{ queue_section.summary_text }}</p>
+            {% if queue_section.page_label %}<span class="djq-page-label">{{ queue_section.page_label }}</span>{% endif %}
+          </div>
           <div class="djq-paginator-links">
             {% if queue_section.previous_query %}
               <a href="?{{ queue_section.previous_query }}#{{ queue_section.anchor }}">previous</a>
@@ -590,7 +568,10 @@
           </table>
         </div>
         <div class="paginator djq-paginator">
-          <p>{{ process_section.summary_text }}</p>
+          <div class="djq-paginator-summary">
+            <p>{{ process_section.summary_text }}</p>
+            {% if process_section.page_label %}<span class="djq-page-label">{{ process_section.page_label }}</span>{% endif %}
+          </div>
           <div class="djq-paginator-links">
             {% if process_section.previous_query %}
               <a href="?{{ process_section.previous_query }}#{{ process_section.anchor }}">previous</a>
@@ -638,7 +619,10 @@
           </table>
         </div>
         <div class="paginator djq-paginator">
-          <p>{{ recurring_section.summary_text }}</p>
+          <div class="djq-paginator-summary">
+            <p>{{ recurring_section.summary_text }}</p>
+            {% if recurring_section.page_label %}<span class="djq-page-label">{{ recurring_section.page_label }}</span>{% endif %}
+          </div>
           <div class="djq-paginator-links">
             {% if recurring_section.previous_query %}
               <a href="?{{ recurring_section.previous_query }}#{{ recurring_section.anchor }}">previous</a>
@@ -682,7 +666,10 @@
           </table>
         </div>
         <div class="paginator djq-paginator">
-          <p>{{ semaphore_section.summary_text }}</p>
+          <div class="djq-paginator-summary">
+            <p>{{ semaphore_section.summary_text }}</p>
+            {% if semaphore_section.page_label %}<span class="djq-page-label">{{ semaphore_section.page_label }}</span>{% endif %}
+          </div>
           <div class="djq-paginator-links">
             {% if semaphore_section.previous_query %}
               <a href="?{{ semaphore_section.previous_query }}#{{ semaphore_section.anchor }}">previous</a>
@@ -696,5 +683,35 @@
         <p class="djq-empty">No active semaphores.</p>
       {% endif %}
     </section>
+
+    <section class="module djq-section" id="raw-summary">
+      <div class="djq-section-banner"><h2>inspect raw rows</h2></div>
+      <p class="djq-section-copy">Use the model changelists for exhaustive filtering, lower-level debugging, and record-by-record inspection.</p>
+      <div class="djq-raw-grid">
+        <div class="djq-raw-panel">
+          <div class="djq-raw-group">
+            <h3>queue data</h3>
+            <p>Job-centric rows scoped to the selected backend where possible.</p>
+          </div>
+          <div class="djq-raw-links">
+            <a href="{% url 'admin:dj_queue_job_changelist' %}?backend_name__exact={{ backend_alias }}">jobs</a>
+            <a href="{% url 'admin:dj_queue_failedexecution_changelist' %}?job__backend_name__exact={{ backend_alias }}">failed executions</a>
+            <a href="{% url 'admin:dj_queue_pause_changelist' %}">pause rows</a>
+          </div>
+        </div>
+
+        <div class="djq-raw-panel">
+          <div class="djq-raw-group">
+            <h3>runtime data</h3>
+            <p>Control-plane rows scoped by the selected backend's queue database alias.</p>
+          </div>
+          <div class="djq-raw-links">
+            <a href="{% url 'admin:dj_queue_process_changelist' %}">processes</a>
+            <a href="{% url 'admin:dj_queue_recurringtask_changelist' %}">recurring tasks</a>
+            <a href="{% url 'admin:dj_queue_semaphore_changelist' %}">semaphores</a>
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
-{% endblock %}
+{% endblock content %}

@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --with uvicorn
+#!/usr/bin/env -S uv run --with uvicorn --with watchfiles
 
 import argparse
 from datetime import timedelta
@@ -290,62 +290,82 @@ def seed_demo_data():
 
   Pause.objects.create(queue_name="paused-demo")
   Pause.objects.create(queue_name="critical-paused")
+  Pause.objects.create(queue_name="bulk-paused")
 
-  Semaphore.objects.create(
-    key="account:demo",
-    value=1,
-    limit=2,
-    expires_at=now + timedelta(minutes=10),
+  semaphore_specs = (
+    ("account:demo", 1, 2, 10),
+    ("account:reporting", 0, 1, 20),
+    ("mailer:burst", 2, 3, 5),
+    ("tenant:alpha", 3, 4, 8),
+    ("tenant:beta", 2, 4, 12),
+    ("tenant:gamma", 1, 4, 16),
+    ("tenant:delta", 0, 2, 18),
+    ("tenant:epsilon", 1, 2, 22),
+    ("tenant:zeta", 4, 5, 7),
+    ("tenant:eta", 2, 3, 11),
+    ("tenant:theta", 1, 3, 14),
+    ("tenant:iota", 0, 2, 17),
+    ("tenant:kappa", 2, 2, 24),
   )
-  Semaphore.objects.create(
-    key="account:reporting",
-    value=0,
-    limit=1,
-    expires_at=now + timedelta(minutes=20),
-  )
-  Semaphore.objects.create(
-    key="mailer:burst",
-    value=2,
-    limit=3,
-    expires_at=now + timedelta(minutes=5),
-  )
+  for key, value, limit, expiry_minutes in semaphore_specs:
+    Semaphore.objects.create(
+      key=key,
+      value=value,
+      limit=limit,
+      expires_at=now + timedelta(minutes=expiry_minutes),
+    )
 
-  RecurringTask.objects.create(
-    key="demo-nightly",
-    task_path="tests.tasks.echo",
-    payload={"args": ["nightly"], "kwargs": {}},
-    schedule="0 0 1 1 *",
-    queue_name="maintenance",
-    priority=-5,
-    description="demo recurring task",
-    static=False,
+  recurring_specs = (
+    ("demo-nightly", "maintenance", "0 0 1 1 *", -5, "demo recurring task", False, 540),
+    ("demo-hourly-report", "reports", "0 * * * *", 5, "hourly report build", True, 40),
+    (
+      "critical-audit",
+      "critical-review",
+      "*/15 * * * *",
+      10,
+      "critical backend audit sweep",
+      False,
+      5,
+    ),
+    ("cleanup-stale-sessions", "maintenance", "15 * * * *", 0, "cleanup stale sessions", True, 75),
+    (
+      "refresh-dashboard-caches",
+      "interactive",
+      "*/10 * * * *",
+      0,
+      "refresh dashboard caches",
+      False,
+      9,
+    ),
+    ("ship-daily-digest", "alerts", "30 7 * * *", 3, "ship daily digest", True, 700),
+    ("fetch-billing-events", "reports", "*/20 * * * *", 4, "fetch billing events", False, 12),
+    ("rebuild-search-index", "maintenance", "0 2 * * *", 8, "rebuild search index", True, 900),
+    (
+      "critical-sla-check",
+      "critical-review",
+      "*/5 * * * *",
+      12,
+      "check critical sla windows",
+      False,
+      3,
+    ),
+    ("expire-demo-tokens", "interactive", "45 * * * *", 1, "expire demo tokens", False, 22),
+    ("sync-crm", "reports", "0 */2 * * *", 2, "sync crm", True, 110),
+    ("notify-stuck-jobs", "alerts", "*/30 * * * *", 6, "notify stuck jobs", False, 25),
+    ("trim-finished-jobs", "maintenance", "0 3 * * *", -1, "trim finished jobs", True, 820),
   )
-  RecurringTask.objects.create(
-    key="demo-hourly-report",
-    task_path="tests.tasks.echo",
-    payload={"args": ["hourly-report"], "kwargs": {}},
-    schedule="0 * * * *",
-    queue_name="reports",
-    priority=5,
-    description="hourly report build",
-    static=True,
-  )
-  RecurringTask.objects.create(
-    key="critical-audit",
-    task_path="tests.tasks.echo",
-    payload={"args": ["audit"], "kwargs": {}},
-    schedule="*/15 * * * *",
-    queue_name="critical-review",
-    priority=10,
-    description="critical backend audit sweep",
-    static=False,
-  )
-
-  RecurringExecution.objects.create(task_key="demo-nightly", run_at=now - timedelta(hours=9))
-  RecurringExecution.objects.create(
-    task_key="demo-hourly-report", run_at=now - timedelta(minutes=40)
-  )
-  RecurringExecution.objects.create(task_key="critical-audit", run_at=now - timedelta(minutes=5))
+  for key, queue_name, schedule, priority, description, static, minutes_ago in recurring_specs:
+    RecurringTask.objects.create(
+      key=key,
+      task_path="tests.tasks.echo",
+      payload={"args": [key], "kwargs": {}},
+      schedule=schedule,
+      queue_name=queue_name,
+      priority=priority,
+      description=description,
+      static=static,
+    )
+    RecurringExecution.objects.create(task_key=key, run_at=now - timedelta(minutes=minutes_ago))
 
   legacy_supervisor = Process.objects.create(
     kind="Supervisor",
@@ -397,6 +417,56 @@ def seed_demo_data():
     last_heartbeat_at=now - timedelta(seconds=15),
   )
 
+  current_supervisor = Process.objects.create(
+    kind="Supervisor",
+    pid=99001,
+    hostname="dashboard-host.local",
+    name="dashboard-supervisor-1",
+    metadata={
+      "mode": "async",
+      "worker_count": 4,
+      "dispatcher_count": 1,
+      "has_scheduler": True,
+    },
+    last_heartbeat_at=now - timedelta(seconds=2),
+  )
+  Process.objects.create(
+    kind="Dispatcher",
+    pid=99011,
+    hostname="dashboard-host.local",
+    name="dashboard-dispatcher-1",
+    metadata={"batch_size": 100, "polling_interval": 0.5},
+    supervisor=current_supervisor,
+    last_heartbeat_at=now - timedelta(seconds=1),
+  )
+  Process.objects.create(
+    kind="Scheduler",
+    pid=99012,
+    hostname="dashboard-host.local",
+    name="dashboard-scheduler-1",
+    metadata={"dynamic_tasks_enabled": True, "polling_interval": 10},
+    supervisor=current_supervisor,
+    last_heartbeat_at=now - timedelta(seconds=1),
+  )
+  for index, queue_selector in enumerate(
+    (
+      ["interactive", "reports"],
+      ["maintenance"],
+      ["alerts", "critical-review"],
+      ["bulk-*"],
+    ),
+    start=1,
+  ):
+    Process.objects.create(
+      kind="Worker",
+      pid=99020 + index,
+      hostname="dashboard-host.local",
+      name=f"dashboard-worker-{index}",
+      metadata={"queues": queue_selector, "threads": 1},
+      supervisor=current_supervisor,
+      last_heartbeat_at=now - timedelta(seconds=index),
+    )
+
   for index in range(3):
     ready_job = make_job(
       queue_name="paused-demo",
@@ -414,6 +484,19 @@ def seed_demo_data():
       queue_name="backfill-import",
       priority=index % 3,
       args=[f"backfill-{index}"],
+    )
+    ReadyExecution.objects.create(
+      job=ready_job,
+      queue_name=ready_job.queue_name,
+      priority=ready_job.priority,
+    )
+
+  for index in range(14):
+    queue_name = f"bulk-queue-{index + 1:02d}"
+    ready_job = make_job(
+      queue_name=queue_name,
+      priority=index % 5,
+      args=[queue_name],
     )
     ReadyExecution.objects.create(
       job=ready_job,
@@ -606,6 +689,7 @@ def main():
         str(PROJECT_ROOT / "dj_queue"),
         str(PROJECT_ROOT / "tests"),
       ],
+      reload_includes=["*.py", "*.html"],
     )
     return
   uvicorn.run(application, host=ARGS.host, port=ARGS.port, lifespan="on", log_level="info")

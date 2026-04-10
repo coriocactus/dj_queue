@@ -25,13 +25,6 @@
       margin: 0;
     }
 
-    .queue-note {
-      margin-bottom: 1rem;
-      padding: 0.75rem 1rem;
-      border: 1px solid var(--hairline-color, #d4d4d4);
-      background: var(--darkened-bg, #f6f6f6);
-    }
-
     .queue-links {
       display: flex;
       gap: 0.6rem;
@@ -96,13 +89,6 @@
       <a href="{% url 'admin:dj_queue_failedexecution_changelist' %}?job__backend_name__exact={{ backend_alias }}">failed executions</a>
       <a href="{% url 'admin:dj_queue_pause_changelist' %}">pause rows</a>
     </div>
-
-    {% if shared_aliases|length > 1 %}
-      <div class="queue-note">
-        Control-plane rows for this view are shared on database alias <code>{{ queue_database_alias }}</code> by backends
-        <code>{{ shared_aliases|join:", " }}</code>
-      </div>
-    {% endif %}
 
     <div class="queue-tabs">
       {% for tab in state_tabs %}
