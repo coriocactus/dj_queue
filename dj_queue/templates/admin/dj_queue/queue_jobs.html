@@ -32,6 +32,23 @@
       background: var(--darkened-bg, #f6f6f6);
     }
 
+    .queue-links {
+      display: flex;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .results {
+      overflow-x: auto;
+    }
+
+    .results table {
+      width: 100%;
+      min-width: 52rem;
+    }
+
     .queue-tab-current {
       font-weight: 600;
     }
@@ -72,6 +89,12 @@
       </form>
       <span><strong>backend</strong> {{ backend_alias }} (db {{ queue_database_alias }})</span>
       <span><strong>paused</strong> {{ queue_paused|yesno:"yes,no" }}</span>
+    </div>
+
+    <div class="queue-links">
+      <a href="{% url 'admin:dj_queue_job_changelist' %}?backend_name__exact={{ backend_alias }}">raw jobs</a>
+      <a href="{% url 'admin:dj_queue_failedexecution_changelist' %}?job__backend_name__exact={{ backend_alias }}">failed executions</a>
+      <a href="{% url 'admin:dj_queue_pause_changelist' %}">pause rows</a>
     </div>
 
     {% if shared_aliases|length > 1 %}

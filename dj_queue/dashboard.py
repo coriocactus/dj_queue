@@ -2,6 +2,7 @@ import json
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import timedelta
+from urllib.parse import urlencode
 
 from croniter import croniter
 from django.conf import settings
@@ -39,6 +40,12 @@ QUEUE_STATES = (
 
 QUEUE_STATE_LABELS = dict(QUEUE_STATES)
 PAGE_SIZE = 100
+OVERVIEW_PAGE_SIZES = {
+  "queues": 18,
+  "processes": 10,
+  "recurring": 12,
+  "semaphores": 12,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,11 +101,13 @@ def shared_aliases_for_backend(backend_alias):
   return (backend_alias,)
 
 
-def dashboard_context(*, backend_alias):
+def dashboard_context(*, backend_alias, query_params=None):
   queue_database_alias = get_database_alias(backend_alias)
   config = load_backend_config(backend_alias)
   now = timezone.now()
   process_cutoff = now - timedelta(seconds=config.process_alive_threshold)
+  if query_params is None:
+    query_params = {}
 
   queue_rows = _queue_rows(backend_alias=backend_alias, now=now, process_cutoff=process_cutoff)
   process_rows = _process_rows(
@@ -115,10 +124,46 @@ def dashboard_context(*, backend_alias):
     "config": config,
     "queue_database_alias": queue_database_alias,
     "shared_aliases": shared_aliases_for_backend(backend_alias),
-    "queue_rows": queue_rows,
-    "process_rows": process_rows,
-    "recurring_rows": recurring_rows,
-    "semaphore_rows": semaphore_rows,
+    "summary_cards": _summary_cards(
+      queue_rows=queue_rows,
+      process_rows=process_rows,
+      recurring_rows=recurring_rows,
+      semaphore_rows=semaphore_rows,
+    ),
+    "status_chips": _status_chips(
+      config=config,
+      queue_database_alias=queue_database_alias,
+      recurring_count=len(recurring_rows),
+      semaphore_count=len(semaphore_rows),
+    ),
+    "queue_section": _overview_section(
+      rows=queue_rows,
+      page_param="queues_page",
+      page_size=OVERVIEW_PAGE_SIZES["queues"],
+      query_params=query_params,
+      anchor="queue-summary",
+    ),
+    "process_section": _overview_section(
+      rows=process_rows,
+      page_param="processes_page",
+      page_size=OVERVIEW_PAGE_SIZES["processes"],
+      query_params=query_params,
+      anchor="process-summary",
+    ),
+    "recurring_section": _overview_section(
+      rows=recurring_rows,
+      page_param="recurring_page",
+      page_size=OVERVIEW_PAGE_SIZES["recurring"],
+      query_params=query_params,
+      anchor="recurring-summary",
+    ),
+    "semaphore_section": _overview_section(
+      rows=semaphore_rows,
+      page_param="semaphores_page",
+      page_size=OVERVIEW_PAGE_SIZES["semaphores"],
+      query_params=query_params,
+      anchor="semaphore-summary",
+    ),
   }
 
 
@@ -242,6 +287,107 @@ def job_actions_for_state(state):
       {"name": "discard", "label": "discard selected"},
     )
   return ()
+
+
+def _summary_cards(*, queue_rows, process_rows, recurring_rows, semaphore_rows):
+  paused_count = sum(1 for row in queue_rows if row["paused"])
+  ready_count = sum(row["ready_count"] for row in queue_rows)
+  scheduled_count = sum(row["scheduled_count"] for row in queue_rows)
+  failed_count = sum(row["failed_count"] for row in queue_rows)
+  blocked_count = sum(row["blocked_count"] for row in queue_rows)
+  live_processes = sum(1 for row in process_rows if row["is_live"])
+  stale_processes = len(process_rows) - live_processes
+
+  return (
+    {
+      "label": "queues",
+      "value": len(queue_rows),
+      "detail": f"{paused_count} paused",
+    },
+    {
+      "label": "backlog",
+      "value": ready_count + scheduled_count,
+      "detail": f"{ready_count} ready and {scheduled_count} scheduled",
+    },
+    {
+      "label": "attention",
+      "value": failed_count + blocked_count,
+      "detail": f"{failed_count} failed and {blocked_count} blocked",
+    },
+    {
+      "label": "runtime",
+      "value": live_processes,
+      "detail": f"{live_processes} live, {stale_processes} stale",
+    },
+    {
+      "label": "control plane",
+      "value": len(recurring_rows) + len(semaphore_rows),
+      "detail": f"{len(recurring_rows)} recurring and {len(semaphore_rows)} semaphores",
+    },
+  )
+
+
+def _status_chips(*, config, queue_database_alias, recurring_count, semaphore_count):
+  retention = "disabled"
+  if config.clear_finished_jobs_after is not None:
+    retention = f"{config.clear_finished_jobs_after}s"
+
+  return (
+    {"label": "backend mode", "value": config.mode},
+    {"label": "queue db", "value": queue_database_alias},
+    {"label": "scheduler", "value": "enabled" if config.has_scheduler_work else "disabled"},
+    {"label": "notify", "value": "on" if config.listen_notify else "off"},
+    {"label": "skip locked", "value": "on" if config.use_skip_locked else "off"},
+    {"label": "heartbeat", "value": f"{config.process_alive_threshold}s"},
+    {"label": "retention", "value": retention},
+    {"label": "recurring", "value": str(recurring_count)},
+    {"label": "semaphores", "value": str(semaphore_count)},
+  )
+
+
+def _overview_section(*, rows, page_param, page_size, query_params, anchor):
+  paginator = Paginator(rows, page_size)
+  page_obj = paginator.get_page(query_params.get(page_param, 1))
+  start_index = 0
+  end_index = 0
+  if paginator.count:
+    start_index = (page_obj.number - 1) * page_size + 1
+    end_index = start_index + len(page_obj.object_list) - 1
+
+  previous_query = None
+  if page_obj.has_previous():
+    previous_query = _overview_query(
+      query_params=query_params,
+      page_param=page_param,
+      page_number=page_obj.previous_page_number(),
+    )
+
+  next_query = None
+  if page_obj.has_next():
+    next_query = _overview_query(
+      query_params=query_params,
+      page_param=page_param,
+      page_number=page_obj.next_page_number(),
+    )
+
+  return {
+    "rows": list(page_obj.object_list),
+    "page_obj": page_obj,
+    "total_count": paginator.count,
+    "start_index": start_index,
+    "end_index": end_index,
+    "previous_query": previous_query,
+    "next_query": next_query,
+    "anchor": anchor,
+  }
+
+
+def _overview_query(*, query_params, page_param, page_number):
+  params = query_params.copy()
+  params[page_param] = page_number
+  if hasattr(params, "urlencode"):
+    return params.urlencode()
+  return urlencode(params, doseq=True)
 
 
 def _queue_rows(*, backend_alias, now, process_cutoff):

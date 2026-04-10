@@ -46,7 +46,7 @@ class DashboardAdmin(admin.ModelAdmin):
     backend_alias = dashboard.resolve_backend_alias(request.GET.get("backend"))
     context = {
       **self.admin_site.each_context(request),
-      **dashboard.dashboard_context(backend_alias=backend_alias),
+      **dashboard.dashboard_context(backend_alias=backend_alias, query_params=request.GET),
     }
     if extra_context:
       context.update(extra_context)
@@ -153,9 +153,17 @@ class DashboardAdmin(admin.ModelAdmin):
     return f"{url}?{urlencode(query)}"
 
 
+class HiddenSidebarAdminMixin:
+  def get_model_perms(self, request):
+    if not self.has_view_permission(request):
+      return {}
+    return {}
+
+
 @admin.register(Job)
-class JobAdmin(admin.ModelAdmin):
+class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   list_display = ("id", "task_path", "queue_name", "priority", "status", "created_at")
+  list_filter = ("backend_name", "queue_name")
   list_select_related = (
     "ready_execution",
     "scheduled_execution",
@@ -176,14 +184,17 @@ class JobAdmin(admin.ModelAdmin):
     "created_at",
     "updated_at",
   )
+  search_fields = ("id", "task_path", "queue_name", "concurrency_key")
 
 
 @admin.register(FailedExecution)
-class FailedExecutionAdmin(admin.ModelAdmin):
+class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   list_display = ("job", "exception_class", "message", "created_at")
+  list_filter = ("job__backend_name", "exception_class")
   list_select_related = ("job",)
   actions = ("retry_jobs", "discard_jobs")
   readonly_fields = ("job", "exception_class", "message", "traceback", "created_at")
+  search_fields = ("job__id", "job__task_path", "message", "exception_class")
 
   @admin.action(description="Retry selected failed jobs")
   def retry_jobs(self, request, queryset):
@@ -199,7 +210,7 @@ class FailedExecutionAdmin(admin.ModelAdmin):
 
 
 @admin.register(Process)
-class ProcessAdmin(admin.ModelAdmin):
+class ProcessAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   list_display = ("name", "kind", "pid", "hostname", "metadata_json", "last_heartbeat_at")
   readonly_fields = (
     "kind",
@@ -210,6 +221,7 @@ class ProcessAdmin(admin.ModelAdmin):
     "supervisor",
     "last_heartbeat_at",
   )
+  search_fields = ("name", "kind", "hostname")
 
   @admin.display(description="metadata")
   def metadata_json(self, obj):
@@ -217,7 +229,7 @@ class ProcessAdmin(admin.ModelAdmin):
 
 
 @admin.register(RecurringTask)
-class RecurringTaskAdmin(admin.ModelAdmin):
+class RecurringTaskAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   list_display = ("key", "task_path", "schedule", "queue_name", "priority", "static")
   readonly_fields = (
     "key",
@@ -231,15 +243,18 @@ class RecurringTaskAdmin(admin.ModelAdmin):
     "created_at",
     "updated_at",
   )
+  search_fields = ("key", "task_path", "queue_name")
 
 
 @admin.register(Pause)
-class PauseAdmin(admin.ModelAdmin):
+class PauseAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   list_display = ("queue_name", "created_at")
   readonly_fields = ("queue_name", "created_at")
+  search_fields = ("queue_name",)
 
 
 @admin.register(Semaphore)
-class SemaphoreAdmin(admin.ModelAdmin):
+class SemaphoreAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   list_display = ("key", "value", "limit", "expires_at")
   readonly_fields = ("key", "value", "limit", "expires_at", "created_at", "updated_at")
+  search_fields = ("key",)

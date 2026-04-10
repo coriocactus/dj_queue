@@ -140,6 +140,28 @@ def test_dashboard_backend_selection_changes_job_counts(admin_client, settings):
   assert "alpha" not in secondary_content
 
 
+def test_dashboard_overview_pages_large_sections(admin_client):
+  for index in range(19):
+    make_ready_job(queue_name=f"queue-{index:02d}")
+
+  response = admin_client.get(reverse("admin:dj_queue_dashboard_changelist"))
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert "queue-00" in content
+  assert "queue-17" in content
+  assert "queue-18" not in content
+  assert "queues_page=2" in content
+
+  second_page = admin_client.get(
+    reverse("admin:dj_queue_dashboard_changelist"),
+    {"queues_page": 2},
+  )
+
+  assert second_page.status_code == 200
+  assert "queue-18" in second_page.content.decode()
+
+
 def test_dashboard_queue_pause_resume_and_clear_actions(admin_client, settings):
   settings.TASKS = {
     "default": {
@@ -204,3 +226,16 @@ def test_dashboard_queue_bulk_actions(admin_client):
 
   assert response.status_code == 302
   assert Job.objects.filter(pk=ready_job.pk).exists() is False
+
+
+def test_dashboard_links_to_raw_admin_tables(admin_client):
+  response = admin_client.get(reverse("admin:dj_queue_dashboard_changelist"))
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert reverse("admin:dj_queue_job_changelist") in content
+  assert reverse("admin:dj_queue_failedexecution_changelist") in content
+  assert reverse("admin:dj_queue_process_changelist") in content
+  assert reverse("admin:dj_queue_recurringtask_changelist") in content
+  assert reverse("admin:dj_queue_pause_changelist") in content
+  assert reverse("admin:dj_queue_semaphore_changelist") in content

@@ -66,7 +66,10 @@ def admin_client(client):
 def test_job_admin_changelist_renders(admin_client):
   make_job()
 
-  response = admin_client.get(reverse("admin:dj_queue_job_changelist"))
+  response = admin_client.get(
+    reverse("admin:dj_queue_job_changelist"),
+    {"backend_name__exact": "default"},
+  )
 
   assert response.status_code == 200
 
@@ -86,6 +89,17 @@ def test_failed_execution_admin_retry_action(admin_client):
   assert response.status_code == 200
   assert FailedExecution.objects.filter(pk=failed.pk).exists() is False
   assert Job.objects.filter(pk=job.pk, ready_execution__isnull=False).exists() is True
+
+
+def test_failed_execution_admin_changelist_filtered_by_backend(admin_client):
+  make_failed_job()
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_failedexecution_changelist"),
+    {"job__backend_name__exact": "default"},
+  )
+
+  assert response.status_code == 200
 
 
 def test_failed_execution_admin_discard_action(admin_client):
@@ -121,3 +135,14 @@ def test_process_admin_displays_metadata(admin_client):
   content = response.content.decode()
   assert process.name in content
   assert "threads" in content
+
+
+def test_admin_index_hides_raw_dj_queue_models(admin_client):
+  response = admin_client.get(reverse("admin:index"))
+
+  assert response.status_code == 200
+  dj_queue_app = next(
+    app for app in response.context["available_apps"] if app["app_label"] == "dj_queue"
+  )
+  object_names = [model.get("object_name") for model in dj_queue_app["models"]]
+  assert object_names == ["Dashboard"]
