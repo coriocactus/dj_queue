@@ -1,8 +1,20 @@
+from datetime import timedelta
+
 import pytest
 from django.contrib.auth import get_user_model
 from django.urls import reverse
+from django.utils import timezone
 
-from dj_queue.models import FailedExecution, Job, Process
+from dj_queue.models import (
+  BlockedExecution,
+  FailedExecution,
+  Job,
+  Process,
+  ReadyExecution,
+  RecurringExecution,
+  RecurringTask,
+  Semaphore,
+)
 
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -68,10 +80,107 @@ def test_job_admin_changelist_renders(admin_client):
 
   response = admin_client.get(
     reverse("admin:dj_queue_job_changelist"),
-    {"backend_name__exact": "default"},
+    {"backend": "default"},
   )
 
   assert response.status_code == 200
+  assert "By backend" in response.content.decode()
+
+
+def test_job_admin_status_filter(admin_client):
+  finished_job = make_job(queue_name="finished", finished_at=timezone.now())
+  ready_job = make_job(queue_name="ready")
+  ReadyExecution.objects.create(
+    job=ready_job, queue_name=ready_job.queue_name, priority=ready_job.priority
+  )
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_job_changelist"),
+    {"status": "finished", "backend": "default"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert str(finished_job.id) in content
+  assert str(ready_job.id) not in content
+
+
+def test_job_admin_status_sort(admin_client):
+  _finished_job = make_job(task_path="tests.tasks.finished", finished_at=timezone.now())
+  ready_job = make_job(task_path="tests.tasks.ready")
+  ReadyExecution.objects.create(
+    job=ready_job, queue_name=ready_job.queue_name, priority=ready_job.priority
+  )
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_job_changelist"),
+    {"backend": "default", "o": "-5"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert content.index("tests.tasks.ready") < content.index("tests.tasks.finished")
+
+
+def test_job_admin_queue_name_links_to_matching_queue_state(admin_client):
+  make_failed_job(queue_name="alpha")
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_job_changelist"),
+    {"backend": "default"},
+  )
+
+  assert response.status_code == 200
+  assert (
+    f"{reverse('admin:dj_queue_dashboard_queue', args=['alpha'])}?backend=default&amp;state=failed"
+    in response.content.decode()
+  )
+
+
+def test_job_admin_recurring_task_filter(admin_client):
+  task = RecurringTask.objects.create(
+    key="nightly",
+    task_path="tests.tasks.echo",
+    payload={"args": [], "kwargs": {}},
+    schedule="0 0 * * *",
+    queue_name="default",
+    priority=0,
+    static=False,
+  )
+  recurring_job = make_job(task_path="tests.tasks.recurring")
+  _other_job = make_job(task_path="tests.tasks.other")
+  RecurringExecution.objects.create(job=recurring_job, task_key=task.key, run_at=timezone.now())
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_job_changelist"),
+    {
+      "backend": "default",
+      "recurring_task_key": "nightly",
+    },
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert "tests.tasks.recurring" in content
+  assert "tests.tasks.other" not in content
+
+
+def test_job_admin_concurrency_key_filter(admin_client):
+  matching_job = make_job(task_path="tests.tasks.matching", concurrency_key="acct:1")
+  other_job = make_job(task_path="tests.tasks.other", concurrency_key="acct:2")
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_job_changelist"),
+    {
+      "backend": "default",
+      "concurrency_key": "acct:1",
+    },
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert str(matching_job.id) in content
+  assert str(other_job.id) not in content
 
 
 def test_failed_execution_admin_retry_action(admin_client):
@@ -96,10 +205,81 @@ def test_failed_execution_admin_changelist_filtered_by_backend(admin_client):
 
   response = admin_client.get(
     reverse("admin:dj_queue_failedexecution_changelist"),
-    {"job__backend_name__exact": "default"},
+    {"backend": "default"},
   )
 
   assert response.status_code == 200
+
+
+def test_failed_execution_admin_changelist_filtered_by_queue(admin_client):
+  make_failed_job(queue_name="alpha")
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_failedexecution_changelist"),
+    {
+      "job__queue_name": "alpha",
+      "backend": "default",
+    },
+  )
+
+  assert response.status_code == 200
+
+
+def test_job_admin_backend_param_controls_shared_database_scope(admin_client, settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+    "secondary": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+  }
+  default_job = make_job(task_path="tests.tasks.default", backend_name="default")
+  secondary_job = make_job(task_path="tests.tasks.secondary", backend_name="secondary")
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_job_changelist"),
+    {"backend": "secondary", "backend_name": "default"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert str(secondary_job.id) in content
+  assert str(default_job.id) not in content
+
+
+def test_failed_execution_admin_backend_param_controls_shared_database_scope(
+  admin_client,
+  settings,
+):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+    "secondary": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+  }
+  default_job, _ = make_failed_job(task_path="tests.tasks.default", backend_name="default")
+  secondary_job, _ = make_failed_job(task_path="tests.tasks.secondary", backend_name="secondary")
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_failedexecution_changelist"),
+    {"backend": "secondary", "job__backend_name": "default"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert str(secondary_job.id) in content
+  assert str(default_job.id) not in content
 
 
 def test_failed_execution_admin_discard_action(admin_client):
@@ -137,6 +317,37 @@ def test_process_admin_displays_metadata(admin_client):
   assert "threads" in content
 
 
+def test_process_admin_status_filter(admin_client):
+  now = timezone.now()
+  live = make_process(name="live-worker", last_heartbeat_at=now)
+  stale = make_process(name="stale-worker", last_heartbeat_at=now - timedelta(minutes=10))
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_process_changelist"),
+    {"status": "live"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert live.name in content
+  assert stale.name not in content
+
+
+def test_process_admin_status_sort(admin_client):
+  now = timezone.now()
+  make_process(name="stale-worker", last_heartbeat_at=now - timedelta(minutes=10))
+  make_process(name="live-worker", last_heartbeat_at=now)
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_process_changelist"),
+    {"o": "3"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert content.index("live-worker") < content.index("stale-worker")
+
+
 def test_process_admin_hides_add_button(admin_client):
   make_process(last_heartbeat_at="2026-04-08T00:00:00Z")
 
@@ -147,10 +358,102 @@ def test_process_admin_hides_add_button(admin_client):
   assert "Add process" not in response.content.decode()
 
 
+def test_recurring_task_admin_filters(admin_client):
+  RecurringTask.objects.create(
+    key="nightly",
+    task_path="tests.tasks.echo",
+    payload={"args": [], "kwargs": {}},
+    schedule="0 0 * * *",
+    queue_name="reports",
+    priority=0,
+    static=True,
+  )
+  RecurringTask.objects.create(
+    key="hourly",
+    task_path="tests.tasks.echo",
+    payload={"args": [], "kwargs": {}},
+    schedule="0 * * * *",
+    queue_name="maintenance",
+    priority=0,
+    static=False,
+  )
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_recurringtask_changelist"),
+    {"queue_name": "reports", "static__exact": "1"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert "nightly" in content
+  assert "hourly" not in content
+
+
+def test_backend_scoped_raw_admin_pages_show_backend_filter(admin_client):
+  for url_name in (
+    "admin:dj_queue_job_changelist",
+    "admin:dj_queue_failedexecution_changelist",
+    "admin:dj_queue_process_changelist",
+    "admin:dj_queue_recurringtask_changelist",
+    "admin:dj_queue_pause_changelist",
+    "admin:dj_queue_semaphore_changelist",
+  ):
+    response = admin_client.get(reverse(url_name))
+
+    assert response.status_code == 200
+    content = response.content.decode()
+    assert 'id="changelist-filter"' in content
+    assert "By backend" in content
+
+
+def test_semaphore_admin_blocked_waiters_sort(admin_client):
+  high = Semaphore.objects.create(
+    key="acct:high",
+    value=1,
+    limit=2,
+    expires_at=timezone.now(),
+  )
+  low = Semaphore.objects.create(
+    key="acct:low",
+    value=1,
+    limit=2,
+    expires_at=timezone.now(),
+  )
+  for index in range(2):
+    job = make_job(
+      queue_name="blocked", concurrency_key=high.key, task_path=f"tests.tasks.high_{index}"
+    )
+    BlockedExecution.objects.create(
+      job=job,
+      queue_name=job.queue_name,
+      priority=job.priority,
+      concurrency_key=job.concurrency_key,
+      expires_at=timezone.now(),
+    )
+  job = make_job(queue_name="blocked", concurrency_key=low.key, task_path="tests.tasks.low")
+  BlockedExecution.objects.create(
+    job=job,
+    queue_name=job.queue_name,
+    priority=job.priority,
+    concurrency_key=job.concurrency_key,
+    expires_at=timezone.now(),
+  )
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_semaphore_changelist"),
+    {"o": "4"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert content.index(high.key) < content.index(low.key)
+
+
 def test_admin_index_hides_raw_dj_queue_models(admin_client):
   response = admin_client.get(reverse("admin:index"))
 
   assert response.status_code == 200
+  assert response.context["available_apps"][0]["app_label"] == "dj_queue"
   dj_queue_app = next(
     app for app in response.context["available_apps"] if app["app_label"] == "dj_queue"
   )

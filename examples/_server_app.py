@@ -50,6 +50,7 @@ django.setup()
 from django.core.asgi import get_asgi_application  # noqa: E402
 from django.core.management import call_command  # noqa: E402
 from django.core.wsgi import get_wsgi_application  # noqa: E402
+from django.db import connections  # noqa: E402
 from django.http import JsonResponse  # noqa: E402
 from django.tasks import task  # noqa: E402
 from django.urls import path  # noqa: E402
@@ -62,6 +63,7 @@ def prepare_database():
   call_command("migrate", "dj_queue", interactive=False, verbosity=0)
   for model in (Job, Pause, Process, RecurringTask, Semaphore):
     model.objects.all().delete()
+  connections.close_all()
 
 
 def _status_name(status):

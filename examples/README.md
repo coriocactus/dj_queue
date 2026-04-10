@@ -48,3 +48,19 @@ DB_BACKEND=mariadb examples/ex01_basic_enqueue.py
 | `ex25_advanced_asgi.py` | real ASGI lifespan startup and shutdown | `lifespan.startup.complete`, successful job execution, `lifespan.shutdown.complete` |
 | `ex26_advanced_uvicorn.py` | a real `uvicorn` process with embedded `dj_queue` | HTTP enqueue followed by a successful HTTP result poll |
 | `ex27_advanced_gunicorn.py` | a real `gunicorn` worker with embedded `dj_queue` | HTTP enqueue followed by a successful HTTP result poll |
+
+## Demo server
+
+`bin/dev_admin.py` launches a development server with the Django admin,
+embedded `dj_queue` workers, and seeded demo data:
+
+```bash
+bin/dev_admin.py                # sqlite, http://127.0.0.1:17777/admin/
+bin/dev_admin.py --port 8000    # custom port
+bin/dev_admin.py --no-seed      # keep existing rows instead of reseeding
+bin/dev_admin.py --no-reload    # disable code reload
+```
+
+Default login is `admin` / `password`. The server auto-reloads on Python and
+template changes. Hit `/enqueue/` or `/enqueue-burst/` to submit live jobs, and
+`/seed/` to reset the demo data without restarting.

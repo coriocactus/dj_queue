@@ -82,3 +82,5 @@ result(f"remaining_ready_on_queue={ReadyExecution.objects.using('queue').count()
 takeaway(
   "database_alias and DjQueueRouter keep queue migrations, writes, and reads on the queue database"
 )
+
+connections.close_all()

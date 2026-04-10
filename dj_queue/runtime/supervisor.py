@@ -176,6 +176,7 @@ class AsyncSupervisor(Supervisor):
     return process
 
   def stop(self):
+    self._stop_event.set()
     for runner in self.runners:
       runner.request_stop()
     for thread in self.runner_threads:
@@ -202,18 +203,64 @@ class AsyncSupervisor(Supervisor):
     return self.runners
 
   def _run_managed_runner(self, runner):
-    while not runner._stop_event.is_set():
-      try:
-        runner.poll_once()
-        runner.sleeper.sleep(runner.polling_interval)
-      except Exception as error:
-        handle_thread_error(
-          error,
-          context=f"{runner.hook_prefix}.run",
+    try:
+      while not self._stop_event.is_set():
+        while not runner._stop_event.is_set() and not self._stop_event.is_set():
+          try:
+            runner.poll_once()
+            runner.sleeper.sleep(runner.polling_interval)
+          except Exception as error:
+            handle_thread_error(
+              error,
+              context=f"{runner.hook_prefix}.run",
+              backend_alias=self.backend_alias,
+            )
+            break
+
+        if self._stop_event.is_set():
+          return
+
+        # runner crashed — fail its claimed jobs, then stop and replace
+        self._fail_crashed_runner_jobs(runner)
+        runner.stop()
+        if self._stop_event.is_set():
+          return
+        log_event(
+          "process.replaced",
+          backend_alias=self.backend_alias,
+          process_name=runner.name,
+          kind=runner.process_kind,
+        )
+        runner = self._rebuild_runner(runner)
+        runner.start()
+    finally:
+      runner.stop()
+
+  def _fail_crashed_runner_jobs(self, runner):
+    if runner.process is None:
+      return
+    claimed_job_ids = list(
+      ClaimedExecution.objects.filter(process=runner.process).values_list("job_id", flat=True)
+    )
+    with app_executor():
+      for job_id in claimed_job_ids:
+        fail_claimed_job(
+          job_id,
+          ProcessExitError("runner thread crashed"),
+          traceback_text="runner thread crashed",
           backend_alias=self.backend_alias,
         )
-        runner.request_stop()
-        return
+
+  def _rebuild_runner(self, runner):
+    kwargs = {
+      "config": runner.config,
+      "backend_alias": self.backend_alias,
+      "name": runner.name,
+      "pid": self.pid,
+      "hostname": self.hostname,
+      "supervisor": self.process,
+    }
+    return runner.__class__(**kwargs)
 
   def _build_runners(self):
     runners = []

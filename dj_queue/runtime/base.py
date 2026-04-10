@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 import threading
 
-from django.db import close_old_connections
+from django.db import close_old_connections, connections
 from django.utils import timezone
 
 from dj_queue.config import load_backend_config
@@ -18,7 +18,7 @@ def app_executor():
   try:
     yield
   finally:
-    close_old_connections()
+    connections.close_all()
 
 
 class BaseRunner:

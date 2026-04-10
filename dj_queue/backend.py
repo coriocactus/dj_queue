@@ -1,5 +1,5 @@
 from asgiref.sync import sync_to_async
-from django.db import close_old_connections
+from django.db import close_old_connections, connections
 from django.tasks import TaskResult, TaskResultStatus
 from django.tasks.backends.base import BaseTaskBackend
 from django.tasks.base import TaskError
@@ -69,10 +69,11 @@ class DjQueueBackend(BaseTaskBackend):
 
 
 def _async_backend_call(method, /, **kwargs):
+  close_old_connections()
   try:
     return method(**kwargs)
   finally:
-    close_old_connections()
+    connections.close_all()
 
 
 def _task_result_from_job(job):

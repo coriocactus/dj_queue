@@ -9,6 +9,7 @@ from django.tasks.exceptions import TaskResultDoesNotExist
 from django.utils import timezone
 
 from dj_queue.api import enqueue_on_commit
+from dj_queue.backend import _async_backend_call
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import (
   ClaimedExecution,
@@ -343,6 +344,21 @@ def test_async_backend_variants_match_sync_behavior():
   assert async_fetched.status == sync_fetched.status
   assert async_fetched.args == sync_fetched.args == ["async"]
   assert async_fetched.kwargs == sync_fetched.kwargs == {}
+
+
+def test_async_backend_call_closes_thread_owned_connections(monkeypatch):
+  events = []
+
+  monkeypatch.setattr("dj_queue.backend.close_old_connections", lambda: events.append("old"))
+  monkeypatch.setattr(
+    "dj_queue.backend.connections",
+    type("DummyConnections", (), {"close_all": lambda self: events.append("all")})(),
+  )
+
+  result = _async_backend_call(lambda value: value, value="ok")
+
+  assert result == "ok"
+  assert events == ["old", "all"]
 
 
 @pytest.mark.django_db

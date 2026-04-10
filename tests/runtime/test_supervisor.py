@@ -195,6 +195,76 @@ def test_async_supervisor_starts_configured_runners_in_one_pid():
   supervisor.stop()
 
 
+def test_async_supervisor_restarts_crashed_runner_and_fails_its_claimed_jobs():
+  supervisor = build_async_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[]),
+  )
+  process = supervisor.start()
+  wait_until(lambda: Process.objects.filter(supervisor=process, kind="Worker").count() == 1)
+
+  # grab the worker and attach a claimed job, then force a crash
+  worker = supervisor.runners[0]
+  original_process_pk = worker.process.pk
+  job = make_job(task_path="tests.tasks.echo", queue_name="default")
+  ClaimedExecution.objects.create(job=job, process=worker.process)
+  original_poll = worker.poll_once
+
+  crash_count = 0
+
+  def crashing_poll():
+    nonlocal crash_count
+    crash_count += 1
+    if crash_count == 1:
+      raise RuntimeError("simulated worker crash")
+    return original_poll()
+
+  worker.poll_once = crashing_poll
+
+  # wait for the crash to be detected and a new process row to appear
+  wait_until(lambda: crash_count >= 1, timeout=2)
+  wait_until(
+    lambda: (
+      Process.objects.filter(supervisor=process, kind="Worker").count() == 1
+      and not Process.objects.filter(pk=original_process_pk).exists()
+    ),
+    timeout=2,
+  )
+
+  # the old process row was cleaned up and a fresh one registered
+  new_worker_process = Process.objects.get(supervisor=process, kind="Worker")
+  assert new_worker_process.pk != original_process_pk
+  assert new_worker_process.name == "worker-1"
+
+  # the claimed job was failed, not left orphaned
+  assert ClaimedExecution.objects.filter(job=job).exists() is False
+  failed = FailedExecution.objects.get(job=job)
+  assert failed.exception_class == (
+    f"{ProcessExitError.__module__}.{ProcessExitError.__qualname__}"
+  )
+  supervisor.stop()
+
+
+def test_async_supervisor_stop_does_not_restart_runner_after_stop_request():
+  supervisor = build_async_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[]),
+  )
+  process = supervisor.start()
+  wait_until(lambda: Process.objects.filter(supervisor=process, kind="Worker").count() == 1)
+
+  worker = supervisor.runners[0]
+  original_process_pk = worker.process.pk
+
+  def crashing_poll():
+    raise RuntimeError("simulated worker crash")
+
+  worker.poll_once = crashing_poll
+  wait_until(lambda: not Process.objects.filter(pk=original_process_pk).exists(), timeout=2)
+
+  supervisor.stop()
+
+  assert Process.objects.filter(supervisor=process, kind="Worker").exists() is False
+
+
 def test_async_mode_ignores_processes_greater_than_one():
   with pytest.warns(UserWarning, match="ignores worker processes > 1"):
     supervisor = build_async_supervisor(

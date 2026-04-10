@@ -83,6 +83,7 @@ if not settings.configured:
     DEBUG=True,
     ALLOWED_HOSTS=["*"],
     USE_TZ=True,
+    TIME_ZONE="Europe/London",
     DEFAULT_AUTO_FIELD="django.db.models.BigAutoField",
     ROOT_URLCONF=__name__,
     STATIC_URL="/static/",
@@ -90,6 +91,10 @@ if not settings.configured:
       "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": str(DB_PATH),
+        "OPTIONS": {
+          "timeout": 5,
+          "transaction_mode": "IMMEDIATE",
+        },
       }
     },
     INSTALLED_APPS=[
@@ -133,20 +138,19 @@ if not settings.configured:
           "mode": "async",
           "workers": [
             {
-              "queues": ["interactive", "maintenance", "reports"],
+              "queues": ["*"],
               "threads": 1,
               "processes": 1,
-              "polling_interval": 0.05,
+              "polling_interval": 0.2,
             },
           ],
-          "dispatchers": [],
+          "dispatchers": [{"batch_size": 100, "polling_interval": 1}],
           "scheduler": {
-            "dynamic_tasks_enabled": False,
+            "dynamic_tasks_enabled": True,
             "polling_interval": 5,
           },
           "recurring": {},
           "preserve_finished_jobs": True,
-          "clear_finished_jobs_after": None,
           "process_heartbeat_interval": 1,
           "process_alive_threshold": 120,
           "listen_notify": False,
@@ -184,6 +188,21 @@ if not settings.configured:
 import django  # noqa: E402
 
 django.setup()
+
+from django.db.backends.signals import connection_created  # noqa: E402
+
+
+def _enable_wal(sender, connection, **kwargs):
+  if connection.vendor == "sqlite":
+    with connection.cursor() as cursor:
+      cursor.execute("PRAGMA journal_mode=WAL;")
+      cursor.execute("PRAGMA synchronous=NORMAL;")
+      cursor.execute("PRAGMA cache_size=-20000;")
+      cursor.execute("PRAGMA temp_store=MEMORY;")
+      cursor.execute("PRAGMA mmap_size=2147483648;")
+
+
+connection_created.connect(_enable_wal)
 
 from django.contrib import admin  # noqa: E402
 from django.contrib.auth import get_user_model  # noqa: E402
@@ -281,8 +300,8 @@ def seed_demo_data():
   now = timezone.now()
 
   Job.objects.all().delete()
-  Process.objects.exclude(kind="Supervisor").delete()
-  Process.objects.filter(kind="Supervisor").delete()
+  Process.objects.filter(name__startswith="legacy-").delete()
+  Process.objects.filter(name__startswith="dashboard-").delete()
   RecurringExecution.objects.all().delete()
   RecurringTask.objects.all().delete()
   Pause.objects.all().delete()
@@ -291,21 +310,22 @@ def seed_demo_data():
   Pause.objects.create(queue_name="paused-demo")
   Pause.objects.create(queue_name="critical-paused")
   Pause.objects.create(queue_name="bulk-paused")
+  Pause.objects.create(queue_name="backfill-import")
 
   semaphore_specs = (
-    ("account:demo", 1, 2, 10),
-    ("account:reporting", 0, 1, 20),
-    ("mailer:burst", 2, 3, 5),
-    ("tenant:alpha", 3, 4, 8),
-    ("tenant:beta", 2, 4, 12),
-    ("tenant:gamma", 1, 4, 16),
-    ("tenant:delta", 0, 2, 18),
-    ("tenant:epsilon", 1, 2, 22),
-    ("tenant:zeta", 4, 5, 7),
-    ("tenant:eta", 2, 3, 11),
-    ("tenant:theta", 1, 3, 14),
-    ("tenant:iota", 0, 2, 17),
-    ("tenant:kappa", 2, 2, 24),
+    ("account:demo", 1, 2, 480),
+    ("account:reporting", 0, 1, 600),
+    ("mailer:burst", 2, 3, 360),
+    ("tenant:alpha", 3, 4, 420),
+    ("tenant:beta", 2, 4, 540),
+    ("tenant:gamma", 1, 4, 660),
+    ("tenant:delta", 0, 2, 720),
+    ("tenant:epsilon", 1, 2, 510),
+    ("tenant:zeta", 4, 5, 390),
+    ("tenant:eta", 2, 3, 450),
+    ("tenant:theta", 1, 3, 570),
+    ("tenant:iota", 0, 2, 630),
+    ("tenant:kappa", 2, 2, 480),
   )
   for key, value, limit, expiry_minutes in semaphore_specs:
     Semaphore.objects.create(
@@ -367,106 +387,6 @@ def seed_demo_data():
     )
     RecurringExecution.objects.create(task_key=key, run_at=now - timedelta(minutes=minutes_ago))
 
-  legacy_supervisor = Process.objects.create(
-    kind="Supervisor",
-    pid=88001,
-    hostname="legacy-host.local",
-    name="legacy-supervisor-1",
-    metadata={
-      "mode": "async",
-      "worker_count": 2,
-      "dispatcher_count": 1,
-      "has_scheduler": True,
-    },
-    last_heartbeat_at=now - timedelta(seconds=18),
-  )
-  Process.objects.create(
-    kind="Dispatcher",
-    pid=88011,
-    hostname="legacy-host.local",
-    name="legacy-dispatcher-1",
-    metadata={"batch_size": 50, "polling_interval": 1.0},
-    supervisor=legacy_supervisor,
-    last_heartbeat_at=now - timedelta(seconds=17),
-  )
-  Process.objects.create(
-    kind="Scheduler",
-    pid=88012,
-    hostname="legacy-host.local",
-    name="legacy-scheduler-1",
-    metadata={"dynamic_tasks_enabled": True, "polling_interval": 5},
-    supervisor=legacy_supervisor,
-    last_heartbeat_at=now - timedelta(seconds=17),
-  )
-  Process.objects.create(
-    kind="Worker",
-    pid=88021,
-    hostname="legacy-host.local",
-    name="legacy-worker-1",
-    metadata={"queues": ["interactive", "reports"], "threads": 1},
-    supervisor=legacy_supervisor,
-    last_heartbeat_at=now - timedelta(seconds=16),
-  )
-  Process.objects.create(
-    kind="Worker",
-    pid=88022,
-    hostname="legacy-host.local",
-    name="legacy-worker-2",
-    metadata={"queues": ["maintenance"], "threads": 1},
-    supervisor=legacy_supervisor,
-    last_heartbeat_at=now - timedelta(seconds=15),
-  )
-
-  current_supervisor = Process.objects.create(
-    kind="Supervisor",
-    pid=99001,
-    hostname="dashboard-host.local",
-    name="dashboard-supervisor-1",
-    metadata={
-      "mode": "async",
-      "worker_count": 4,
-      "dispatcher_count": 1,
-      "has_scheduler": True,
-    },
-    last_heartbeat_at=now - timedelta(seconds=2),
-  )
-  Process.objects.create(
-    kind="Dispatcher",
-    pid=99011,
-    hostname="dashboard-host.local",
-    name="dashboard-dispatcher-1",
-    metadata={"batch_size": 100, "polling_interval": 0.5},
-    supervisor=current_supervisor,
-    last_heartbeat_at=now - timedelta(seconds=1),
-  )
-  Process.objects.create(
-    kind="Scheduler",
-    pid=99012,
-    hostname="dashboard-host.local",
-    name="dashboard-scheduler-1",
-    metadata={"dynamic_tasks_enabled": True, "polling_interval": 10},
-    supervisor=current_supervisor,
-    last_heartbeat_at=now - timedelta(seconds=1),
-  )
-  for index, queue_selector in enumerate(
-    (
-      ["interactive", "reports"],
-      ["maintenance"],
-      ["alerts", "critical-review"],
-      ["bulk-*"],
-    ),
-    start=1,
-  ):
-    Process.objects.create(
-      kind="Worker",
-      pid=99020 + index,
-      hostname="dashboard-host.local",
-      name=f"dashboard-worker-{index}",
-      metadata={"queues": queue_selector, "threads": 1},
-      supervisor=current_supervisor,
-      last_heartbeat_at=now - timedelta(seconds=index),
-    )
-
   for index in range(3):
     ready_job = make_job(
       queue_name="paused-demo",
@@ -503,6 +423,7 @@ def seed_demo_data():
       queue_name=ready_job.queue_name,
       priority=ready_job.priority,
     )
+    Pause.objects.create(queue_name=queue_name)
 
   critical_ready = make_job(
     backend_name="critical",
@@ -531,8 +452,8 @@ def seed_demo_data():
     )
 
   blocked_specs = (
-    ("blocked-demo", "demo", "account:demo", 1, 15),
-    ("report-waiters", "reporting", "account:reporting", 4, 25),
+    ("blocked-demo", "demo", "account:demo", 1, 480),
+    ("report-waiters", "reporting", "account:reporting", 4, 600),
   )
   for queue_name, account_id, concurrency_key, priority, expiry_minutes in blocked_specs:
     blocked_job = make_job(

@@ -13,6 +13,7 @@ ensure_project_on_path()
 
 import django  # noqa: E402
 from django.conf import settings  # noqa: E402
+from django.db import connections  # noqa: E402
 
 DB_BACKEND = os.environ.get("DB_BACKEND", "sqlite")
 MYSQL_FAMILY = {"mysql", "mariadb"}
@@ -91,3 +92,5 @@ from dj_queue.models import Job, Pause, RecurringTask, Semaphore  # noqa: E402
 
 for model in (Job, Pause, RecurringTask, Semaphore):
   model.objects.all().delete()
+
+connections.close_all()

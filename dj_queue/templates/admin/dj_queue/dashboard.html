@@ -190,12 +190,39 @@
     }
 
     .djq-raw-links,
-    .djq-queue-controls,
-    .djq-paginator-links {
+    .djq-queue-controls {
       display: flex;
       gap: 0.6rem;
       align-items: center;
       flex-wrap: wrap;
+    }
+
+    .djq-queue-controls .button {
+      padding: 4px 10px;
+    }
+
+    .djq-queue-controls .djq-button-pause,
+    .djq-queue-controls .djq-button-resume {
+      border-color: transparent;
+      color: #fff;
+    }
+
+    .djq-queue-controls .djq-button-pause {
+      background: #b86a00;
+    }
+
+    .djq-queue-controls .djq-button-pause:hover,
+    .djq-queue-controls .djq-button-pause:focus {
+      background: #965400;
+    }
+
+    .djq-queue-controls .djq-button-resume {
+      background: #2f7d4a;
+    }
+
+    .djq-queue-controls .djq-button-resume:hover,
+    .djq-queue-controls .djq-button-resume:focus {
+      background: #25633b;
     }
 
     .djq-summary-grid {
@@ -230,6 +257,10 @@
       margin-top: 0.35rem;
       color: #4c5b66;
       font-size: 0.88rem;
+    }
+
+    .djq-summary-detail a {
+      color: inherit;
     }
 
     .djq-section {
@@ -290,7 +321,12 @@
     .djq-table th,
     .djq-table td {
       white-space: nowrap;
-      vertical-align: top;
+      vertical-align: middle;
+      padding: 6px 8px;
+    }
+
+    .djq-table thead th {
+      padding: 0;
     }
 
     .djq-table code {
@@ -305,6 +341,11 @@
 
     .djq-col-controls {
       min-width: 11rem;
+    }
+
+    .djq-col-controls .text {
+      min-width: 11rem;
+      padding: 8px 10px;
     }
 
     .djq-col-metadata {
@@ -350,42 +391,34 @@
       font-weight: 700;
     }
 
-    .djq-paginator {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 0.75rem;
-      flex-wrap: wrap;
-      padding: 0.85rem 1rem 1rem;
-      border-top: 1px solid rgba(38, 75, 94, 0.08);
-      box-sizing: border-box;
+    .djq-table-footer {
+      padding: 0.5rem;
+      border-top: 1px solid var(--hairline-color);
+      border-bottom: 1px solid var(--hairline-color);
     }
 
-    .djq-paginator p,
+    .djq-table-footer .paginator {
+      padding: 0;
+      border: none;
+    }
+
+    .djq-table-footer .paginator ul {
+      padding: 0;
+    }
+
+    .djq-table-footer .paginator span[aria-current="page"] {
+      display: inline-block;
+      padding: 2px 6px;
+      color: var(--body-quiet-color);
+      font-weight: bold;
+    }
+
     .djq-empty {
       margin: 0;
+      padding: 1rem;
       color: #4c5b66;
       font-size: 0.86rem;
       line-height: 1.45;
-    }
-
-    .djq-paginator-summary {
-      display: flex;
-      gap: 0.6rem;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-
-    .djq-page-label {
-      color: #264b5e;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      font-size: 0.76rem;
-    }
-
-    .djq-empty {
-      padding: 1rem;
     }
 
     @media (max-width: 900px) {
@@ -425,7 +458,7 @@
         <div class="djq-backend-strip">
           <div class="djq-backend-switch">
             <label for="id_backend">backend</label>
-            <form method="get">
+            <form method="get" action="{% url 'admin:dj_queue_dashboard_changelist' %}">
               <select id="id_backend" name="backend" onchange="this.form.submit()">
                 {% for choice in backend_choices %}
                   <option value="{{ choice.alias }}"{% if choice.alias == backend_alias %} selected{% endif %}>{{ choice.alias }} (db {{ choice.database_alias }})</option>
@@ -452,7 +485,19 @@
               <h2>{{ card.label }}</h2>
               <div class="djq-summary-card-content">
                 <p class="djq-summary-value">{{ card.value }}</p>
-                <p class="djq-summary-detail">{{ card.detail }}</p>
+                <p class="djq-summary-detail">
+                  {% if card.detail_parts %}
+                    {% for part in card.detail_parts %}
+                      {% if part.url %}
+                        <a href="{{ part.url }}">{{ part.label }}</a>
+                      {% else %}
+                        {{ part.label }}
+                      {% endif %}
+                    {% endfor %}
+                  {% else %}
+                    {{ card.detail }}
+                  {% endif %}
+                </p>
               </div>
             </div>
           {% endfor %}
@@ -468,19 +513,20 @@
           <table class="djq-table djq-table-queues" id="result_list">
             <thead>
               <tr>
-                <th class="djq-col-name">name</th>
-                <th>ready</th>
-                <th>claimed</th>
-                <th>scheduled</th>
-                <th>blocked</th>
-                <th>failed</th>
-                <th>finished</th>
-                <th>paused</th>
-                <th>latency</th>
-                <th>workers</th>
-                <th>oldest scheduled</th>
-                <th>blocked until</th>
-                <th class="djq-col-controls">controls</th>
+                {% for header in queue_section.headers %}
+                  <th scope="col"{{ header.class_attrib|safe }}>
+                    {% if header.sortable and header.sorted %}
+                      <div class="sortoptions">
+                        <a class="sortremove" href="{{ header.url_remove }}" title="Remove from sorting"></a>
+                        {% if queue_section.num_sorted_fields > 1 %}<span class="sortpriority" title="Sorting priority: {{ header.sort_priority }}">{{ header.sort_priority }}</span>{% endif %}
+                        <a href="{{ header.url_toggle }}" class="toggle {{ header.ascending|yesno:'ascending,descending' }}" title="Toggle sorting"></a>
+                      </div>
+                    {% endif %}
+                    <div class="text"><a role="button" href="{{ header.url_primary }}">{{ header.text|capfirst }}</a></div>
+                    <div class="clear"></div>
+                  </th>
+                {% endfor %}
+                <th class="djq-col-controls"><div class="text">Controls</div></th>
               </tr>
             </thead>
             <tbody>
@@ -505,7 +551,7 @@
                         <input type="hidden" name="backend" value="{{ backend_alias }}">
                         <input type="hidden" name="next" value="{{ request.get_full_path }}">
                         <input type="hidden" name="action" value="{% if queue.paused %}resume{% else %}pause{% endif %}">
-                        <button type="submit" class="button">{% if queue.paused %}resume{% else %}pause{% endif %}</button>
+                        <button type="submit" class="button {% if queue.paused %}djq-button-resume{% else %}djq-button-pause{% endif %}">{% if queue.paused %}resume{% else %}pause{% endif %}</button>
                       </form>
                       <form method="post" action="{% url 'admin:dj_queue_dashboard_queue_action' queue.name %}">
                         {% csrf_token %}
@@ -521,19 +567,26 @@
             </tbody>
           </table>
         </div>
-        <div class="paginator djq-paginator">
-          <div class="djq-paginator-summary">
-            <p>{{ queue_section.summary_text }}</p>
-            {% if queue_section.page_label %}<span class="djq-page-label">{{ queue_section.page_label }}</span>{% endif %}
-          </div>
-          <div class="djq-paginator-links">
-            {% if queue_section.previous_query %}
-              <a href="?{{ queue_section.previous_query }}#{{ queue_section.anchor }}">previous</a>
+        <div class="djq-table-footer">
+          <nav class="paginator" aria-labelledby="pagination-queues">
+            <h2 id="pagination-queues" class="visually-hidden">Pagination queues</h2>
+            {% if queue_section.pagination_required %}
+              <ul>
+                {% for link in queue_section.page_links %}
+                  <li>
+                    {% if link.is_ellipsis %}
+                      {{ link.label }}
+                    {% elif link.is_current %}
+                      <span aria-current="page">{{ link.number }}</span>
+                    {% else %}
+                      <a role="button" href="{{ link.url }}">{{ link.number }}</a>
+                    {% endif %}
+                  </li>
+                {% endfor %}
+              </ul>
             {% endif %}
-            {% if queue_section.next_query %}
-              <a href="?{{ queue_section.next_query }}#{{ queue_section.anchor }}">next</a>
-            {% endif %}
-          </div>
+            {{ queue_section.result_count_text }}
+          </nav>
         </div>
       {% else %}
         <p class="djq-empty">No queues found for this backend.</p>
@@ -548,13 +601,19 @@
           <table class="djq-table djq-table-processes" id="result_list">
             <thead>
               <tr>
-                <th class="djq-col-name">name</th>
-                <th>kind</th>
-                <th>status</th>
-                <th>heartbeat</th>
-                <th>hostname</th>
-                <th>pid</th>
-                <th class="djq-col-metadata">metadata</th>
+                {% for header in process_section.headers %}
+                  <th scope="col"{{ header.class_attrib|safe }}>
+                    {% if header.sortable and header.sorted %}
+                      <div class="sortoptions">
+                        <a class="sortremove" href="{{ header.url_remove }}" title="Remove from sorting"></a>
+                        {% if process_section.num_sorted_fields > 1 %}<span class="sortpriority" title="Sorting priority: {{ header.sort_priority }}">{{ header.sort_priority }}</span>{% endif %}
+                        <a href="{{ header.url_toggle }}" class="toggle {{ header.ascending|yesno:'ascending,descending' }}" title="Toggle sorting"></a>
+                      </div>
+                    {% endif %}
+                    <div class="text"><a role="button" href="{{ header.url_primary }}">{{ header.text|capfirst }}</a></div>
+                    <div class="clear"></div>
+                  </th>
+                {% endfor %}
               </tr>
             </thead>
             <tbody>
@@ -575,19 +634,26 @@
             </tbody>
           </table>
         </div>
-        <div class="paginator djq-paginator">
-          <div class="djq-paginator-summary">
-            <p>{{ process_section.summary_text }}</p>
-            {% if process_section.page_label %}<span class="djq-page-label">{{ process_section.page_label }}</span>{% endif %}
-          </div>
-          <div class="djq-paginator-links">
-            {% if process_section.previous_query %}
-              <a href="?{{ process_section.previous_query }}#{{ process_section.anchor }}">previous</a>
+        <div class="djq-table-footer">
+          <nav class="paginator" aria-labelledby="pagination-processes">
+            <h2 id="pagination-processes" class="visually-hidden">Pagination processes</h2>
+            {% if process_section.pagination_required %}
+              <ul>
+                {% for link in process_section.page_links %}
+                  <li>
+                    {% if link.is_ellipsis %}
+                      {{ link.label }}
+                    {% elif link.is_current %}
+                      <span aria-current="page">{{ link.number }}</span>
+                    {% else %}
+                      <a role="button" href="{{ link.url }}">{{ link.number }}</a>
+                    {% endif %}
+                  </li>
+                {% endfor %}
+              </ul>
             {% endif %}
-            {% if process_section.next_query %}
-              <a href="?{{ process_section.next_query }}#{{ process_section.anchor }}">next</a>
-            {% endif %}
-          </div>
+            {{ process_section.result_count_text }}
+          </nav>
         </div>
       {% else %}
         <p class="djq-empty">No registered processes.</p>
@@ -602,19 +668,25 @@
           <table class="djq-table djq-table-recurring" id="result_list">
             <thead>
               <tr>
-                <th class="djq-col-name">key</th>
-                <th>task</th>
-                <th>queue</th>
-                <th>schedule</th>
-                <th>type</th>
-                <th>last run</th>
-                <th>next run</th>
+                {% for header in recurring_section.headers %}
+                  <th scope="col"{{ header.class_attrib|safe }}>
+                    {% if header.sortable and header.sorted %}
+                      <div class="sortoptions">
+                        <a class="sortremove" href="{{ header.url_remove }}" title="Remove from sorting"></a>
+                        {% if recurring_section.num_sorted_fields > 1 %}<span class="sortpriority" title="Sorting priority: {{ header.sort_priority }}">{{ header.sort_priority }}</span>{% endif %}
+                        <a href="{{ header.url_toggle }}" class="toggle {{ header.ascending|yesno:'ascending,descending' }}" title="Toggle sorting"></a>
+                      </div>
+                    {% endif %}
+                    <div class="text"><a role="button" href="{{ header.url_primary }}">{{ header.text|capfirst }}</a></div>
+                    <div class="clear"></div>
+                  </th>
+                {% endfor %}
               </tr>
             </thead>
             <tbody>
               {% for task in recurring_section.rows %}
                 <tr class="{% cycle 'row1' 'row2' %}">
-                  <th class="djq-col-name">{{ task.key }}</th>
+                  <th class="djq-col-name"><a href="{{ task.jobs_url }}">{{ task.key }}</a></th>
                   <td>{{ task.task_path }}</td>
                   <td>{{ task.queue_name }}</td>
                   <td><code>{{ task.schedule }}</code></td>
@@ -626,19 +698,26 @@
             </tbody>
           </table>
         </div>
-        <div class="paginator djq-paginator">
-          <div class="djq-paginator-summary">
-            <p>{{ recurring_section.summary_text }}</p>
-            {% if recurring_section.page_label %}<span class="djq-page-label">{{ recurring_section.page_label }}</span>{% endif %}
-          </div>
-          <div class="djq-paginator-links">
-            {% if recurring_section.previous_query %}
-              <a href="?{{ recurring_section.previous_query }}#{{ recurring_section.anchor }}">previous</a>
+        <div class="djq-table-footer">
+          <nav class="paginator" aria-labelledby="pagination-recurring">
+            <h2 id="pagination-recurring" class="visually-hidden">Pagination recurring tasks</h2>
+            {% if recurring_section.pagination_required %}
+              <ul>
+                {% for link in recurring_section.page_links %}
+                  <li>
+                    {% if link.is_ellipsis %}
+                      {{ link.label }}
+                    {% elif link.is_current %}
+                      <span aria-current="page">{{ link.number }}</span>
+                    {% else %}
+                      <a role="button" href="{{ link.url }}">{{ link.number }}</a>
+                    {% endif %}
+                  </li>
+                {% endfor %}
+              </ul>
             {% endif %}
-            {% if recurring_section.next_query %}
-              <a href="?{{ recurring_section.next_query }}#{{ recurring_section.anchor }}">next</a>
-            {% endif %}
-          </div>
+            {{ recurring_section.result_count_text }}
+          </nav>
         </div>
       {% else %}
         <p class="djq-empty">No recurring tasks configured.</p>
@@ -653,17 +732,25 @@
           <table class="djq-table djq-table-semaphores" id="result_list">
             <thead>
               <tr>
-                <th class="djq-col-name">key</th>
-                <th>available</th>
-                <th>limit</th>
-                <th>blocked waiters</th>
-                <th>expires at</th>
+                {% for header in semaphore_section.headers %}
+                  <th scope="col"{{ header.class_attrib|safe }}>
+                    {% if header.sortable and header.sorted %}
+                      <div class="sortoptions">
+                        <a class="sortremove" href="{{ header.url_remove }}" title="Remove from sorting"></a>
+                        {% if semaphore_section.num_sorted_fields > 1 %}<span class="sortpriority" title="Sorting priority: {{ header.sort_priority }}">{{ header.sort_priority }}</span>{% endif %}
+                        <a href="{{ header.url_toggle }}" class="toggle {{ header.ascending|yesno:'ascending,descending' }}" title="Toggle sorting"></a>
+                      </div>
+                    {% endif %}
+                    <div class="text"><a role="button" href="{{ header.url_primary }}">{{ header.text|capfirst }}</a></div>
+                    <div class="clear"></div>
+                  </th>
+                {% endfor %}
               </tr>
             </thead>
             <tbody>
               {% for semaphore in semaphore_section.rows %}
                 <tr class="{% cycle 'row1' 'row2' %}">
-                  <th class="djq-col-name">{{ semaphore.key }}</th>
+                  <th class="djq-col-name"><a href="{{ semaphore.jobs_url }}">{{ semaphore.key }}</a></th>
                   <td>{{ semaphore.available_slots }}</td>
                   <td>{{ semaphore.limit }}</td>
                   <td>{{ semaphore.blocked_waiters }}</td>
@@ -673,19 +760,26 @@
             </tbody>
           </table>
         </div>
-        <div class="paginator djq-paginator">
-          <div class="djq-paginator-summary">
-            <p>{{ semaphore_section.summary_text }}</p>
-            {% if semaphore_section.page_label %}<span class="djq-page-label">{{ semaphore_section.page_label }}</span>{% endif %}
-          </div>
-          <div class="djq-paginator-links">
-            {% if semaphore_section.previous_query %}
-              <a href="?{{ semaphore_section.previous_query }}#{{ semaphore_section.anchor }}">previous</a>
+        <div class="djq-table-footer">
+          <nav class="paginator" aria-labelledby="pagination-semaphores">
+            <h2 id="pagination-semaphores" class="visually-hidden">Pagination semaphores</h2>
+            {% if semaphore_section.pagination_required %}
+              <ul>
+                {% for link in semaphore_section.page_links %}
+                  <li>
+                    {% if link.is_ellipsis %}
+                      {{ link.label }}
+                    {% elif link.is_current %}
+                      <span aria-current="page">{{ link.number }}</span>
+                    {% else %}
+                      <a role="button" href="{{ link.url }}">{{ link.number }}</a>
+                    {% endif %}
+                  </li>
+                {% endfor %}
+              </ul>
             {% endif %}
-            {% if semaphore_section.next_query %}
-              <a href="?{{ semaphore_section.next_query }}#{{ semaphore_section.anchor }}">next</a>
-            {% endif %}
-          </div>
+            {{ semaphore_section.result_count_text }}
+          </nav>
         </div>
       {% else %}
         <p class="djq-empty">No active semaphores.</p>
@@ -702,9 +796,9 @@
             <p>Job-centric rows scoped to the selected backend where possible.</p>
           </div>
           <div class="djq-raw-links">
-            <a href="{% url 'admin:dj_queue_job_changelist' %}?backend_name__exact={{ backend_alias }}">jobs</a>
-            <a href="{% url 'admin:dj_queue_failedexecution_changelist' %}?job__backend_name__exact={{ backend_alias }}">failed executions</a>
-            <a href="{% url 'admin:dj_queue_pause_changelist' %}">pause rows</a>
+            <a href="{% url 'admin:dj_queue_job_changelist' %}?backend={{ backend_alias }}">jobs</a>
+            <a href="{% url 'admin:dj_queue_failedexecution_changelist' %}?backend={{ backend_alias }}">failed executions</a>
+            <a href="{% url 'admin:dj_queue_pause_changelist' %}?backend={{ backend_alias }}">pause rows</a>
           </div>
         </div>
 
@@ -714,9 +808,9 @@
             <p>Control-plane rows scoped by the selected backend's queue database alias.</p>
           </div>
           <div class="djq-raw-links">
-            <a href="{% url 'admin:dj_queue_process_changelist' %}">processes</a>
-            <a href="{% url 'admin:dj_queue_recurringtask_changelist' %}">recurring tasks</a>
-            <a href="{% url 'admin:dj_queue_semaphore_changelist' %}">semaphores</a>
+            <a href="{% url 'admin:dj_queue_process_changelist' %}?backend={{ backend_alias }}">processes</a>
+            <a href="{% url 'admin:dj_queue_recurringtask_changelist' %}?backend={{ backend_alias }}">recurring tasks</a>
+            <a href="{% url 'admin:dj_queue_semaphore_changelist' %}?backend={{ backend_alias }}">semaphores</a>
           </div>
         </div>
       </div>
