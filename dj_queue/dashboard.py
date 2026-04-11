@@ -448,6 +448,9 @@ def apply_queue_action(*, backend_alias, queue_name, action):
 
 
 def apply_job_action(*, backend_alias, queue_name, state, action, job_ids):
+  if not action:
+    raise ValueError("No action selected.")
+
   if not job_ids:
     raise ValueError("select at least one job")
 

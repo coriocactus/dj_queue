@@ -484,6 +484,27 @@ def test_dashboard_queue_bulk_actions(admin_client):
   assert Job.objects.filter(pk=ready_job.pk).exists() is False
 
 
+def test_dashboard_queue_bulk_actions_require_explicit_selection(admin_client):
+  ready_job = make_ready_job(queue_name="alpha")
+  url = reverse("admin:dj_queue_dashboard_job_action", args=["alpha"])
+
+  response = admin_client.post(
+    f"{url}?backend=default&state=ready",
+    {
+      "backend": "default",
+      "state": "ready",
+      "action": "",
+      "job_ids": [str(ready_job.pk)],
+    },
+    follow=True,
+  )
+
+  assert response.status_code == 200
+  messages = list(response.context["messages"])
+  assert [message.message for message in messages] == ["No action selected."]
+  assert Job.objects.filter(pk=ready_job.pk).exists() is True
+
+
 def test_dashboard_queue_view_uses_django_changelist_structure(admin_client):
   job = make_ready_job(queue_name="alpha")
 
@@ -500,6 +521,7 @@ def test_dashboard_queue_view_uses_django_changelist_structure(admin_client):
   assert 'class="queue-button-pause"' in content
   assert 'class="toplinks queue-state-tabs"' in content
   assert 'class="queue-state-tab queue-state-tab-current"' in content
+  assert '<option value="" selected>---------</option>' in content
   assert 'aria-current="page"' in content
   dashboard_url = f"{reverse('admin:dj_queue_dashboard_changelist')}?backend=default"
   queue_section_url = f"{dashboard_url}#queue-summary"

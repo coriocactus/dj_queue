@@ -265,6 +265,7 @@
               <div class="actions">
                 <label for="action">Action:
                   <select name="action" id="action">
+                    <option value="" selected>---------</option>
                     {% for action in job_actions %}
                       <option value="{{ action.name }}">{{ action.label }}</option>
                     {% endfor %}
