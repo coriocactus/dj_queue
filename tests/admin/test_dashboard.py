@@ -710,6 +710,14 @@ def test_dashboard_queue_bulk_actions_require_explicit_selection(admin_client):
 
 def test_dashboard_queue_view_uses_django_changelist_structure(admin_client):
   job = make_ready_job(queue_name="alpha")
+  Process.objects.create(
+    kind="Worker",
+    pid=201,
+    hostname="localhost",
+    name="worker-1",
+    metadata={"queues": ["alpha"]},
+    last_heartbeat_at=timezone.now(),
+  )
 
   response = admin_client.get(
     reverse("admin:dj_queue_dashboard_queue", args=["alpha"]),
@@ -726,6 +734,8 @@ def test_dashboard_queue_view_uses_django_changelist_structure(admin_client):
   assert 'class="queue-state-tab queue-state-tab-current"' in content
   assert "Backend:</strong> default" in content
   assert "Database:</strong> default" in content
+  assert "Workers:</strong> 1" in content
+  assert "Latency:</strong> " in content
   assert "Paused:</strong> no" in content
   assert '<option value="" selected>---------</option>' in content
   assert 'aria-current="page"' in content

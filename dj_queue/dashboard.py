@@ -385,7 +385,14 @@ def queue_page_context(*, backend_alias, queue_name, state, page_number, query_p
   paginator = Paginator(jobs, PAGE_SIZE)
   page_obj = paginator.get_page(query_params.get("page", page_number))
   queue_info = QueueInfo(queue_name, backend_alias=backend_alias)
+  queue_paused = queue_info.paused
+  queue_latency_seconds = None if queue_paused else queue_info.latency
   state_counts = _queue_state_counts(backend_alias=backend_alias, queue_name=queue_name)
+  live_workers = [
+    process
+    for process in Process.objects.using(alias).filter(kind="Worker")
+    if process.last_heartbeat_at >= process_cutoff
+  ]
   state_tabs = [
     {
       "name": state_name,
@@ -425,7 +432,13 @@ def queue_page_context(*, backend_alias, queue_name, state, page_number, query_p
     "queue_database_alias": alias,
     "queue_name": queue_name,
     "queue_info": queue_info,
-    "queue_paused": queue_info.paused,
+    "queue_paused": queue_paused,
+    "queue_latency_seconds": queue_latency_seconds,
+    "queue_worker_count": sum(
+      1
+      for worker in live_workers
+      if _queue_matches_selectors(queue_name, worker.metadata.get("queues", []))
+    ),
     "state": state,
     "state_label": QUEUE_STATE_LABELS[state],
     "state_tabs": state_tabs,

@@ -216,6 +216,8 @@
               <div class="queue-toolbar-meta">
                 <span><strong>Backend:</strong> {{ backend_alias }}</span>
                 <span><strong>Database:</strong> {{ queue_database_alias }}</span>
+                <span><strong>Workers:</strong> {{ queue_worker_count }}</span>
+                <span><strong>Latency:</strong> {% if queue_latency_seconds != None %}{{ queue_latency_seconds|floatformat:1 }}s{% else %}-{% endif %}</span>
                 <span><strong>Paused:</strong> {{ queue_paused|yesno:"yes,no" }}</span>
               </div>
               <div class="queue-toolbar-actions">
