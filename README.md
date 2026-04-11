@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/coriocactus/dj_queue/actions/workflows/ci.yml/badge.svg)](https://github.com/coriocactus/dj_queue/actions/workflows/ci.yml)
 ![PyPI](https://img.shields.io/pypi/v/dj-queue.svg)
+[![Latest on Django Packages](https://img.shields.io/badge/pypi/dj-queue-tags.svg)](https://djangopackages.org/packages/p/dj-queue/)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/dj-queue.svg)
 ![PyPI - Status](https://img.shields.io/pypi/status/dj-queue.svg)
 ![PyPI - License](https://img.shields.io/pypi/l/dj-queue.svg)
