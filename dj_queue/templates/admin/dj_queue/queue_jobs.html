@@ -187,13 +187,20 @@
   <div class="breadcrumbs">
     <a href="{% url 'admin:index' %}">Home</a>
     › <a href="{% url 'admin:dj_queue_dashboard_changelist' %}?backend={{ backend_alias }}">dj_queue</a>
+    › <a href="{% url 'admin:dj_queue_dashboard_changelist' %}?backend={{ backend_alias }}#queue-summary">queues</a>
     › {{ queue_name }}
   </div>
 {% endblock breadcrumbs %}
 
 {% block content_title %}
-  <h1>{{ queue_name }} {{ state_label }} jobs</h1>
+  <h1>
+    <a href="{% url 'admin:dj_queue_dashboard_changelist' %}?backend={{ backend_alias }}">dj_queue</a>
+    › <a href="{% url 'admin:dj_queue_dashboard_changelist' %}?backend={{ backend_alias }}#queue-summary">queues</a>
+    › {{ queue_name }}
+  </h1>
 {% endblock content_title %}
+
+{% block content_subtitle %}{% endblock content_subtitle %}
 
 {% block content %}
   <div id="content-main">

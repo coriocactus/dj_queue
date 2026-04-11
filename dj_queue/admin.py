@@ -79,6 +79,7 @@ class DashboardAdmin(admin.ModelAdmin):
     context = {
       **self.admin_site.each_context(request),
       **dashboard.dashboard_context(backend_alias=backend_alias, query_params=request.GET),
+      "title": "dj_queue",
     }
     if extra_context:
       context.update(extra_context)
@@ -111,16 +112,19 @@ class DashboardAdmin(admin.ModelAdmin):
     backend_alias = dashboard.resolve_backend_alias(request.GET.get("backend"))
     state = request.GET.get("state", "ready")
     page_number = request.GET.get("page", 1)
+    queue_context = dashboard.queue_page_context(
+      backend_alias=backend_alias,
+      queue_name=queue_name,
+      state=state,
+      page_number=page_number,
+      query_params=request.GET,
+    )
     context = {
       **self.admin_site.each_context(request),
-      **dashboard.queue_page_context(
-        backend_alias=backend_alias,
-        queue_name=queue_name,
-        state=state,
-        page_number=page_number,
-        query_params=request.GET,
-      ),
+      **queue_context,
       "job_actions": dashboard.job_actions_for_state(state),
+      "title": "dj_queue",
+      "subtitle": queue_name,
     }
     return TemplateResponse(request, "admin/dj_queue/queue_jobs.html", context)
 

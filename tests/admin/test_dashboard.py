@@ -125,6 +125,15 @@ def test_dashboard_admin_renders(admin_client):
   assert "account:1" in content
 
 
+def test_dashboard_admin_title_includes_dj_queue(admin_client):
+  response = admin_client.get(reverse("admin:dj_queue_dashboard_changelist"))
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert "<title>dj_queue | Django site admin</title>" in content
+  assert "<h2>dashboard</h2>" not in content
+
+
 def test_dashboard_backend_selection_changes_job_counts(admin_client, settings):
   settings.TASKS = {
     "default": {
@@ -492,8 +501,12 @@ def test_dashboard_queue_view_uses_django_changelist_structure(admin_client):
   assert 'class="toplinks queue-state-tabs"' in content
   assert 'class="queue-state-tab queue-state-tab-current"' in content
   assert 'aria-current="page"' in content
-  assert ">Dashboard</a>" in content
-  assert f"{reverse('admin:dj_queue_dashboard_changelist')}?backend=default" in content
+  dashboard_url = f"{reverse('admin:dj_queue_dashboard_changelist')}?backend=default"
+  queue_section_url = f"{dashboard_url}#queue-summary"
+  assert content.count(f'<a href="{dashboard_url}">dj_queue</a>') == 2
+  assert content.count(f'<a href="{queue_section_url}">queues</a>') == 2
+  assert "<h1>" in content
+  assert "› alpha" in content
 
 
 def test_dashboard_queue_controls_use_distinct_pause_resume_styles(admin_client):
@@ -513,6 +526,18 @@ def test_dashboard_queue_controls_use_distinct_pause_resume_styles(admin_client)
 
   assert paused_queue.status_code == 200
   assert 'class="queue-button-resume"' in paused_queue.content.decode()
+
+
+def test_dashboard_queue_view_title_includes_dj_queue(admin_client):
+  response = admin_client.get(
+    reverse("admin:dj_queue_dashboard_queue", args=["alpha"]),
+    {"backend": "default", "state": "finished"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert "<title>alpha | dj_queue | Django site admin</title>" in content
+  assert "<h2>alpha</h2>" not in content
 
 
 def test_dashboard_queue_view_raw_links_are_queue_scoped(admin_client):
