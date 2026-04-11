@@ -1,10 +1,11 @@
 #!/usr/bin/env -S uv run --with uvicorn --with watchfiles
 
 import argparse
-from datetime import timedelta
 import os
-from pathlib import Path
 import sys
+import types
+from datetime import timedelta
+from pathlib import Path
 from uuid import UUID
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -230,6 +231,7 @@ from django.contrib.staticfiles.handlers import ASGIStaticFilesHandler  # noqa: 
 from django.core.asgi import get_asgi_application  # noqa: E402
 from django.core.management import call_command  # noqa: E402
 from django.http import HttpResponse, JsonResponse  # noqa: E402
+from django.tasks import task  # noqa: E402
 from django.urls import path  # noqa: E402
 from django.utils import timezone  # noqa: E402
 
@@ -256,6 +258,60 @@ SEEDED_PROCESS_NAMES = (
   "dashboard-scheduler",
   "dashboard-worker-alpha",
 )
+
+
+def _demo_result(name, account_id=None):
+  return {"task": name, "account_id": account_id}
+
+
+def _register_demo_task(module, name, *, concurrency_key=None, concurrency_limit=None, concurrency_duration=None):
+  def implementation(account_id):
+    return _demo_result(name, account_id)
+
+  implementation.__name__ = name
+  implementation.__qualname__ = name
+  implementation.__module__ = module.__name__
+  demo_task = task(implementation)
+  if concurrency_key is not None:
+    demo_task.func.concurrency_key = concurrency_key
+  if concurrency_limit is not None:
+    demo_task.func.concurrency_limit = concurrency_limit
+  if concurrency_duration is not None:
+    demo_task.func.concurrency_duration = concurrency_duration
+  setattr(module, name, demo_task)
+
+
+def _install_demo_tasks_module():
+  demo_package = types.ModuleType("demo")
+  demo_package.__path__ = []
+  tasks_module = types.ModuleType("demo.tasks")
+  tasks_module.__package__ = "demo"
+
+  for name in (
+    "refresh_customer_cache",
+    "generate_statement_pdf",
+    "build_account_snapshot",
+    "send_digest",
+    "push_billing_webhook",
+    "fetch_billing_events",
+    "trim_finished_exports",
+  ):
+    _register_demo_task(tasks_module, name)
+
+  _register_demo_task(
+    tasks_module,
+    "sync_account",
+    concurrency_key="account:{account_id}",
+    concurrency_limit=2,
+    concurrency_duration=360,
+  )
+
+  demo_package.tasks = tasks_module
+  sys.modules["demo"] = demo_package
+  sys.modules["demo.tasks"] = tasks_module
+
+
+_install_demo_tasks_module()
 
 
 # ---------------------------------------------------------------------------
