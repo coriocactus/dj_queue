@@ -3,6 +3,7 @@ from datetime import timedelta
 import pytest
 from django.contrib.auth import get_user_model
 from django.urls import reverse
+from django.utils.html import format_html
 from django.utils import timezone
 
 from dj_queue.models import (
@@ -348,7 +349,7 @@ def test_failed_execution_change_view_discard_action(admin_client):
   assert Job.objects.filter(pk=job.pk).exists() is False
 
 
-def test_job_change_view_shows_retry_and_discard_actions_for_failed_jobs(admin_client):
+def test_job_change_view_shows_enqueue_retry_and_discard_actions_for_failed_jobs(admin_client):
   job, _failed = make_failed_job()
 
   response = admin_client.get(
@@ -360,14 +361,18 @@ def test_job_change_view_shows_retry_and_discard_actions_for_failed_jobs(admin_c
   content = response.content.decode()
   assert '<ul class="object-tools">' not in content
   assert '<div class="submit-row">' in content
+  assert 'name="_djq_object_action" value="enqueue"' in content
   assert 'name="_djq_object_action" value="retry"' in content
   assert 'name="_djq_object_action" value="discard"' in content
+  assert "Enqueue job" in content
+  assert "Retry failed job" in content
+  assert "Discard failed job" in content
   assert ">History<" not in content
   assert "Save and continue editing" not in content
   assert 'value="Save"' not in content
 
 
-def test_job_change_view_hides_retry_and_discard_actions_for_non_failed_jobs(admin_client):
+def test_job_change_view_shows_enqueue_action_for_non_failed_jobs(admin_client):
   job = make_job()
 
   response = admin_client.get(
@@ -378,7 +383,8 @@ def test_job_change_view_hides_retry_and_discard_actions_for_non_failed_jobs(adm
   assert response.status_code == 200
   content = response.content.decode()
   assert '<ul class="object-tools">' not in content
-  assert '<div class="submit-row">' not in content
+  assert '<div class="submit-row">' in content
+  assert 'name="_djq_object_action" value="enqueue"' in content
   assert 'name="_djq_object_action" value="retry"' not in content
   assert 'name="_djq_object_action" value="discard"' not in content
   assert ">History<" not in content
@@ -415,6 +421,37 @@ def test_job_change_view_retry_action(admin_client):
   assert response.status_code == 200
   assert FailedExecution.objects.filter(pk=failed.pk).exists() is False
   assert Job.objects.filter(pk=job.pk, ready_execution__isnull=False).exists() is True
+
+
+def test_job_change_view_enqueue_action(admin_client):
+  job = make_job(queue_name="alpha", priority=7, args=["again"])
+  change_url = f"{reverse('admin:dj_queue_job_change', args=[job.pk])}?backend=default"
+
+  response = admin_client.post(
+    change_url,
+    {"_djq_object_action": "enqueue"},
+    follow=True,
+  )
+
+  assert response.status_code == 200
+  assert response.request["PATH_INFO"] == reverse("admin:dj_queue_job_change", args=[job.pk])
+  assert Job.objects.filter(pk=job.pk).exists() is True
+
+  new_job = Job.objects.exclude(pk=job.pk).get()
+  assert new_job.task_path == job.task_path
+  assert new_job.queue_name == job.queue_name
+  assert new_job.priority == job.priority
+  assert new_job.payload == job.payload
+  assert new_job.backend_name == job.backend_name
+  assert new_job.scheduled_at == job.scheduled_at
+  assert ReadyExecution.objects.filter(job=new_job).exists() is True
+  messages = list(response.context["messages"])
+  assert len(messages) == 1
+  assert messages[0].message == format_html(
+    'Enqueued job <a href="{}">{}</a>.',
+    f"{reverse('admin:dj_queue_job_change', args=[new_job.pk])}?backend=default",
+    new_job.pk,
+  )
 
 
 def test_job_change_view_discard_action(admin_client):
@@ -622,3 +659,34 @@ def test_job_admin_breadcrumb_links_to_dashboard(admin_client):
     in content
   )
   assert f'href="{reverse("admin:app_list", kwargs={"app_label": "dj_queue"})}"' not in content
+
+
+def test_job_change_view_breadcrumb_links_preserve_backend(admin_client, settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+    "secondary": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+  }
+  job = make_job(backend_name="secondary")
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_job_change", args=[job.pk]),
+    {"backend": "secondary"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert (
+    f'› <a href="{reverse("admin:dj_queue_dashboard_changelist")}?backend=secondary">dj_queue</a>'
+    in content
+  )
+  assert (
+    f'› <a href="{reverse("admin:dj_queue_job_changelist")}?backend=secondary">Jobs</a>' in content
+  )

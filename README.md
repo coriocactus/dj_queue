@@ -138,6 +138,7 @@ If Django admin is installed, `dj_queue` adds an operator dashboard at
 - queue, process, recurring-task, and semaphore overview
 - backend-aware dashboard and raw changelists
 - queue controls: pause, resume, clear ready
+- job detail action: enqueue a fresh copy of any stored job
 - failed-job actions: retry and discard from list and detail views
 - queue drill-down pages for state-specific inspection
 
@@ -404,8 +405,9 @@ python manage.py dj_queue_prune --task-path myapp.tasks.cleanup
 When a task raises, `dj_queue` keeps the job and its failed execution row in the
 queue database, including the exception class, message, and traceback.
 
-You can retry and discard failed jobs through Django admin, or call the same
-operations directly through the operations layer:
+You can retry and discard failed jobs through Django admin, and any raw job
+detail page can enqueue a fresh copy of that stored job. The failed-job actions
+also stay available directly through the operations layer:
 
 ```python
 from dj_queue.operations.jobs import discard_failed_job, retry_failed_job

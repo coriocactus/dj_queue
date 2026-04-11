@@ -354,6 +354,23 @@ def retry_failed_job(job_id, *, backend_alias="default"):
   return job
 
 
+def enqueue_job_again(job_id, *, backend_alias="default"):
+  alias = get_database_alias(backend_alias)
+  source_job = Job.objects.using(alias).get(pk=job_id)
+  task = import_string(source_job.task_path)
+  if hasattr(task, "using"):
+    task = task.using(
+      priority=source_job.priority,
+      queue_name=source_job.queue_name,
+      run_after=source_job.scheduled_at,
+      backend=source_job.backend_name,
+    )
+  args = list(source_job.payload.get("args", []))
+  kwargs = dict(source_job.payload.get("kwargs", {}))
+  job, _ = enqueue_job_with_dispatch(task, args, kwargs, backend_alias=source_job.backend_name)
+  return job
+
+
 def discard_failed_job(job_id, *, backend_alias="default"):
   alias = get_database_alias(backend_alias)
   queryset = Job.objects.using(alias).filter(pk=job_id, failed_execution__isnull=False)

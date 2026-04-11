@@ -26,6 +26,7 @@ from dj_queue.models import (
   RecurringTask,
   Semaphore,
 )
+from dj_queue.operations.jobs import enqueue_job_again
 
 
 class DjQueueFirstAdminSite(admin.AdminSite):
@@ -214,6 +215,7 @@ class HiddenSidebarAdminMixin:
     extra_context = {
       **(extra_context or {}),
       "dashboard_url": self._dashboard_url(request),
+      "changelist_url": self._changelist_url(backend_alias=self._backend_alias(request)),
       "change_actions": self.get_change_actions(request, obj),
     }
     return super().changeform_view(
@@ -474,18 +476,49 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     return format_html('<a href="{}">{}</a>', url, obj.queue_name)
 
   def get_change_actions(self, request, obj):
-    if obj is None or obj.status != "failed":
+    if obj is None:
       return ()
-    return (
-      {"name": "retry", "label": "Retry failed job", "css_class": "djq-object-action-retry"},
-      {
-        "name": "discard",
-        "label": "Discard failed job",
-        "css_class": "djq-object-action-discard",
-      },
-    )
+    actions = [{"name": "enqueue", "label": "Enqueue job", "css_class": "djq-object-action-retry"}]
+    if obj.status == "failed":
+      actions.extend(
+        (
+          {
+            "name": "retry",
+            "label": "Retry failed job",
+            "css_class": "djq-object-action-retry",
+          },
+          {
+            "name": "discard",
+            "label": "Discard failed job",
+            "css_class": "djq-object-action-discard",
+          },
+        )
+      )
+    return tuple(actions)
 
   def handle_change_action(self, request, obj, action):
+    if action == "enqueue":
+      try:
+        new_job = enqueue_job_again(obj.pk, backend_alias=obj.backend_name)
+      except Exception as exc:
+        self.message_user(request, f"Could not enqueue job: {exc}", level=messages.ERROR)
+        return HttpResponseRedirect(
+          self._change_url(object_id=obj.pk, backend_alias=obj.backend_name)
+        )
+
+      self.message_user(
+        request,
+        format_html(
+          'Enqueued job <a href="{}">{}</a>.',
+          self._change_url(object_id=new_job.pk, backend_alias=new_job.backend_name),
+          new_job.pk,
+        ),
+        level=messages.SUCCESS,
+      )
+      return HttpResponseRedirect(
+        self._change_url(object_id=obj.pk, backend_alias=obj.backend_name)
+      )
+
     if obj.status != "failed":
       self.message_user(request, "This job is not failed", level=messages.ERROR)
       return HttpResponseRedirect(
