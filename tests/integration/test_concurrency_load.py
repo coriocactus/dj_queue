@@ -1,3 +1,4 @@
+import logging
 import os
 import threading
 import time
@@ -11,6 +12,9 @@ from dj_queue.models import BlockedExecution, ClaimedExecution, Job, Semaphore
 from dj_queue.runtime.worker import Worker
 from tests.runtime.test_supervisor import wait_until
 from tests.tasks import limited
+
+
+logger = logging.getLogger("dj_queue.stress")
 
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -115,6 +119,7 @@ def test_concurrency_limit_respected_under_load():
 
   for index in range(total_jobs):
     limited.enqueue(1, value=f"job-{index}")
+  logger.info("concurrency load start total_jobs=%s workers=%s", total_jobs, worker_count)
 
   try:
     for index in range(worker_count):
@@ -135,6 +140,13 @@ def test_concurrency_limit_respected_under_load():
 
     wait_until(lambda: started.is_set())
     wait_until(lambda: ClaimedExecution.objects.count() == 1)
+    logger.info(
+      "concurrency load claimed=%s blocked=%s finished=%s semaphore=%s",
+      ClaimedExecution.objects.count(),
+      BlockedExecution.objects.count(),
+      Job.objects.filter(finished_at__isnull=False).count(),
+      Semaphore.objects.get(key="account:1").value,
+    )
 
     assert max_active[0] == 1
     assert ClaimedExecution.objects.count() == 1
@@ -143,7 +155,15 @@ def test_concurrency_limit_respected_under_load():
     assert Semaphore.objects.get(key="account:1").value == 0
 
     release.set()
+    logger.info("concurrency load release workers")
     drain_workers(workers, total_jobs=total_jobs, timeout=2)
+    logger.info(
+      "concurrency load complete claimed=%s blocked=%s finished=%s semaphore=%s",
+      ClaimedExecution.objects.count(),
+      BlockedExecution.objects.count(),
+      Job.objects.filter(finished_at__isnull=False).count(),
+      Semaphore.objects.get(key="account:1").value,
+    )
 
     assert max_active[0] == 1
     assert ClaimedExecution.objects.count() == 0
@@ -151,5 +171,6 @@ def test_concurrency_limit_respected_under_load():
     assert Job.objects.filter(finished_at__isnull=False).count() == total_jobs
   finally:
     release.set()
+    logger.info("concurrency load stop")
     for worker in workers:
       worker.stop(timeout=1)

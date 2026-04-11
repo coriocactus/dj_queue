@@ -1,5 +1,7 @@
 from collections import Counter
+import logging
 import os
+import time
 
 import pytest
 from django.tasks import TaskResultStatus
@@ -7,8 +9,10 @@ from django.utils import timezone
 
 from dj_queue.models import ClaimedExecution, Job, Process, ReadyExecution
 from dj_queue.runtime.supervisor import AsyncSupervisor
-from tests.contrib.test_server_integrations import wait_until
 from tests.tasks import echo
+
+
+logger = logging.getLogger("dj_queue.stress")
 
 
 pytestmark = [
@@ -44,9 +48,46 @@ def _queue_tasks(database_alias="default"):
   }
 
 
+def _wait_for_async_drain(task_count, *, timeout):
+  deadline = time.monotonic() + timeout
+  next_log_at = time.monotonic()
+  while time.monotonic() < deadline:
+    finished = Job.objects.filter(finished_at__isnull=False).count()
+    ready = ReadyExecution.objects.count()
+    claimed = ClaimedExecution.objects.count()
+    if finished == task_count and ready == 0 and claimed == 0:
+      logger.info(
+        "async volume complete finished=%s/%s ready=%s claimed=%s workers=%s",
+        finished,
+        task_count,
+        ready,
+        claimed,
+        Process.objects.filter(kind="Worker").count(),
+      )
+      return
+    now = time.monotonic()
+    if now >= next_log_at:
+      logger.info(
+        "async volume progress finished=%s/%s ready=%s claimed=%s workers=%s",
+        finished,
+        task_count,
+        ready,
+        claimed,
+        Process.objects.filter(kind="Worker").count(),
+      )
+      next_log_at = now + 1
+    time.sleep(0.1)
+  assert (
+    Job.objects.filter(finished_at__isnull=False).count() == task_count
+    and ReadyExecution.objects.count() == 0
+    and ClaimedExecution.objects.count() == 0
+  )
+
+
 def test_10k_tasks_async_mode_no_duplicates(queue_test_settings):
   task_count = 10_000
   queue_test_settings(tasks=_queue_tasks(database_alias="default"))
+  logger.info("async volume start task_count=%s", task_count)
 
   payloads = [f"task-{index}" for index in range(task_count)]
   now = timezone.now()
@@ -78,16 +119,10 @@ def test_10k_tasks_async_mode_no_duplicates(queue_test_settings):
 
   supervisor = AsyncSupervisor.from_backend_config(backend_alias="default", standalone=False)
   supervisor.start()
+  logger.info("async volume supervisor started workers=%s", len(supervisor.runners))
 
   try:
-    wait_until(
-      lambda: (
-        Job.objects.filter(finished_at__isnull=False).count() == task_count
-        and ReadyExecution.objects.count() == 0
-        and ClaimedExecution.objects.count() == 0
-      ),
-      timeout=240,
-    )
+    _wait_for_async_drain(task_count, timeout=240)
 
     assert Process.objects.filter(kind="Worker").count() == 4
     assert Job.objects.count() == task_count
@@ -100,4 +135,5 @@ def test_10k_tasks_async_mode_no_duplicates(queue_test_settings):
     fetched = [echo.get_backend().get_result(result_id) for result_id in sample_ids]
     assert [result.status for result in fetched] == [TaskResultStatus.SUCCESSFUL] * 3
   finally:
+    logger.info("async volume stop")
     supervisor.stop()

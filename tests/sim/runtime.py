@@ -1,4 +1,5 @@
 from concurrent.futures import Future
+import logging
 import random
 from datetime import timedelta
 from uuid import uuid4
@@ -23,6 +24,9 @@ from dj_queue.operations.jobs import retry_failed_job
 from dj_queue.runtime.supervisor import AsyncSupervisor
 from tests.sim.config import fixed_now, simulation_tasks_settings
 from tests.tasks import echo, limited
+
+
+logger = logging.getLogger("dj_queue.stress")
 
 
 class FakeSleeper:
@@ -98,6 +102,7 @@ class RuntimeSimulation:
     self.claimed_job_ids_by_pause = {}
     self.active_recurring_keys = set()
     self.crash_count = 0
+    self.step = 0
     self.recovered_failure_classes = set()
     self.supervisor = AsyncSupervisor.from_backend_config(
       backend_alias="default",
@@ -128,12 +133,14 @@ class RuntimeSimulation:
     assert all(runner.process is not None for runner in self.supervisor.runners), [
       (runner.process_kind, runner.process) for runner in self.supervisor.runners
     ]
+    self._log_state(logging.INFO, "start")
 
   def stop(self):
     for runner in self.supervisor.runners:
       if runner.process_kind == "Worker":
         runner.pool.clear()
     self.supervisor.stop()
+    self._log_state(logging.INFO, "stop")
 
   def run(self, *, steps):
     actions = (
@@ -155,15 +162,21 @@ class RuntimeSimulation:
       self.supervisor_tick,
     )
 
-    for _ in range(steps):
+    for step in range(1, steps + 1):
+      self.step = step
       action = self.rng.choice(actions)
       action()
       self.assert_invariants()
+      self._log_state(logging.DEBUG, action.__name__)
+      if step == 1 or step % 25 == 0:
+        self._log_state(logging.INFO, action.__name__)
 
   def run_actions(self, actions):
     for action in actions:
+      self.step += 1
       action()
       self.assert_invariants()
+      self._log_state(logging.INFO, action.__name__)
 
   def drain(self):
     for key in list(self.active_recurring_keys):
@@ -173,7 +186,7 @@ class RuntimeSimulation:
     for pause in Pause.objects.all():
       QueueInfo(pause.queue_name).resume()
 
-    for _ in range(180):
+    for iteration in range(1, 181):
       self.supervisor_tick()
       self.scheduler_tick()
       self.dispatcher_tick()
@@ -181,7 +194,10 @@ class RuntimeSimulation:
       self.complete_worker_task()
       self.assert_invariants()
       if self._non_terminal_count() == 0 and self._running_tasks() == 0:
+        self._log_state(logging.INFO, "drain_complete")
         return
+      if iteration == 1 or iteration % 10 == 0:
+        self._log_state(logging.INFO, "drain_wait")
       self.now += timedelta(minutes=1)
 
     assert self._non_terminal_count() == 0, f"seed {self.seed} left live jobs behind"
@@ -244,6 +260,7 @@ class RuntimeSimulation:
       ClaimedExecution.objects.filter(job__queue_name=queue_name).values_list("job_id", flat=True)
     )
     QueueInfo(queue_name).pause()
+    logger.info("simulation seed=%s action=pause queue=%s", self.seed, queue_name)
 
   def resume_random_queue(self):
     paused = list(Pause.objects.values_list("queue_name", flat=True))
@@ -255,6 +272,7 @@ class RuntimeSimulation:
   def resume_queue(self, queue_name):
     QueueInfo(queue_name).resume()
     self.claimed_job_ids_by_pause.pop(queue_name, None)
+    logger.info("simulation seed=%s action=resume queue=%s", self.seed, queue_name)
 
   def worker_tick(self):
     for runner in self.supervisor.runners:
@@ -282,19 +300,35 @@ class RuntimeSimulation:
     crashable = [runner for runner in self.supervisor.runners if runner.process is not None]
     if not crashable:
       return
-    self._crash_runner(self.rng.choice(crashable))
+    runner = self.rng.choice(crashable)
+    logger.info(
+      "simulation seed=%s action=crash runner=%s name=%s",
+      self.seed,
+      runner.process_kind,
+      runner.name,
+    )
+    self._crash_runner(runner)
 
   def prune_random_runner(self):
     prunable = [runner for runner in self.supervisor.runners if runner.process is not None]
     if not prunable:
       return
-    self._prune_runner(self.rng.choice(prunable))
+    runner = self.rng.choice(prunable)
+    logger.info(
+      "simulation seed=%s action=prune runner=%s name=%s",
+      self.seed,
+      runner.process_kind,
+      runner.name,
+    )
+    self._prune_runner(runner)
 
   def retry_random_failed_job(self):
     failed_job_ids = list(FailedExecution.objects.values_list("job_id", flat=True))
     if not failed_job_ids:
       return
-    retry_failed_job(self.rng.choice(failed_job_ids))
+    job_id = self.rng.choice(failed_job_ids)
+    logger.info("simulation seed=%s action=retry job_id=%s", self.seed, job_id)
+    retry_failed_job(job_id)
 
   def supervisor_tick(self):
     self.supervisor.poll_once()
@@ -437,7 +471,32 @@ class RuntimeSimulation:
     assert failed.exception_class == (
       f"{ProcessMissingError.__module__}.{ProcessMissingError.__qualname__}"
     )
+    logger.info("simulation seed=%s action=inject_startup_orphan job_id=%s", self.seed, orphan_job.id)
     return orphan_job.id
+
+  def _log_state(self, level, action):
+    if not logger.isEnabledFor(level):
+      return
+    logger.log(
+      level,
+      (
+        "simulation seed=%s step=%s action=%s ready=%s scheduled=%s claimed=%s "
+        "blocked=%s failed=%s finished=%s running=%s pauses=%s recurring=%s crashes=%s"
+      ),
+      self.seed,
+      self.step,
+      action,
+      ReadyExecution.objects.count(),
+      ScheduledExecution.objects.count(),
+      ClaimedExecution.objects.count(),
+      BlockedExecution.objects.count(),
+      FailedExecution.objects.count(),
+      Job.objects.filter(finished_at__isnull=False).count(),
+      self._running_tasks(),
+      Pause.objects.count(),
+      RecurringExecution.objects.count(),
+      self.crash_count,
+    )
 
   def _patch_time(self):
     self.monkeypatch.setattr("dj_queue.runtime.dispatcher.timezone.now", lambda: self.now)

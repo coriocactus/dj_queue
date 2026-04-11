@@ -1,9 +1,15 @@
 from collections import Counter
+import logging
 import multiprocessing
 import os
 import time
 
 import pytest
+
+from dj_queue.models import ClaimedExecution, ReadyExecution
+
+
+logger = logging.getLogger("dj_queue.stress")
 
 
 pytestmark = [
@@ -92,6 +98,42 @@ def _join_children(children, timeout):
   assert all(child.is_alive() is False for child in children)
 
 
+def _wait_for_fork_drain(task_count, *, timeout, children_by_pid):
+  deadline = time.monotonic() + timeout
+  next_log_at = time.monotonic()
+  while time.monotonic() < deadline:
+    finished = _terminal_job_count()
+    ready = ReadyExecution.objects.count()
+    claimed = ClaimedExecution.objects.count()
+    if finished == task_count and ready == 0 and claimed == 0:
+      logger.info(
+        "fork volume complete finished=%s/%s ready=%s claimed=%s live_children=%s",
+        finished,
+        task_count,
+        ready,
+        claimed,
+        sum(child.is_alive() for child in children_by_pid.values()),
+      )
+      return
+    now = time.monotonic()
+    if now >= next_log_at:
+      logger.info(
+        "fork volume progress finished=%s/%s ready=%s claimed=%s live_children=%s",
+        finished,
+        task_count,
+        ready,
+        claimed,
+        sum(child.is_alive() for child in children_by_pid.values()),
+      )
+      next_log_at = now + 1
+    time.sleep(0.1)
+  assert (
+    _terminal_job_count() == task_count
+    and ReadyExecution.objects.count() == 0
+    and ClaimedExecution.objects.count() == 0
+  )
+
+
 def _terminate_children(children):
   for child in children:
     if child.is_alive():
@@ -104,14 +146,14 @@ def test_10k_tasks_fork_mode_no_duplicates(tmp_path, queue_test_settings):
   from django.tasks import TaskResultStatus
   from django.utils import timezone
 
-  from dj_queue.models import ClaimedExecution, FailedExecution, Job, Process, ReadyExecution
+  from dj_queue.models import FailedExecution, Job, Process
   from dj_queue.runtime.supervisor import ForkSupervisor
-  from tests.contrib.test_server_integrations import wait_until
   from tests.tasks import record_once
 
   task_count = 10_000
   tasks_settings = _queue_tasks(database_alias="default")
   queue_test_settings(tasks=tasks_settings)
+  logger.info("fork volume start task_count=%s", task_count)
   databases = settings.DATABASES
   output_dir = tmp_path / "fork-records"
   output_dir.mkdir()
@@ -176,15 +218,9 @@ def test_10k_tasks_fork_mode_no_duplicates(tmp_path, queue_test_settings):
   try:
     supervisor.start()
     children = tuple(children_by_pid[pid] for pid in supervisor.children)
+    logger.info("fork volume supervisor started children=%s", len(children))
 
-    wait_until(
-      lambda: (
-        _terminal_job_count() == task_count
-        and ReadyExecution.objects.count() == 0
-        and ClaimedExecution.objects.count() == 0
-      ),
-      timeout=180,
-    )
+    _wait_for_fork_drain(task_count, timeout=180, children_by_pid=children_by_pid)
 
     _join_children(children, timeout=10)
     supervisor.stop()
@@ -204,6 +240,7 @@ def test_10k_tasks_fork_mode_no_duplicates(tmp_path, queue_test_settings):
     assert [result.status for result in fetched] == [TaskResultStatus.SUCCESSFUL] * 3
   finally:
     try:
+      logger.info("fork volume stop")
       supervisor.stop()
     finally:
       _terminate_children(children)
