@@ -1,5 +1,6 @@
 from datetime import timedelta
 import time
+import threading
 from uuid import uuid4
 
 import pytest
@@ -319,16 +320,29 @@ def test_async_supervisor_stop_does_not_restart_runner_after_stop_request():
     wait_until(lambda: Process.objects.filter(supervisor=process, kind="Worker").count() == 1)
 
     worker = supervisor.runners[0]
-    original_process_pk = worker.process.pk
+    crash_handled = threading.Event()
+    allow_runner_stop = threading.Event()
+    original_stop = worker.stop
 
     def crashing_poll():
       raise RuntimeError("simulated worker crash")
 
+    def gated_stop(*, timeout=None):
+      crash_handled.set()
+      allow_runner_stop.wait(timeout=1)
+      return original_stop(timeout=timeout)
+
     worker.poll_once = crashing_poll
-    wait_until(lambda: not Process.objects.filter(pk=original_process_pk).exists(), timeout=2)
+    worker.stop = gated_stop
+
+    wait_until(crash_handled.is_set, timeout=2)
+    supervisor.stop()
+    allow_runner_stop.set()
   finally:
+    allow_runner_stop.set()
     supervisor.stop()
 
+  assert supervisor.runners == []
   assert Process.objects.filter(supervisor=process, kind="Worker").exists() is False
 
 
