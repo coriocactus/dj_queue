@@ -200,6 +200,41 @@ def test_failed_execution_admin_retry_action(admin_client):
   assert Job.objects.filter(pk=job.pk, ready_execution__isnull=False).exists() is True
 
 
+def test_failed_execution_change_view_shows_retry_and_discard_actions(admin_client):
+  _job, failed = make_failed_job()
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_failedexecution_change", args=[failed.pk]),
+    {"backend": "default"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert '<ul class="object-tools">' not in content
+  assert '<div class="submit-row">' in content
+  assert 'name="_djq_object_action" value="retry"' in content
+  assert 'name="_djq_object_action" value="discard"' in content
+  assert "Retry failed job" in content
+  assert "Discard failed job" in content
+  assert ">History<" not in content
+  assert "Save and continue editing" not in content
+  assert 'value="Save"' not in content
+
+
+def test_failed_execution_change_view_retry_action(admin_client):
+  job, failed = make_failed_job()
+
+  response = admin_client.post(
+    f"{reverse('admin:dj_queue_failedexecution_change', args=[failed.pk])}?backend=default",
+    {"_djq_object_action": "retry"},
+    follow=True,
+  )
+
+  assert response.status_code == 200
+  assert FailedExecution.objects.filter(pk=failed.pk).exists() is False
+  assert Job.objects.filter(pk=job.pk, ready_execution__isnull=False).exists() is True
+
+
 def test_failed_execution_admin_changelist_filtered_by_backend(admin_client):
   make_failed_job()
 
@@ -291,6 +326,103 @@ def test_failed_execution_admin_discard_action(admin_client):
       "action": "discard_jobs",
       "_selected_action": [str(failed.pk)],
     },
+    follow=True,
+  )
+
+  assert response.status_code == 200
+  assert FailedExecution.objects.filter(pk=failed.pk).exists() is False
+  assert Job.objects.filter(pk=job.pk).exists() is False
+
+
+def test_failed_execution_change_view_discard_action(admin_client):
+  job, failed = make_failed_job()
+
+  response = admin_client.post(
+    f"{reverse('admin:dj_queue_failedexecution_change', args=[failed.pk])}?backend=default",
+    {"_djq_object_action": "discard"},
+    follow=True,
+  )
+
+  assert response.status_code == 200
+  assert FailedExecution.objects.filter(pk=failed.pk).exists() is False
+  assert Job.objects.filter(pk=job.pk).exists() is False
+
+
+def test_job_change_view_shows_retry_and_discard_actions_for_failed_jobs(admin_client):
+  job, _failed = make_failed_job()
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_job_change", args=[job.pk]),
+    {"backend": "default"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert '<ul class="object-tools">' not in content
+  assert '<div class="submit-row">' in content
+  assert 'name="_djq_object_action" value="retry"' in content
+  assert 'name="_djq_object_action" value="discard"' in content
+  assert ">History<" not in content
+  assert "Save and continue editing" not in content
+  assert 'value="Save"' not in content
+
+
+def test_job_change_view_hides_retry_and_discard_actions_for_non_failed_jobs(admin_client):
+  job = make_job()
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_job_change", args=[job.pk]),
+    {"backend": "default"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert '<ul class="object-tools">' not in content
+  assert '<div class="submit-row">' not in content
+  assert 'name="_djq_object_action" value="retry"' not in content
+  assert 'name="_djq_object_action" value="discard"' not in content
+  assert ">History<" not in content
+  assert "Save and continue editing" not in content
+  assert 'value="Save"' not in content
+
+
+def test_process_change_view_hides_save_controls(admin_client):
+  process = make_process(last_heartbeat_at=timezone.now())
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_process_change", args=[process.pk]),
+    {"backend": "default"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert '<ul class="object-tools">' not in content
+  assert '<div class="submit-row">' not in content
+  assert ">History<" not in content
+  assert "Save and continue editing" not in content
+  assert 'value="Save"' not in content
+
+
+def test_job_change_view_retry_action(admin_client):
+  job, failed = make_failed_job()
+
+  response = admin_client.post(
+    f"{reverse('admin:dj_queue_job_change', args=[job.pk])}?backend=default",
+    {"_djq_object_action": "retry"},
+    follow=True,
+  )
+
+  assert response.status_code == 200
+  assert FailedExecution.objects.filter(pk=failed.pk).exists() is False
+  assert Job.objects.filter(pk=job.pk, ready_execution__isnull=False).exists() is True
+
+
+def test_job_change_view_discard_action(admin_client):
+  job, failed = make_failed_job()
+
+  response = admin_client.post(
+    f"{reverse('admin:dj_queue_job_change', args=[job.pk])}?backend=default",
+    {"_djq_object_action": "discard"},
     follow=True,
   )
 

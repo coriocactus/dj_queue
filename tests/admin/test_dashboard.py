@@ -485,7 +485,7 @@ def test_dashboard_queue_bulk_actions(admin_client):
 
 
 def test_dashboard_queue_view_uses_django_changelist_structure(admin_client):
-  make_ready_job(queue_name="alpha")
+  job = make_ready_job(queue_name="alpha")
 
   response = admin_client.get(
     reverse("admin:dj_queue_dashboard_queue", args=["alpha"]),
@@ -507,6 +507,7 @@ def test_dashboard_queue_view_uses_django_changelist_structure(admin_client):
   assert content.count(f'<a href="{queue_section_url}">queues</a>') == 2
   assert "<h1>" in content
   assert "› alpha" in content
+  assert f'href="{reverse("admin:dj_queue_job_change", args=[job.pk])}?backend=default"' in content
 
 
 def test_dashboard_queue_controls_use_distinct_pause_resume_styles(admin_client):
@@ -560,7 +561,7 @@ def test_dashboard_queue_view_raw_links_are_queue_scoped(admin_client):
     f"{reverse('admin:dj_queue_failedexecution_changelist')}?backend=default&amp;job__queue_name=alpha"
     in content
   )
-  assert "pause rows" not in content
+  assert "pauses" not in content
 
 
 def test_dashboard_queue_view_hides_missing_raw_links(admin_client):
@@ -575,7 +576,7 @@ def test_dashboard_queue_view_hides_missing_raw_links(admin_client):
   content = response.content.decode()
   assert "raw jobs" in content
   assert "failed executions" not in content
-  assert "pause rows" not in content
+  assert "pauses" not in content
 
 
 def test_dashboard_queue_view_zero_results_has_no_fake_page_number(admin_client):
@@ -1026,12 +1027,18 @@ def test_dashboard_links_to_raw_admin_tables(admin_client, settings):
   assert response.status_code == 200
   content = response.content.decode()
   assert f'href="{reverse("admin:dj_queue_job_changelist")}?backend=secondary"' in content
+  assert ">Jobs</a>" in content
   assert (
     f'href="{reverse("admin:dj_queue_failedexecution_changelist")}?backend=secondary"' in content
   )
+  assert ">Failed executions</a>" in content
   assert f'href="{reverse("admin:dj_queue_process_changelist")}?backend=secondary"' in content
+  assert ">Processes</a>" in content
   assert (
     f'href="{reverse("admin:dj_queue_recurringtask_changelist")}?backend=secondary"' in content
   )
+  assert ">Recurring tasks</a>" in content
   assert f'href="{reverse("admin:dj_queue_pause_changelist")}?backend=secondary"' in content
+  assert ">Pauses</a>" in content
   assert f'href="{reverse("admin:dj_queue_semaphore_changelist")}?backend=secondary"' in content
+  assert ">Semaphores</a>" in content

@@ -2,6 +2,46 @@
 
 {% load i18n admin_urls %}
 
+{% block extrastyle %}
+  {{ block.super }}
+  <style>
+    .submit-row form {
+      display: inline;
+    }
+
+    .submit-row .djq-object-action {
+      border: none;
+      border-radius: 4px;
+      min-height: 2.1875rem;
+      padding: 0.625rem 0.9375rem;
+      color: var(--button-fg);
+      font-size: 0.75rem;
+      line-height: 0.9375rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+    }
+
+    .submit-row .djq-object-action-retry {
+      background: var(--button-bg);
+    }
+
+    .submit-row .djq-object-action-retry:hover,
+    .submit-row .djq-object-action-retry:focus {
+      background: var(--button-hover-bg);
+    }
+
+    .submit-row .djq-object-action-discard {
+      background: var(--delete-button-bg);
+    }
+
+    .submit-row .djq-object-action-discard:hover,
+    .submit-row .djq-object-action-discard:focus {
+      background: var(--delete-button-hover-bg);
+    }
+  </style>
+{% endblock extrastyle %}
+
 {% block breadcrumbs %}
   <div class="breadcrumbs">
     <a href='{% url "admin:index" %}'>{% translate "Home" %}</a>
@@ -10,3 +50,20 @@
     › {% if add %}{% blocktranslate with name=opts.verbose_name %}Add {{ name }}{% endblocktranslate %}{% else %}{{ original|truncatewords:"18" }}{% endif %}
   </div>
 {% endblock breadcrumbs %}
+
+{% block object-tools %}{% endblock object-tools %}
+
+{% block submit_buttons_top %}{% endblock submit_buttons_top %}
+
+{% block submit_buttons_bottom %}
+  {% if change_actions %}
+    <div class="submit-row">
+      {% for action in change_actions %}
+        <form method="post" action="{{ request.get_full_path }}">
+          {% csrf_token %}
+          <button type="submit" name="_djq_object_action" value="{{ action.name }}" class="djq-object-action {{ action.css_class }}">{{ action.label }}</button>
+        </form>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endblock submit_buttons_bottom %}

@@ -550,7 +550,7 @@ def _summary_cards(*, backend_alias, queue_rows, process_rows, recurring_rows, s
       "detail": f"{live_processes} live, {stale_processes} stale",
     },
     {
-      "label": "control plane",
+      "label": "control-plane",
       "value": len(recurring_rows) + len(semaphore_rows),
       "detail": f"{len(recurring_rows)} recurring and {len(semaphore_rows)} semaphores",
     },

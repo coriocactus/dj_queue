@@ -307,7 +307,9 @@
                         {% if job_actions %}
                           <td class="action-checkbox"><input type="checkbox" class="action-select" name="job_ids" value="{{ job.id }}"></td>
                         {% endif %}
-                        <th scope="row"><code>{{ job.id }}</code></th>
+                        <th scope="row">
+                          <a href="{% url 'admin:dj_queue_job_change' job.id %}?backend={{ backend_alias }}"><code>{{ job.id }}</code></a>
+                        </th>
                         <td>{{ job.task_path }}</td>
                         <td>{{ job.priority }}</td>
                         <td>{{ job.created_at|date:"Y-m-d H:i:s" }}</td>

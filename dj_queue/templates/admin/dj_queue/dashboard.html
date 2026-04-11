@@ -810,9 +810,9 @@
             <p>Job-centric rows scoped to the selected backend where possible.</p>
           </div>
           <div class="djq-raw-links">
-            <a href="{% url 'admin:dj_queue_job_changelist' %}?backend={{ backend_alias }}">jobs</a>
-            <a href="{% url 'admin:dj_queue_failedexecution_changelist' %}?backend={{ backend_alias }}">failed executions</a>
-            <a href="{% url 'admin:dj_queue_pause_changelist' %}?backend={{ backend_alias }}">pause rows</a>
+            <a href="{% url 'admin:dj_queue_job_changelist' %}?backend={{ backend_alias }}">Jobs</a>
+            <a href="{% url 'admin:dj_queue_failedexecution_changelist' %}?backend={{ backend_alias }}">Failed executions</a>
+            <a href="{% url 'admin:dj_queue_pause_changelist' %}?backend={{ backend_alias }}">Pauses</a>
           </div>
         </div>
 
@@ -822,9 +822,9 @@
             <p>Control-plane rows scoped by the selected backend's queue database alias.</p>
           </div>
           <div class="djq-raw-links">
-            <a href="{% url 'admin:dj_queue_process_changelist' %}?backend={{ backend_alias }}">processes</a>
-            <a href="{% url 'admin:dj_queue_recurringtask_changelist' %}?backend={{ backend_alias }}">recurring tasks</a>
-            <a href="{% url 'admin:dj_queue_semaphore_changelist' %}?backend={{ backend_alias }}">semaphores</a>
+            <a href="{% url 'admin:dj_queue_process_changelist' %}?backend={{ backend_alias }}">Processes</a>
+            <a href="{% url 'admin:dj_queue_recurringtask_changelist' %}?backend={{ backend_alias }}">Recurring tasks</a>
+            <a href="{% url 'admin:dj_queue_semaphore_changelist' %}?backend={{ backend_alias }}">Semaphores</a>
           </div>
         </div>
       </div>

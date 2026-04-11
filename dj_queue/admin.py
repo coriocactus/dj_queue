@@ -205,7 +205,17 @@ class HiddenSidebarAdminMixin:
     return super().changelist_view(request, extra_context=extra_context)
 
   def changeform_view(self, request, object_id=None, form_url="", extra_context=None):
-    extra_context = {**(extra_context or {}), "dashboard_url": self._dashboard_url(request)}
+    obj = self.get_object(request, object_id) if object_id is not None else None
+    if request.method == "POST":
+      action = request.POST.get("_djq_object_action")
+      if action and obj is not None:
+        return self.handle_change_action(request, obj, action)
+
+    extra_context = {
+      **(extra_context or {}),
+      "dashboard_url": self._dashboard_url(request),
+      "change_actions": self.get_change_actions(request, obj),
+    }
     return super().changeform_view(
       request,
       object_id=object_id,
@@ -275,6 +285,23 @@ class HiddenSidebarAdminMixin:
 
   def _dashboard_url(self, request):
     return f"{reverse('admin:dj_queue_dashboard_changelist')}?{urlencode({'backend': self._backend_alias(request)})}"
+
+  def get_change_actions(self, request, obj):
+    return ()
+
+  def handle_change_action(self, request, obj, action):
+    return HttpResponseRedirect(request.get_full_path())
+
+  def _change_url(self, *, object_id, backend_alias):
+    url = reverse(
+      f"admin:{self.model._meta.app_label}_{self.model._meta.model_name}_change",
+      args=[object_id],
+    )
+    return f"{url}?{urlencode({'backend': backend_alias})}"
+
+  def _changelist_url(self, *, backend_alias):
+    url = reverse(f"admin:{self.model._meta.app_label}_{self.model._meta.model_name}_changelist")
+    return f"{url}?{urlencode({'backend': backend_alias})}"
 
 
 class JobStatusListFilter(admin.SimpleListFilter):
@@ -446,6 +473,39 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     url = f"{reverse('admin:dj_queue_dashboard_queue', args=[obj.queue_name])}?{urlencode(query)}"
     return format_html('<a href="{}">{}</a>', url, obj.queue_name)
 
+  def get_change_actions(self, request, obj):
+    if obj is None or obj.status != "failed":
+      return ()
+    return (
+      {"name": "retry", "label": "Retry failed job", "css_class": "djq-object-action-retry"},
+      {
+        "name": "discard",
+        "label": "Discard failed job",
+        "css_class": "djq-object-action-discard",
+      },
+    )
+
+  def handle_change_action(self, request, obj, action):
+    if obj.status != "failed":
+      self.message_user(request, "This job is not failed", level=messages.ERROR)
+      return HttpResponseRedirect(
+        self._change_url(object_id=obj.pk, backend_alias=obj.backend_name)
+      )
+
+    if action == "retry":
+      obj.failed_execution.retry()
+      self.message_user(request, "Retried failed job", level=messages.SUCCESS)
+      return HttpResponseRedirect(
+        self._change_url(object_id=obj.pk, backend_alias=obj.backend_name)
+      )
+
+    if action == "discard":
+      obj.failed_execution.discard()
+      self.message_user(request, "Discarded failed job", level=messages.SUCCESS)
+      return HttpResponseRedirect(self._changelist_url(backend_alias=obj.backend_name))
+
+    return HttpResponseRedirect(self._change_url(object_id=obj.pk, backend_alias=obj.backend_name))
+
 
 @admin.register(FailedExecution)
 class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
@@ -472,6 +532,35 @@ class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     for execution in queryset.select_related("job"):
       discarded += execution.discard()
     self.message_user(request, f"Discarded {discarded} failed jobs", level=messages.SUCCESS)
+
+  def get_change_actions(self, request, obj):
+    if obj is None:
+      return ()
+    return (
+      {"name": "retry", "label": "Retry failed job", "css_class": "djq-object-action-retry"},
+      {
+        "name": "discard",
+        "label": "Discard failed job",
+        "css_class": "djq-object-action-discard",
+      },
+    )
+
+  def handle_change_action(self, request, obj, action):
+    backend_alias = obj.job.backend_name
+
+    if action == "retry":
+      job_id = obj.job_id
+      obj.retry()
+      self.message_user(request, "Retried failed job", level=messages.SUCCESS)
+      url = reverse("admin:dj_queue_job_change", args=[job_id])
+      return HttpResponseRedirect(f"{url}?{urlencode({'backend': backend_alias})}")
+
+    if action == "discard":
+      obj.discard()
+      self.message_user(request, "Discarded failed job", level=messages.SUCCESS)
+      return HttpResponseRedirect(self._changelist_url(backend_alias=backend_alias))
+
+    return HttpResponseRedirect(self._change_url(object_id=obj.pk, backend_alias=backend_alias))
 
 
 @admin.register(Process)
