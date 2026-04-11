@@ -490,6 +490,10 @@ def test_dashboard_queue_view_uses_django_changelist_structure(admin_client):
   assert 'class="queue-toolbar-actions"' in content
   assert 'class="queue-button-pause"' in content
   assert 'class="toplinks queue-state-tabs"' in content
+  assert 'class="queue-state-tab queue-state-tab-current"' in content
+  assert 'aria-current="page"' in content
+  assert ">Dashboard</a>" in content
+  assert f"{reverse('admin:dj_queue_dashboard_changelist')}?backend=default" in content
 
 
 def test_dashboard_queue_controls_use_distinct_pause_resume_styles(admin_client):
@@ -577,7 +581,8 @@ def test_dashboard_queue_view_supports_sorting(admin_client):
   assert content.index("tests.tasks.alpha") < content.index("tests.tasks.zeta")
   assert "sorted ascending" in content
   assert '<div class="sortoptions">' in content
-  assert "sort=-task#result_list" in content
+  assert "sort=-task" in content
+  assert "sort=-task#result_list" not in content
 
 
 def test_dashboard_queue_view_supports_multi_column_sorting(admin_client):
@@ -595,7 +600,8 @@ def test_dashboard_queue_view_supports_multi_column_sorting(admin_client):
   assert content.index(str(high.id)) < content.index(str(low.id))
   assert 'title="Sorting priority: 1">1</span>' in content
   assert 'title="Sorting priority: 2">2</span>' in content
-  assert "sort=-task.-priority#result_list" in content
+  assert "sort=-task.-priority" in content
+  assert "sort=-task.-priority#result_list" not in content
 
 
 def test_dashboard_queue_pagination_omits_default_sort(admin_client, monkeypatch):
@@ -830,6 +836,17 @@ def test_dashboard_sort_remove_from_chain(admin_client):
   assert 'href="?queues_sort=-ready#queue-summary"' in content
   # remove link for "ready" leaves only name
   assert 'href="?queues_sort=name#queue-summary"' in content
+
+
+def test_dashboard_sort_links_preserve_section_anchors(admin_client):
+  make_ready_job(queue_name="alpha")
+
+  content = admin_client.get(
+    reverse("admin:dj_queue_dashboard_changelist"),
+    {"queues_sort": "name"},
+  ).content.decode()
+
+  assert "#queue-summary" in content
 
 
 def test_dashboard_sort_invalid_field_falls_back_to_default(admin_client):

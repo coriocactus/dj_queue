@@ -962,6 +962,7 @@ def _overview_headers(
     explicit_sort=explicit_sort,
     page_param=page_param,
     anchor=anchor,
+    preserve_anchor=True,
   )
 
 
@@ -974,11 +975,12 @@ def _queue_page_headers(*, state, query_params, sort, explicit_sort, page_param,
     explicit_sort=explicit_sort,
     page_param=page_param,
     anchor=anchor,
+    preserve_anchor=False,
   )
 
 
 def _sortable_headers(
-  *, fields, query_params, sort_param, sort, explicit_sort, page_param, anchor
+  *, fields, query_params, sort_param, sort, explicit_sort, page_param, anchor, preserve_anchor
 ):
   sort_fields = _parse_sort_fields(sort) if explicit_sort else ()
 
@@ -1021,6 +1023,7 @@ def _sortable_headers(
       sort_value=primary_sort,
       page_param=page_param,
       anchor=anchor,
+      preserve_anchor=preserve_anchor,
     )
     toggle_url = (
       _overview_sort_url(
@@ -1029,6 +1032,7 @@ def _sortable_headers(
         sort_value=toggle_sort,
         page_param=page_param,
         anchor=anchor,
+        preserve_anchor=preserve_anchor,
       )
       if is_sorted
       else primary_url
@@ -1040,6 +1044,7 @@ def _sortable_headers(
         sort_value=remove_sort,
         page_param=page_param,
         anchor=anchor,
+        preserve_anchor=preserve_anchor,
       )
       if is_sorted
       else None
@@ -1073,7 +1078,9 @@ def _queue_result_count_text(*, page_obj, total_count):
   return f"{page_obj.start_index()}-{page_obj.end_index()} of {total_count} jobs"
 
 
-def _overview_sort_url(*, query_params, sort_param, sort_value, page_param, anchor):
+def _overview_sort_url(
+  *, query_params, sort_param, sort_value, page_param, anchor, preserve_anchor
+):
   params = query_params.copy()
   if sort_value:
     params[sort_param] = sort_value
@@ -1082,8 +1089,8 @@ def _overview_sort_url(*, query_params, sort_param, sort_value, page_param, anch
   params.pop(page_param, None)
   url = params.urlencode() if hasattr(params, "urlencode") else urlencode(params, doseq=True)
   if not url:
-    return f"?#{anchor}"
-  return f"?{url}#{anchor}"
+    return f"?#{anchor}" if preserve_anchor else "?"
+  return f"?{url}#{anchor}" if preserve_anchor else f"?{url}"
 
 
 def _queue_rows(*, backend_alias, now, process_cutoff):

@@ -29,9 +29,24 @@ from dj_queue.models import (
 
 
 class DjQueueFirstAdminSite(admin.AdminSite):
+  def _dashboard_app_url(self):
+    return reverse("admin:dj_queue_dashboard_changelist", current_app=self.name)
+
   def get_app_list(self, request, app_label=None):
     app_list = super().get_app_list(request, app_label=app_label)
+    for app in app_list:
+      if app["app_label"] == "dj_queue":
+        app["app_url"] = self._dashboard_app_url()
     return sorted(app_list, key=lambda app: app["app_label"] != "dj_queue")
+
+  def app_index(self, request, app_label, extra_context=None):
+    if app_label == "dj_queue":
+      url = self._dashboard_app_url()
+      query = request.GET.urlencode()
+      if query:
+        url = f"{url}?{query}"
+      return HttpResponseRedirect(url)
+    return super().app_index(request, app_label, extra_context=extra_context)
 
 
 admin.site.__class__ = DjQueueFirstAdminSite
@@ -175,9 +190,24 @@ class HiddenSidebarAdminMixin:
   backend_query_param = "backend"
   backend_filter_field = None
   ignored_filter_params = ()
+  change_list_template = "admin/dj_queue/change_list.html"
+  change_form_template = "admin/dj_queue/change_form.html"
 
   def get_list_filter(self, request):
     return (BackendListFilter, *tuple(super().get_list_filter(request)))
+
+  def changelist_view(self, request, extra_context=None):
+    extra_context = {**(extra_context or {}), "dashboard_url": self._dashboard_url(request)}
+    return super().changelist_view(request, extra_context=extra_context)
+
+  def changeform_view(self, request, object_id=None, form_url="", extra_context=None):
+    extra_context = {**(extra_context or {}), "dashboard_url": self._dashboard_url(request)}
+    return super().changeform_view(
+      request,
+      object_id=object_id,
+      form_url=form_url,
+      extra_context=extra_context,
+    )
 
   def has_add_permission(self, request):
     return False
@@ -238,6 +268,9 @@ class HiddenSidebarAdminMixin:
 
   def _backend_database_alias(self, request):
     return get_database_alias(self._backend_alias(request))
+
+  def _dashboard_url(self, request):
+    return f"{reverse('admin:dj_queue_dashboard_changelist')}?{urlencode({'backend': self._backend_alias(request)})}"
 
 
 class JobStatusListFilter(admin.SimpleListFilter):

@@ -457,5 +457,36 @@ def test_admin_index_hides_raw_dj_queue_models(admin_client):
   dj_queue_app = next(
     app for app in response.context["available_apps"] if app["app_label"] == "dj_queue"
   )
+  assert dj_queue_app["name"] == "dj_queue"
+  assert dj_queue_app["app_url"] == reverse("admin:dj_queue_dashboard_changelist")
   object_names = [model.get("object_name") for model in dj_queue_app["models"]]
   assert object_names == ["Dashboard"]
+
+
+def test_dj_queue_app_index_redirects_to_dashboard(admin_client):
+  response = admin_client.get(
+    reverse("admin:app_list", kwargs={"app_label": "dj_queue"}),
+    {"backend": "secondary"},
+  )
+
+  assert response.status_code == 302
+  assert response["Location"] == (
+    f"{reverse('admin:dj_queue_dashboard_changelist')}?backend=secondary"
+  )
+
+
+def test_job_admin_breadcrumb_links_to_dashboard(admin_client):
+  make_job()
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_job_changelist"),
+    {"backend": "default"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert (
+    f'› <a href="{reverse("admin:dj_queue_dashboard_changelist")}?backend=default">dj_queue</a>'
+    in content
+  )
+  assert f'href="{reverse("admin:app_list", kwargs={"app_label": "dj_queue"})}"' not in content

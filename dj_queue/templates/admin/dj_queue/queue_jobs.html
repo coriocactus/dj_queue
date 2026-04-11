@@ -6,6 +6,29 @@
   {{ block.super }}
   <link rel="stylesheet" type="text/css" href="{% static 'admin/css/changelists.css' %}">
   <style>
+    #content-main {
+      --djq-tab-selected-bg: var(--primary);
+      --djq-tab-selected-border: var(--primary);
+      --djq-tab-selected-fg: var(--primary-fg);
+      --djq-tab-selected-count-fg: var(--breadcrumbs-link-fg);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      html:not([data-theme="light"]) #content-main {
+        --djq-tab-selected-bg: var(--selected-row);
+        --djq-tab-selected-border: var(--link-selected-fg);
+        --djq-tab-selected-fg: var(--body-fg);
+        --djq-tab-selected-count-fg: var(--body-quiet-color);
+      }
+    }
+
+    html[data-theme="dark"] #content-main {
+      --djq-tab-selected-bg: var(--selected-row);
+      --djq-tab-selected-border: var(--link-selected-fg);
+      --djq-tab-selected-fg: var(--body-fg);
+      --djq-tab-selected-count-fg: var(--body-quiet-color);
+    }
+
     #toolbar .queue-toolbar-row,
     #toolbar .queue-toolbar-meta,
     #toolbar .queue-toolbar-links,
@@ -78,12 +101,71 @@
       margin-top: 0.5rem;
     }
 
-    .queue-state-tabs {
-      padding-bottom: 5px;
+    .toplinks.queue-state-tabs {
+      gap: 1rem;
+      margin-top: 0.75rem;
+      padding: 0.45rem;
+      border: 1px solid var(--hairline-color);
+      background: var(--darkened-bg);
     }
 
-    .queue-state-current {
-      color: var(--link-selected-fg);
+    .queue-state-tab {
+      display: inline-flex;
+      gap: 0.4rem;
+      align-items: center;
+      min-height: 2.15rem;
+      padding: 0 0.9rem;
+      border: 1px solid var(--border-color);
+      border-radius: 999px;
+      background: var(--body-bg);
+      color: var(--link-fg);
+      font-weight: 600;
+      text-decoration: none;
+      transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
+    }
+
+    #changelist .queue-state-tabs a.queue-state-tab,
+    #changelist .queue-state-tabs a.queue-state-tab:hover,
+    #changelist .queue-state-tabs a.queue-state-tab:focus,
+    #changelist .queue-state-tabs a.queue-state-tab:visited {
+      text-decoration: none;
+    }
+
+    .queue-state-tab:not(.queue-state-tab-current):hover,
+    .queue-state-tab:not(.queue-state-tab-current):focus {
+      background: var(--selected-bg);
+      border-color: var(--primary);
+      color: var(--link-hover-color);
+      text-decoration: none;
+    }
+
+    .queue-state-tab-current {
+      background: var(--djq-tab-selected-bg);
+      border-color: var(--djq-tab-selected-border);
+      color: var(--djq-tab-selected-fg);
+      box-shadow: none;
+    }
+
+    .queue-state-tab-current:hover,
+    .queue-state-tab-current:focus {
+      background: var(--djq-tab-selected-bg);
+      border-color: var(--djq-tab-selected-border);
+      color: var(--djq-tab-selected-fg);
+    }
+
+    .queue-state-tab-count {
+      color: var(--body-quiet-color);
+      font-size: 0.82rem;
+      font-weight: 700;
+    }
+
+    .queue-state-tab-current .queue-state-tab-count {
+      color: var(--djq-tab-selected-count-fg);
+    }
+
+    .queue-state-tab-current:hover .queue-state-tab-count,
+    .queue-state-tab-current:focus .queue-state-tab-count {
+      color: var(--djq-tab-selected-count-fg);
     }
 
     #result_list {
@@ -104,7 +186,7 @@
 {% block breadcrumbs %}
   <div class="breadcrumbs">
     <a href="{% url 'admin:index' %}">Home</a>
-    › <a href="{% url 'admin:dj_queue_dashboard_changelist' %}?backend={{ backend_alias }}">dj queue</a>
+    › <a href="{% url 'admin:dj_queue_dashboard_changelist' %}?backend={{ backend_alias }}">dj_queue</a>
     › {{ queue_name }}
   </div>
 {% endblock breadcrumbs %}
@@ -150,12 +232,18 @@
             {% endif %}
           </div>
 
-          <div class="toplinks queue-state-tabs">
+          <div class="toplinks queue-state-tabs" aria-label="Job state navigation">
             {% for tab in state_tabs %}
               {% if tab.selected %}
-                <span class="queue-state-current">{{ tab.label }} ({{ tab.count }})</span>
+                <span class="queue-state-tab queue-state-tab-current" aria-current="page">
+                  <span>{{ tab.label }}</span>
+                  <span class="queue-state-tab-count">{{ tab.count }}</span>
+                </span>
               {% else %}
-                <a href="{% url 'admin:dj_queue_dashboard_queue' queue_name %}?backend={{ backend_alias }}&state={{ tab.name }}">{{ tab.label }} ({{ tab.count }})</a>
+                <a class="queue-state-tab" href="{% url 'admin:dj_queue_dashboard_queue' queue_name %}?backend={{ backend_alias }}&state={{ tab.name }}">
+                  <span>{{ tab.label }}</span>
+                  <span class="queue-state-tab-count">{{ tab.count }}</span>
+                </a>
               {% endif %}
             {% endfor %}
           </div>
