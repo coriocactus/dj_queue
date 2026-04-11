@@ -55,6 +55,10 @@
       margin: 0;
     }
 
+    #toolbar .queue-toolbar-meta strong {
+      text-transform: uppercase;
+    }
+
     #toolbar .queue-toolbar-actions button {
       border: none;
       border-radius: 15px;
@@ -210,8 +214,9 @@
           <div id="toolbar">
             <div class="queue-toolbar-row">
               <div class="queue-toolbar-meta">
-                <span><strong>backend:</strong> {{ backend_alias }} (db {{ queue_database_alias }})</span>
-                <span><strong>paused:</strong> {{ queue_paused|yesno:"yes,no" }}</span>
+                <span><strong>Backend:</strong> {{ backend_alias }}</span>
+                <span><strong>Database:</strong> {{ queue_database_alias }}</span>
+                <span><strong>Paused:</strong> {{ queue_paused|yesno:"yes,no" }}</span>
               </div>
               <div class="queue-toolbar-actions">
                 <form method="post" action="{% url 'admin:dj_queue_dashboard_queue_action' queue_name %}">

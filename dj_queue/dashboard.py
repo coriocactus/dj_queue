@@ -15,7 +15,7 @@ from django.utils import timezone
 
 from dj_queue.api import QueueInfo
 from dj_queue.config import load_backend_config
-from dj_queue.db import get_database_alias
+from dj_queue.db import database_capabilities, get_database_alias
 from dj_queue.models import (
   BlockedExecution,
   ClaimedExecution,
@@ -44,12 +44,14 @@ QUEUE_STATE_LABELS = dict(QUEUE_STATES)
 PAGE_SIZE = 100
 OVERVIEW_PAGE_SIZES = {
   "queues": 18,
+  "shared_queues": 5,
   "processes": 10,
   "recurring": 12,
   "semaphores": 12,
 }
 OVERVIEW_COUNT_LABELS = {
   "queues": ("queue", "queues"),
+  "shared_queues": ("shared queue", "shared queues"),
   "processes": ("process", "processes"),
   "recurring": ("recurring task", "recurring tasks"),
   "semaphores": ("semaphore", "semaphores"),
@@ -78,6 +80,19 @@ OVERVIEW_SORTS = {
         "key": "oldest_blocked_at",
         "default_desc": True,
       },
+    },
+  },
+  "shared_queues": {
+    "default": "name",
+    "fields": {
+      "name": {"label": "name", "key": "name", "default_desc": False, "css_class": "djq-col-name"},
+      "shared_via": {
+        "label": "shared via",
+        "key": "shared_source_labels",
+        "default_desc": False,
+        "css_class": "djq-col-shared-via",
+      },
+      "paused": {"label": "paused", "key": "paused", "default_desc": True},
     },
   },
   "processes": {
@@ -272,6 +287,7 @@ def dashboard_context(*, backend_alias, query_params=None):
     query_params = {}
 
   queue_rows = _queue_rows(backend_alias=backend_alias, now=now, process_cutoff=process_cutoff)
+  backend_queue_rows, shared_queue_rows = _split_queue_rows(queue_rows)
   process_rows = _process_rows(
     backend_alias=backend_alias,
     now=now,
@@ -287,7 +303,7 @@ def dashboard_context(*, backend_alias, query_params=None):
     "queue_database_alias": queue_database_alias,
     "summary_cards": _summary_cards(
       backend_alias=backend_alias,
-      queue_rows=queue_rows,
+      queue_rows=backend_queue_rows,
       process_rows=process_rows,
       recurring_rows=recurring_rows,
       semaphore_rows=semaphore_rows,
@@ -300,12 +316,21 @@ def dashboard_context(*, backend_alias, query_params=None):
     ),
     "queue_section": _overview_section(
       section="queues",
-      rows=queue_rows,
+      rows=backend_queue_rows,
       page_param="queues_page",
       page_size=OVERVIEW_PAGE_SIZES["queues"],
       sort_param="queues_sort",
       query_params=query_params,
       anchor="queue-summary",
+    ),
+    "shared_queue_section": _overview_section(
+      section="shared_queues",
+      rows=shared_queue_rows,
+      page_param="shared_queues_page",
+      page_size=OVERVIEW_PAGE_SIZES["shared_queues"],
+      sort_param="shared_queues_sort",
+      query_params=query_params,
+      anchor="shared-queue-summary",
     ),
     "process_section": _overview_section(
       section="processes",
@@ -374,7 +399,7 @@ def queue_page_context(*, backend_alias, queue_name, state, page_number, query_p
   if sum(state_counts.values()):
     raw_links.append(
       {
-        "label": "raw jobs",
+        "label": "Raw jobs",
         "url": _job_changelist_url(
           backend_alias,
           queue_name=queue_name,
@@ -385,7 +410,7 @@ def queue_page_context(*, backend_alias, queue_name, state, page_number, query_p
   if state_counts["failed"]:
     raw_links.append(
       {
-        "label": "failed executions",
+        "label": "Failed executions",
         "url": _failed_execution_changelist_url(
           backend_alias,
           job__queue_name=queue_name,
@@ -560,22 +585,55 @@ def _summary_cards(*, backend_alias, queue_rows, process_rows, recurring_rows, s
   )
 
 
+def _split_queue_rows(queue_rows):
+  backend_queue_rows = []
+  shared_queue_rows = []
+  for row in queue_rows:
+    if row["has_backend_jobs"]:
+      backend_queue_rows.append(row)
+      continue
+    shared_queue_rows.append(row)
+  return backend_queue_rows, shared_queue_rows
+
+
 def _backend_facts(*, config, queue_database_alias, recurring_count, semaphore_count):
   retention = "disabled"
   if config.clear_finished_jobs_after is not None:
     retention = f"{config.clear_finished_jobs_after}s"
 
+  capabilities = database_capabilities(queue_database_alias)
+
   return (
     {"label": "mode", "value": config.mode},
     {"label": "queue db", "value": queue_database_alias},
     {"label": "scheduler", "value": "enabled" if config.has_scheduler_work else "disabled"},
-    {"label": "notify", "value": "on" if config.listen_notify else "off"},
-    {"label": "skip locked", "value": "on" if config.use_skip_locked else "off"},
+    {
+      "label": "notify",
+      "value": _capability_fact_value(
+        enabled=config.listen_notify,
+        supported=capabilities.supports_listen_notify,
+      ),
+    },
+    {
+      "label": "skip locked",
+      "value": _capability_fact_value(
+        enabled=config.use_skip_locked,
+        supported=capabilities.supports_skip_locked,
+      ),
+    },
     {"label": "heartbeat", "value": f"{config.process_alive_threshold}s"},
     {"label": "retention", "value": retention},
     {"label": "recurring", "value": str(recurring_count)},
     {"label": "semaphores", "value": str(semaphore_count)},
   )
+
+
+def _capability_fact_value(*, enabled, supported):
+  if not supported:
+    return "unsupported"
+  if enabled:
+    return "on"
+  return "off"
 
 
 def _overview_section(*, section, rows, page_param, page_size, sort_param, query_params, anchor):
@@ -1171,19 +1229,43 @@ def _queue_rows(*, backend_alias, now, process_cutoff):
     if oldest_ready_at is not None:
       latency_seconds = max((now - oldest_ready_at).total_seconds(), 0.0)
 
+    ready_count = ready_counts.get(queue_name, 0)
+    claimed_count = claimed_counts.get(queue_name, 0)
+    scheduled_count = scheduled_counts.get(queue_name, 0)
+    blocked_count = blocked_counts.get(queue_name, 0)
+    failed_count = failed_counts.get(queue_name, 0)
+    finished_count = finished_counts.get(queue_name, 0)
+    shared_sources = []
+    if queue_name in paused_queues:
+      shared_sources.append("pause")
+    if queue_name in recurring_queues:
+      shared_sources.append("recurring task")
+
     rows.append(
       {
         "name": queue_name,
-        "ready_count": ready_counts.get(queue_name, 0),
-        "claimed_count": claimed_counts.get(queue_name, 0),
-        "scheduled_count": scheduled_counts.get(queue_name, 0),
-        "blocked_count": blocked_counts.get(queue_name, 0),
-        "failed_count": failed_counts.get(queue_name, 0),
-        "finished_count": finished_counts.get(queue_name, 0),
+        "ready_count": ready_count,
+        "claimed_count": claimed_count,
+        "scheduled_count": scheduled_count,
+        "blocked_count": blocked_count,
+        "failed_count": failed_count,
+        "finished_count": finished_count,
         "paused": queue_name in paused_queues,
         "latency_seconds": latency_seconds,
         "oldest_scheduled_at": oldest_scheduled.get(queue_name),
         "oldest_blocked_at": oldest_blocked.get(queue_name),
+        "has_backend_jobs": any(
+          (
+            ready_count,
+            claimed_count,
+            scheduled_count,
+            blocked_count,
+            failed_count,
+            finished_count,
+          )
+        ),
+        "shared_sources": tuple(shared_sources),
+        "shared_source_labels": ", ".join(shared_sources),
         "live_worker_count": sum(
           1
           for worker in live_workers

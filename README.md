@@ -33,7 +33,7 @@ It has a narrow, explicit shape:
 - polling remains the correctness path on every supported database
 
 For detailed comparisons with Celery, RQ, Procrastinate, and other alternatives,
-see [COMPARISONS.md](COMPARISONS.md).
+see [COMPARISONS.md](docs/COMPARISONS.md).
 
 ## Installation
 
@@ -129,6 +129,25 @@ print(fresh_result.return_value)
 ```
 
 When the worker has executed the job, `fresh_result.return_value` will be `10`.
+
+## Admin Integration
+
+If Django admin is installed, `dj_queue` adds an operator dashboard at
+`/admin/dj_queue/dashboard/`.
+
+- queue, process, recurring-task, and semaphore overview
+- backend-aware dashboard and raw changelists
+- queue controls: pause, resume, clear ready
+- failed-job actions: retry and discard from list and detail views
+- queue drill-down pages for state-specific inspection
+
+**Dashboard overview**
+
+![dj_queue admin dashboard](docs/dashboard.png)
+
+**Queue drill-down**
+
+![dj_queue admin dashboard - queue](docs/dashboard-queue.png)
 
 ## Common Patterns
 
@@ -379,23 +398,6 @@ python manage.py dj_queue_health --max-age 120
 python manage.py dj_queue_prune --older-than 86400
 python manage.py dj_queue_prune --task-path myapp.tasks.cleanup
 ```
-
-## Admin Integration
-
-If Django admin is installed, `dj_queue` adds an operator dashboard at
-`/admin/dj_queue/dashboard/`.
-
-- queue, process, recurring-task, and semaphore overview
-- backend-aware dashboard and raw changelists
-- queue controls: pause, resume, clear ready
-- failed-job actions: retry and discard from list and detail views
-- queue drill-down pages for state-specific inspection
-
-![dj_queue admin dashboard](docs/dashboard.png)
-
-![dj_queue queue drill-down](docs/dashboard-queue.png)
-
-For seeded demo data and repeatable screenshots, run `bin/dev_admin.py`.
 
 ## Failed Jobs
 

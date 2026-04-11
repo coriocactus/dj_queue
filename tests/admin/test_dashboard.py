@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 from django.urls import reverse
 from django.utils import timezone
 
-from dj_queue import dashboard
+from dj_queue import dashboard, db
 from dj_queue.models import (
   BlockedExecution,
   FailedExecution,
@@ -125,6 +125,24 @@ def test_dashboard_admin_renders(admin_client):
   assert "account:1" in content
 
 
+def test_dashboard_backend_facts_show_effective_database_capabilities(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    }
+  }
+
+  context = dashboard.dashboard_context(backend_alias="default")
+  facts = {fact["label"]: fact["value"] for fact in context["backend_facts"]}
+  capabilities = db.database_capabilities("default")
+
+  assert facts["queue db"] == "default"
+  assert facts["notify"] == ("on" if capabilities.supports_listen_notify else "unsupported")
+  assert facts["skip locked"] == ("on" if capabilities.supports_skip_locked else "unsupported")
+
+
 def test_dashboard_admin_title_includes_dj_queue(admin_client):
   response = admin_client.get(reverse("admin:dj_queue_dashboard_changelist"))
 
@@ -163,6 +181,191 @@ def test_dashboard_backend_selection_changes_job_counts(admin_client, settings):
   assert "beta" not in default_content
   assert "beta" in secondary_content
   assert "alpha" not in secondary_content
+
+
+def test_dashboard_context_splits_shared_queue_db_queues_from_backend_job_queues(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+    "critical": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {"database_alias": "default"},
+    },
+  }
+  make_failed_job(queue_name="alerts", backend_name="critical")
+  Pause.objects.create(queue_name="alerts")
+  make_ready_job(queue_name="alpha-demo", backend_name="default")
+  Pause.objects.create(queue_name="alpha-demo")
+  RecurringTask.objects.create(
+    key="alpha-nightly",
+    task_path="tests.tasks.echo",
+    payload={"args": ["alpha-nightly"], "kwargs": {}},
+    schedule="0 0 * * *",
+    queue_name="alpha-demo",
+    priority=0,
+    static=False,
+  )
+
+  context = dashboard.dashboard_context(backend_alias="critical")
+
+  assert [row["name"] for row in context["queue_section"]["rows"]] == ["alerts"]
+  assert [row["name"] for row in context["shared_queue_section"]["rows"]] == ["alpha-demo"]
+  assert context["shared_queue_section"]["rows"][0]["shared_sources"] == (
+    "pause",
+    "recurring task",
+  )
+  assert context["shared_queue_section"]["result_count_text"] == "1-1 of 1 shared queue"
+  assert context["summary_cards"][0]["label"] == "queues"
+  assert context["summary_cards"][0]["value"] == 1
+  assert context["summary_cards"][0]["detail"] == "1 paused"
+
+
+def test_dashboard_renders_shared_queue_db_queue_section(admin_client, settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+    "critical": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {"database_alias": "default"},
+    },
+  }
+  make_failed_job(queue_name="alerts", backend_name="critical")
+  Pause.objects.create(queue_name="alerts")
+  Pause.objects.create(queue_name="alpha-demo")
+  RecurringTask.objects.create(
+    key="alpha-nightly",
+    task_path="tests.tasks.echo",
+    payload={"args": ["alpha-nightly"], "kwargs": {}},
+    schedule="0 0 * * *",
+    queue_name="alpha-demo",
+    priority=0,
+    static=False,
+  )
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_dashboard_changelist"),
+    {"backend": "critical"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert 'id="shared-queue-summary"' in content
+  assert "<h2>shared queues</h2>" in content
+  assert "1 shared queue" in content
+  assert "backend <strong>critical</strong>" in content
+  assert "queue database <strong>default</strong>" in content
+  assert "alpha-demo" in content
+  assert "pause" in content
+  assert "recurring task" in content
+
+
+def test_dashboard_shared_queue_section_paginates_at_five_rows(admin_client, settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+    "critical": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {"database_alias": "default"},
+    },
+  }
+  for index in range(6):
+    Pause.objects.create(queue_name=f"shared-{index}")
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_dashboard_changelist"),
+    {"backend": "critical"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert "shared-0" in content
+  assert "shared-4" in content
+  assert "shared-5" not in content
+  assert "1-5 of 6 shared queues" in content
+  assert 'aria-labelledby="pagination-shared-queues"' in content
+  assert "shared_queues_page=2#shared-queue-summary" in content
+
+  second_page = admin_client.get(
+    reverse("admin:dj_queue_dashboard_changelist"),
+    {"backend": "critical", "shared_queues_page": 2},
+  )
+
+  assert second_page.status_code == 200
+  second_content = second_page.content.decode()
+  assert "shared-5" in second_content
+
+
+def test_dashboard_shared_queue_section_supports_sorting(admin_client, settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+    "critical": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {"database_alias": "default"},
+    },
+  }
+  Pause.objects.create(queue_name="bravo")
+  Pause.objects.create(queue_name="alpha")
+  RecurringTask.objects.create(
+    key="zeta-nightly",
+    task_path="tests.tasks.echo",
+    payload={"args": ["zeta-nightly"], "kwargs": {}},
+    schedule="0 0 * * *",
+    queue_name="zeta",
+    priority=0,
+    static=False,
+  )
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_dashboard_changelist"),
+    {"backend": "critical", "shared_queues_sort": "paused"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert content.index("zeta") < content.index("alpha")
+  assert "column-name sortable" in content
+  assert "column-paused sortable sorted ascending" in content
+  assert "shared_queues_sort=name.paused" in content
+  assert "shared_queues_sort=-paused" in content
+
+
+def test_dashboard_backend_selector_shows_backend_name_only(admin_client, settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+    "critical": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {"database_alias": "default"},
+    },
+  }
+
+  response = admin_client.get(reverse("admin:dj_queue_dashboard_changelist"))
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert 'value="default" selected>default</option>' in content
+  assert 'value="critical">critical</option>' in content
 
 
 def test_dashboard_backend_switch_posts_to_base_dashboard_url(admin_client):
@@ -521,6 +724,9 @@ def test_dashboard_queue_view_uses_django_changelist_structure(admin_client):
   assert 'class="queue-button-pause"' in content
   assert 'class="toplinks queue-state-tabs"' in content
   assert 'class="queue-state-tab queue-state-tab-current"' in content
+  assert "Backend:</strong> default" in content
+  assert "Database:</strong> default" in content
+  assert "Paused:</strong> no" in content
   assert '<option value="" selected>---------</option>' in content
   assert 'aria-current="page"' in content
   dashboard_url = f"{reverse('admin:dj_queue_dashboard_changelist')}?backend=default"
@@ -583,6 +789,8 @@ def test_dashboard_queue_view_raw_links_are_queue_scoped(admin_client):
     f"{reverse('admin:dj_queue_failedexecution_changelist')}?backend=default&amp;job__queue_name=alpha"
     in content
   )
+  assert "Raw jobs" in content
+  assert "Failed executions" in content
   assert "pauses" not in content
 
 
@@ -596,8 +804,8 @@ def test_dashboard_queue_view_hides_missing_raw_links(admin_client):
 
   assert response.status_code == 200
   content = response.content.decode()
-  assert "raw jobs" in content
-  assert "failed executions" not in content
+  assert "Raw jobs" in content
+  assert "Failed executions" not in content
   assert "pauses" not in content
 
 

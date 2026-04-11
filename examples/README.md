@@ -52,15 +52,20 @@ DB_BACKEND=mariadb examples/ex01_basic_enqueue.py
 ## Demo Server
 
 `bin/dev_admin.py` launches a development server with the Django admin,
-embedded `dj_queue` workers, and seeded demo data:
+an embedded `demo` backend worker, and seeded demo data:
 
 ```bash
-bin/dev_admin.py                # sqlite, http://127.0.0.1:17777/admin/
-bin/dev_admin.py --port 8000    # custom port
-bin/dev_admin.py --no-seed      # keep existing rows instead of reseeding
-bin/dev_admin.py --no-reload    # disable code reload
+bin/dev_admin.py                    # sqlite, http://127.0.0.1:17777/admin/
+bin/dev_admin.py --port 8000        # custom port
+bin/dev_admin.py --no-seed          # keep existing rows instead of reseeding
+bin/dev_admin.py --no-reload        # disable code reload
+bin/dev_admin.py --login-required   # restore the normal admin login screen
 ```
 
-Default login is `admin` / `password`. The server auto-reloads on Python and
-template changes. Hit `/enqueue/` or `/enqueue-burst/` to submit live jobs, and
-`/seed/` to reset the demo data without restarting.
+The dev server auto-signs in to admin as `admin` by default. Use
+`--login-required` to restore the normal login screen with `admin` /
+`password`. Seeded dashboard data lives primarily under backend `demo`, with a
+smaller shared-database `critical` backend for scoping checks. The server
+auto-reloads on Python and template changes. Hit `/enqueue/` or
+`/enqueue-burst/` to submit live `demo` jobs, and `/seed/` to reset the demo
+data without restarting.

@@ -40,6 +40,19 @@ def parse_args(argv):
     default=os.environ.get("DJ_QUEUE_DEV_ADMIN_PASSWORD", "password"),
   )
   parser.add_argument(
+    "--auto-login",
+    dest="auto_login",
+    action="store_true",
+    default=_env_flag("DJ_QUEUE_DEV_ADMIN_AUTO_LOGIN", True),
+    help="Auto-sign in to Django admin with the dev superuser.",
+  )
+  parser.add_argument(
+    "--login-required",
+    dest="auto_login",
+    action="store_false",
+    help="Require the normal Django admin login screen.",
+  )
+  parser.add_argument(
     "--no-seed",
     action="store_true",
     default=_env_flag("DJ_QUEUE_DEV_ADMIN_NO_SEED", False),
@@ -111,6 +124,7 @@ if not settings.configured:
       "django.contrib.sessions.middleware.SessionMiddleware",
       "django.middleware.csrf.CsrfViewMiddleware",
       "django.contrib.auth.middleware.AuthenticationMiddleware",
+      *(["bin.dev_admin.AutoLoginMiddleware"] if ARGS.auto_login else []),
       "django.contrib.messages.middleware.MessageMiddleware",
       "django.middleware.clickjacking.XFrameOptionsMiddleware",
     ],
@@ -132,6 +146,11 @@ if not settings.configured:
     SESSION_ENGINE="django.contrib.sessions.backends.db",
     TASKS={
       "default": {
+        "BACKEND": "dj_queue.backend.DjQueueBackend",
+        "QUEUES": [],
+        "OPTIONS": {},
+      },
+      "demo": {
         "BACKEND": "dj_queue.backend.DjQueueBackend",
         "QUEUES": [],
         "OPTIONS": {
@@ -205,7 +224,7 @@ def _enable_wal(sender, connection, **kwargs):
 connection_created.connect(_enable_wal)
 
 from django.contrib import admin  # noqa: E402
-from django.contrib.auth import get_user_model  # noqa: E402
+from django.contrib.auth import get_user_model, login  # noqa: E402
 from django.contrib.staticfiles.handlers import ASGIStaticFilesHandler  # noqa: E402
 from django.core.asgi import get_asgi_application  # noqa: E402
 from django.core.management import call_command  # noqa: E402
@@ -237,6 +256,17 @@ from tests.tasks import add, echo, fail, sleep_for  # noqa: E402
 # ---------------------------------------------------------------------------
 
 
+class AutoLoginMiddleware:
+  def __init__(self, get_response):
+    self.get_response = get_response
+
+  def __call__(self, request):
+    if not request.user.is_authenticated:
+      user = get_user_model().objects.get(username=ARGS.username)
+      login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+    return self.get_response(request)
+
+
 def bootstrap():
   call_command("migrate", interactive=False, verbosity=0)
   ensure_superuser(ARGS.username, ARGS.password)
@@ -250,6 +280,7 @@ def export_runtime_env():
   os.environ["DJ_QUEUE_DEV_ADMIN_DB"] = str(DB_PATH)
   os.environ["DJ_QUEUE_DEV_ADMIN_USER"] = ARGS.username
   os.environ["DJ_QUEUE_DEV_ADMIN_PASSWORD"] = ARGS.password
+  os.environ["DJ_QUEUE_DEV_ADMIN_AUTO_LOGIN"] = "1" if ARGS.auto_login else "0"
   os.environ["DJ_QUEUE_DEV_ADMIN_RELOAD"] = "1" if ARGS.reload else "0"
   if ARGS.no_seed:
     os.environ["DJ_QUEUE_DEV_ADMIN_NO_SEED"] = "1"
@@ -288,7 +319,7 @@ def make_job(**overrides):
     queue_name=overrides.pop("queue_name", "default"),
     priority=overrides.pop("priority", 0),
     payload=payload,
-    backend_name=overrides.pop("backend_name", "default"),
+    backend_name=overrides.pop("backend_name", "demo"),
     scheduled_at=overrides.pop("scheduled_at", None),
     concurrency_key=overrides.pop("concurrency_key", None),
     finished_at=overrides.pop("finished_at", None),
@@ -589,7 +620,7 @@ def seed_demo_data():
     )
 
   failed_specs = (
-    ("failed-demo", "default", "boom"),
+    ("failed-demo", "demo", "boom"),
     ("alerts", "critical", "smtp timeout"),
   )
   for queue_name, backend_name, message in failed_specs:
@@ -631,8 +662,12 @@ def seed_demo_data():
 
 
 def index(_request):
+  access_copy = ""
+  if not ARGS.auto_login:
+    access_copy = f"default login: <code>{ARGS.username}</code> / <code>{ARGS.password}</code>"
+
   return HttpResponse(
-    """
+    f"""
     <html>
       <body style=\"font-family: sans-serif; max-width: 56rem; margin: 3rem auto; line-height: 1.5;\">
         <h1>dj_queue admin dev</h1>
@@ -640,7 +675,8 @@ def index(_request):
         <p><a href=\"/enqueue/\">Enqueue a live demo job</a></p>
         <p><a href=\"/enqueue-burst/\">Enqueue a burst of demo jobs</a></p>
         <p><a href=\"/seed/\">Reset seeded dashboard data</a></p>
-        <p>default login: <code>admin</code> / <code>password</code></p>
+        <p>seeded operator data lives primarily under backend <code>demo</code></p>
+        <p>{access_copy}</p>
       </body>
     </html>
     """
@@ -648,7 +684,7 @@ def index(_request):
 
 
 def enqueue_job(_request):
-  task_result = add.using(queue_name="interactive").enqueue(2, 3)
+  task_result = add.using(backend="demo", queue_name="interactive").enqueue(2, 3)
   return JsonResponse(
     {
       "job_id": str(task_result.id),
@@ -659,10 +695,10 @@ def enqueue_job(_request):
 
 def enqueue_burst(_request):
   results = [
-    echo.using(queue_name="interactive").enqueue("demo-live-a"),
-    echo.using(queue_name="reports").enqueue("demo-live-b"),
-    fail.using(queue_name="interactive").enqueue("burst-failure"),
-    sleep_for.using(queue_name="interactive").enqueue(2),
+    echo.using(backend="demo", queue_name="interactive").enqueue("demo-live-a"),
+    echo.using(backend="demo", queue_name="reports").enqueue("demo-live-b"),
+    fail.using(backend="demo", queue_name="interactive").enqueue("burst-failure"),
+    sleep_for.using(backend="demo", queue_name="interactive").enqueue(2),
   ]
   return JsonResponse({"job_ids": [str(result.id) for result in results]})
 
@@ -673,7 +709,7 @@ def reset_seed(_request):
 
 
 def result_job(_request, job_id: UUID):
-  task_result = add.get_backend().get_result(job_id)
+  task_result = add.using(backend="demo").get_backend().get_result(job_id)
   status = str(getattr(task_result.status, "value", task_result.status)).lower()
   return JsonResponse(
     {
@@ -700,7 +736,7 @@ urlpatterns = [
 ]
 
 
-application = DjQueueLifespan(ASGIStaticFilesHandler(get_asgi_application()))
+application = DjQueueLifespan(ASGIStaticFilesHandler(get_asgi_application()), backend_alias="demo")
 
 
 # ---------------------------------------------------------------------------
@@ -713,7 +749,8 @@ def main():
   bootstrap()
   print(f"admin db: {DB_PATH}")
   print(f"admin url: http://{ARGS.host}:{ARGS.port}/admin/")
-  print(f"login: {ARGS.username} / {ARGS.password}")
+  if not ARGS.auto_login:
+    print(f"login: {ARGS.username} / {ARGS.password}")
   if ARGS.reload:
     uvicorn.run(
       "bin.dev_admin:application",

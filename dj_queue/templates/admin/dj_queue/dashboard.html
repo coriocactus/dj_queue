@@ -332,6 +332,27 @@
       min-width: 48rem;
     }
 
+    .djq-table-shared-queues {
+      min-width: 56rem;
+      table-layout: fixed;
+    }
+
+    .djq-table-shared-queues col.djq-shared-col-name {
+      width: 20%;
+    }
+
+    .djq-table-shared-queues col.djq-shared-col-via {
+      width: 20%;
+    }
+
+    .djq-table-shared-queues col.djq-shared-col-paused {
+      width: 20%;
+    }
+
+    .djq-table-shared-queues col.djq-shared-col-controls {
+      width: 20%;
+    }
+
     .djq-table th,
     .djq-table td {
       white-space: nowrap;
@@ -365,6 +386,15 @@
     .djq-col-metadata {
       min-width: 20rem;
       white-space: normal;
+    }
+
+    .djq-col-shared-via {
+      min-width: 16rem;
+    }
+
+    .djq-table-shared-queues .djq-col-controls,
+    .djq-table-shared-queues td.djq-col-controls {
+      min-width: 13rem;
     }
 
     .djq-process-row-group {
@@ -435,6 +465,26 @@
       line-height: 1.45;
     }
 
+    .djq-reason-list {
+      display: flex;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+    }
+
+    .djq-reason-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 1.6rem;
+      padding: 0 0.6rem;
+      border: 1px solid var(--hairline-color);
+      border-radius: 999px;
+      background: var(--body-bg);
+      color: var(--body-quiet-color);
+      font-size: 0.76rem;
+      font-weight: 600;
+      line-height: 1;
+    }
+
     @media (max-width: 900px) {
       .djq-summary-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -475,7 +525,7 @@
             <form method="get" action="{% url 'admin:dj_queue_dashboard_changelist' %}">
               <select id="id_backend" name="backend" onchange="this.form.submit()">
                 {% for choice in backend_choices %}
-                  <option value="{{ choice.alias }}"{% if choice.alias == backend_alias %} selected{% endif %}>{{ choice.alias }} (db {{ choice.database_alias }})</option>
+                  <option value="{{ choice.alias }}"{% if choice.alias == backend_alias %} selected{% endif %}>{{ choice.alias }}</option>
                 {% endfor %}
               </select>
               <noscript><button type="submit" class="button">Switch</button></noscript>
@@ -521,7 +571,7 @@
 
     <section class="module djq-section" id="queue-summary">
       <div class="djq-section-banner"><h2>queues</h2></div>
-      <p class="djq-section-copy">Live queue pressure, pause state, and first-line controls for this backend.</p>
+      <p class="djq-section-copy">Live queue pressure, pause state, and first-line controls for this backend.{% if shared_queue_section.total_count %} Shared pause or recurring-only queues are available in a separate section below.{% endif %}</p>
       {% if queue_section.rows %}
         <div class="djq-table-wrap">
           <table class="djq-table djq-table-queues" id="result_list">
@@ -799,6 +849,88 @@
         <p class="djq-empty">No active semaphores.</p>
       {% endif %}
     </section>
+
+    {% if shared_queue_section.total_count %}
+      <section class="module djq-section" id="shared-queue-summary">
+        <div class="djq-section-banner"><h2>shared queues</h2></div>
+        <p class="djq-section-copy">These queues have no jobs for backend <strong>{{ backend_alias }}</strong> and are shown separately because pause and recurring-task rows are shared on queue database <strong>{{ queue_database_alias }}</strong>.</p>
+        <div class="djq-table-wrap">
+          <table class="djq-table djq-table-shared-queues">
+            <colgroup>
+              <col class="djq-shared-col-name">
+              <col class="djq-shared-col-via">
+              <col class="djq-shared-col-paused">
+              <col class="djq-shared-col-controls">
+            </colgroup>
+            <thead>
+              <tr>
+                {% for header in shared_queue_section.headers %}
+                  <th scope="col"{{ header.class_attrib|safe }}>
+                    {% if header.sortable and header.sorted %}
+                      <div class="sortoptions">
+                        <a class="sortremove" href="{{ header.url_remove }}" title="Remove from sorting"></a>
+                        {% if shared_queue_section.num_sorted_fields > 1 %}<span class="sortpriority" title="Sorting priority: {{ header.sort_priority }}">{{ header.sort_priority }}</span>{% endif %}
+                        <a href="{{ header.url_toggle }}" class="toggle {{ header.ascending|yesno:'ascending,descending' }}" title="Toggle sorting"></a>
+                      </div>
+                    {% endif %}
+                    <div class="text"><a role="button" href="{{ header.url_primary }}">{{ header.text|capfirst }}</a></div>
+                    <div class="clear"></div>
+                  </th>
+                {% endfor %}
+                <th scope="col" class="djq-col-controls"><div class="text">Controls</div></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for queue in shared_queue_section.rows %}
+                <tr class="{% cycle 'row1' 'row2' %}">
+                  <th class="djq-col-name"><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=ready">{{ queue.name }}</a></th>
+                  <td>
+                    <div class="djq-reason-list">
+                      {% for source in queue.shared_sources %}
+                        <span class="djq-reason-pill">{{ source }}</span>
+                      {% endfor %}
+                    </div>
+                  </td>
+                  <td>{{ queue.paused|yesno:"yes,no" }}</td>
+                  <td class="djq-col-controls">
+                    <div class="djq-queue-controls">
+                      <form method="post" action="{% url 'admin:dj_queue_dashboard_queue_action' queue.name %}">
+                        {% csrf_token %}
+                        <input type="hidden" name="backend" value="{{ backend_alias }}">
+                        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                        <input type="hidden" name="action" value="{% if queue.paused %}resume{% else %}pause{% endif %}">
+                        <button type="submit" class="button {% if queue.paused %}djq-button-resume{% else %}djq-button-pause{% endif %}">{% if queue.paused %}resume{% else %}pause{% endif %}</button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="djq-table-footer">
+          <nav class="paginator" aria-labelledby="pagination-shared-queues">
+            <h2 id="pagination-shared-queues" class="visually-hidden">Pagination shared queues</h2>
+            {% if shared_queue_section.pagination_required %}
+              <ul>
+                {% for link in shared_queue_section.page_links %}
+                  <li>
+                    {% if link.is_ellipsis %}
+                      {{ link.label }}
+                    {% elif link.is_current %}
+                      <span aria-current="page">{{ link.number }}</span>
+                    {% else %}
+                      <a role="button" href="{{ link.url }}">{{ link.number }}</a>
+                    {% endif %}
+                  </li>
+                {% endfor %}
+              </ul>
+            {% endif %}
+            {{ shared_queue_section.result_count_text }}
+          </nav>
+        </div>
+      </section>
+    {% endif %}
 
     <section class="module djq-section" id="raw-summary">
       <div class="djq-section-banner"><h2>inspect raw rows</h2></div>
