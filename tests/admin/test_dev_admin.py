@@ -29,7 +29,9 @@ def test_seed_demo_data_uses_importable_demo_task_paths():
 def test_seeded_process_heartbeat_middleware_refreshes_dashboard_rows():
   dev_admin.seed_demo_data()
   stale_at = timezone.now() - timedelta(minutes=10)
-  Process.objects.filter(name__in=dev_admin.SEEDED_PROCESS_NAMES).update(last_heartbeat_at=stale_at)
+  Process.objects.filter(name__in=dev_admin.SEEDED_PROCESS_NAMES).update(
+    last_heartbeat_at=stale_at
+  )
   request_started_at = timezone.now()
 
   middleware = dev_admin.SeededProcessHeartbeatMiddleware(lambda request: HttpResponse("ok"))

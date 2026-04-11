@@ -354,7 +354,6 @@ def seed_demo_data():
   now = timezone.now()
 
   Job.objects.all().delete()
-  Process.objects.filter(name__startswith="legacy-").delete()
   Process.objects.filter(name__in=SEEDED_PROCESS_NAMES).delete()
   RecurringExecution.objects.all().delete()
   RecurringTask.objects.all().delete()
