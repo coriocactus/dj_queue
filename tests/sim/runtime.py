@@ -471,7 +471,9 @@ class RuntimeSimulation:
     assert failed.exception_class == (
       f"{ProcessMissingError.__module__}.{ProcessMissingError.__qualname__}"
     )
-    logger.info("simulation seed=%s action=inject_startup_orphan job_id=%s", self.seed, orphan_job.id)
+    logger.info(
+      "simulation seed=%s action=inject_startup_orphan job_id=%s", self.seed, orphan_job.id
+    )
     return orphan_job.id
 
   def _log_state(self, level, action):

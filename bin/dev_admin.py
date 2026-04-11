@@ -264,7 +264,9 @@ def _demo_result(name, account_id=None):
   return {"task": name, "account_id": account_id}
 
 
-def _register_demo_task(module, name, *, concurrency_key=None, concurrency_limit=None, concurrency_duration=None):
+def _register_demo_task(
+  module, name, *, concurrency_key=None, concurrency_limit=None, concurrency_duration=None
+):
   def implementation(account_id):
     return _demo_result(name, account_id)
 

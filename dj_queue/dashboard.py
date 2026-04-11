@@ -1224,9 +1224,10 @@ def _queue_rows(*, backend_alias, now, process_cutoff):
 
   rows = []
   for queue_name in sorted(queue_names):
+    paused = queue_name in paused_queues
     oldest_ready_at = oldest_ready.get(queue_name)
     latency_seconds = None
-    if oldest_ready_at is not None:
+    if oldest_ready_at is not None and paused is False:
       latency_seconds = max((now - oldest_ready_at).total_seconds(), 0.0)
 
     ready_count = ready_counts.get(queue_name, 0)
@@ -1236,7 +1237,7 @@ def _queue_rows(*, backend_alias, now, process_cutoff):
     failed_count = failed_counts.get(queue_name, 0)
     finished_count = finished_counts.get(queue_name, 0)
     shared_sources = []
-    if queue_name in paused_queues:
+    if paused:
       shared_sources.append("pause")
     if queue_name in recurring_queues:
       shared_sources.append("recurring task")
@@ -1250,7 +1251,7 @@ def _queue_rows(*, backend_alias, now, process_cutoff):
         "blocked_count": blocked_count,
         "failed_count": failed_count,
         "finished_count": finished_count,
-        "paused": queue_name in paused_queues,
+        "paused": paused,
         "latency_seconds": latency_seconds,
         "oldest_scheduled_at": oldest_scheduled.get(queue_name),
         "oldest_blocked_at": oldest_blocked.get(queue_name),

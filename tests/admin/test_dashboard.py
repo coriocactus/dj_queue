@@ -757,6 +757,27 @@ def test_dashboard_queue_controls_use_distinct_pause_resume_styles(admin_client)
   assert 'class="queue-button-resume"' in paused_queue.content.decode()
 
 
+def test_dashboard_paused_queue_hides_latency(admin_client):
+  make_ready_job(queue_name="alpha")
+  paused_job = make_ready_job(queue_name="paused")
+  Pause.objects.create(queue_name="paused")
+
+  rows = dashboard.dashboard_context(backend_alias="default")["queue_section"]["rows"]
+  alpha_row = next(row for row in rows if row["name"] == "alpha")
+  paused_row = next(row for row in rows if row["name"] == "paused")
+
+  assert alpha_row["latency_seconds"] is not None
+  assert paused_row["paused"] is True
+  assert paused_row["latency_seconds"] is None
+  assert paused_row["ready_count"] == 1
+
+  response = admin_client.get(reverse("admin:dj_queue_dashboard_changelist"))
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert f">{paused_job.queue_name}</a>" in content
+
+
 def test_dashboard_queue_view_title_includes_dj_queue(admin_client):
   response = admin_client.get(
     reverse("admin:dj_queue_dashboard_queue", args=["alpha"]),
