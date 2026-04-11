@@ -6,7 +6,7 @@ Self-contained examples demonstrating `dj_queue` features.
 `dj_queue` setting. It switches the examples between SQLite, PostgreSQL, MySQL,
 and MariaDB.
 
-## Quickstart
+## Quick Start
 
 From project root:
 
@@ -28,7 +28,7 @@ docker compose up mariadb -d
 DB_BACKEND=mariadb examples/ex01_basic_enqueue.py
 ```
 
-## Example order
+## Example Order
 
 | Example | Demonstrates | Look for in output |
 |---|---|---|
@@ -49,7 +49,7 @@ DB_BACKEND=mariadb examples/ex01_basic_enqueue.py
 | `ex26_advanced_uvicorn.py` | a real `uvicorn` process with embedded `dj_queue` | HTTP enqueue followed by a successful HTTP result poll |
 | `ex27_advanced_gunicorn.py` | a real `gunicorn` worker with embedded `dj_queue` | HTTP enqueue followed by a successful HTTP result poll |
 
-## Demo server
+## Demo Server
 
 `bin/dev_admin.py` launches a development server with the Django admin,
 embedded `dj_queue` workers, and seeded demo data:

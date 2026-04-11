@@ -389,8 +389,8 @@ pauses, and semaphores.
 When a task raises, `dj_queue` keeps the job and its failed execution row in the
 queue database, including the exception class, message, and traceback.
 
-You can retry failed jobs through Django admin, or retry and discard them
-through the operations layer:
+You can retry and discard failed jobs through Django admin, or call the same
+operations directly through the operations layer:
 
 ```python
 from dj_queue.operations.jobs import discard_failed_job, retry_failed_job
