@@ -1,14 +1,14 @@
 #!/usr/bin/env -S uv run --script
 
 import os
-from pathlib import Path
+import re
+import shutil
 import subprocess
 import sys
 import threading
 import time
 from dataclasses import dataclass, field
-import re
-import shutil
+from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DB_SERVICES = ["mysql", "mariadb", "postgres"]
