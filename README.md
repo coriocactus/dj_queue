@@ -139,6 +139,7 @@ If Django admin is installed, `dj_queue` adds an operator dashboard at
 - backend-aware dashboard and raw changelists
 - queue controls: pause, resume, clear ready
 - job detail action: enqueue a fresh copy of any stored job
+- pause detail action: resume the paused queue from the raw pause row
 - failed-job actions: retry and discard from list and detail views
 - queue drill-down pages for state-specific inspection
 

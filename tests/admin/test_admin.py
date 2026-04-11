@@ -10,6 +10,7 @@ from dj_queue.models import (
   BlockedExecution,
   FailedExecution,
   Job,
+  Pause,
   Process,
   ReadyExecution,
   RecurringExecution,
@@ -407,6 +408,45 @@ def test_process_change_view_hides_save_controls(admin_client):
   assert ">History<" not in content
   assert "Save and continue editing" not in content
   assert 'value="Save"' not in content
+
+
+def test_pause_change_view_shows_resume_action(admin_client):
+  pause = Pause.objects.create(queue_name="alpha")
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_pause_change", args=[pause.pk]),
+    {"backend": "default"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert '<div class="submit-row">' in content
+  assert 'name="_djq_object_action" value="resume"' in content
+  assert "Resume queue" in content
+  assert ">History<" not in content
+  assert "Save and continue editing" not in content
+  assert 'value="Save"' not in content
+
+
+def test_pause_change_view_resume_action(admin_client):
+  pause = Pause.objects.create(queue_name="alpha")
+
+  response = admin_client.post(
+    f"{reverse('admin:dj_queue_pause_change', args=[pause.pk])}?backend=default",
+    {"_djq_object_action": "resume"},
+    follow=True,
+  )
+
+  assert response.status_code == 200
+  assert Pause.objects.filter(pk=pause.pk).exists() is False
+  assert response.request["PATH_INFO"] == reverse("admin:dj_queue_pause_changelist")
+  messages = list(response.context["messages"])
+  assert len(messages) == 1
+  assert messages[0].message == format_html(
+    'Resumed queue <a href="{}">{}</a>',
+    f"{reverse('admin:dj_queue_dashboard_queue', args=[pause.queue_name])}?backend=default",
+    pause.queue_name,
+  )
 
 
 def test_job_change_view_retry_action(admin_client):

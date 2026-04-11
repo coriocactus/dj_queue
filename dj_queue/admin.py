@@ -15,6 +15,7 @@ from django.utils import timezone
 
 from dj_queue.config import load_backend_config
 from dj_queue import dashboard
+from dj_queue.api import QueueInfo
 from dj_queue.db import get_database_alias
 from dj_queue.models import (
   BlockedExecution,
@@ -665,6 +666,28 @@ class PauseAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   list_display = ("queue_name", "created_at")
   readonly_fields = ("queue_name", "created_at")
   search_fields = ("queue_name",)
+
+  def get_change_actions(self, request, obj):
+    if obj is None:
+      return ()
+    return ({"name": "resume", "label": "Resume queue", "css_class": "djq-object-action-retry"},)
+
+  def handle_change_action(self, request, obj, action):
+    backend_alias = self._backend_alias(request)
+    if action == "resume":
+      QueueInfo(obj.queue_name, backend_alias=backend_alias).resume()
+      self.message_user(
+        request,
+        format_html(
+          'Resumed queue <a href="{}">{}</a>',
+          f"{reverse('admin:dj_queue_dashboard_queue', args=[obj.queue_name])}?{urlencode({'backend': backend_alias})}",
+          obj.queue_name,
+        ),
+        level=messages.SUCCESS,
+      )
+      return HttpResponseRedirect(self._changelist_url(backend_alias=backend_alias))
+
+    return HttpResponseRedirect(self._change_url(object_id=obj.pk, backend_alias=backend_alias))
 
 
 @admin.register(Semaphore)
