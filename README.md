@@ -380,9 +380,22 @@ python manage.py dj_queue_prune --older-than 86400
 python manage.py dj_queue_prune --task-path myapp.tasks.cleanup
 ```
 
-If Django admin is installed, `dj_queue` also registers the main operational
-models there, including jobs, failed executions, processes, recurring tasks,
-pauses, and semaphores.
+## Admin Integration
+
+If Django admin is installed, `dj_queue` adds an operator dashboard at
+`/admin/dj_queue/dashboard/`.
+
+- queue, process, recurring-task, and semaphore overview
+- backend-aware dashboard and raw changelists
+- queue controls: pause, resume, clear ready
+- failed-job actions: retry and discard from list and detail views
+- queue drill-down pages for state-specific inspection
+
+![dj_queue admin dashboard](docs/dashboard.png)
+
+![dj_queue queue drill-down](docs/dashboard-queue.png)
+
+For seeded demo data and repeatable screenshots, run `bin/dev_admin.py`.
 
 ## Failed Jobs
 
