@@ -4,22 +4,22 @@ import os
 from django.utils import timezone
 
 
+DEFAULT_SEEDS = [1, 7, 19]
+DEFAULT_STEPS = 90
+
+
 def simulation_seeds():
   configured = os.environ.get("SIM_SEEDS")
   if configured:
     return [int(value.strip()) for value in configured.split(",") if value.strip()]
-  if os.environ.get("RUN_STRESS") == "1":
-    return list(range(50))
-  return [1, 7, 19]
+  return DEFAULT_SEEDS
 
 
 def simulation_steps():
   configured = os.environ.get("SIM_STEPS")
   if configured:
     return int(configured)
-  if os.environ.get("RUN_STRESS") == "1":
-    return 250
-  return 90
+  return DEFAULT_STEPS
 
 
 def fixed_now():

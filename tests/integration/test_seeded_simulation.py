@@ -1,4 +1,5 @@
 import pytest
+
 from dj_queue.models import (
   BlockedExecution,
   ClaimedExecution,

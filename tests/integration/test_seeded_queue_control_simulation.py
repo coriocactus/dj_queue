@@ -1,7 +1,7 @@
 import pytest
 
 from dj_queue.models import ClaimedExecution, FailedExecution, Job, Pause, ReadyExecution
-from tests.sim.config import simulation_seeds
+from tests.sim.config import simulation_seeds, simulation_steps
 from tests.sim.runtime import RuntimeSimulation
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -50,7 +50,7 @@ def test_seeded_queue_control_simulation_preserves_pause_and_fairness(seed, monk
     assert "alpha" in finished_queues
     assert set(finished_queues).issuperset({"alpha", "beta", "default"})
 
-    simulation.run(steps=20)
+    simulation.run(steps=simulation_steps())
     simulation.drain()
   finally:
     simulation.stop()

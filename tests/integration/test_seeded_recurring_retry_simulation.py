@@ -1,7 +1,7 @@
 import pytest
 
 from dj_queue.models import FailedExecution, Job, Process, ReadyExecution, RecurringExecution
-from tests.sim.config import simulation_seeds
+from tests.sim.config import simulation_seeds, simulation_steps
 from tests.sim.runtime import RuntimeSimulation
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -35,7 +35,7 @@ def test_seeded_recurring_retry_simulation_preserves_dedupe_and_recovery(seed, m
     assert Process.objects.count() == 4
     assert Job.objects.filter(queue_name__in=["alpha", "beta"]).exists() is True
 
-    simulation.run(steps=20)
+    simulation.run(steps=simulation_steps())
     simulation.drain()
   finally:
     simulation.stop()
