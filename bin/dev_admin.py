@@ -124,6 +124,7 @@ if not settings.configured:
       "django.contrib.sessions.middleware.SessionMiddleware",
       "django.middleware.csrf.CsrfViewMiddleware",
       "django.contrib.auth.middleware.AuthenticationMiddleware",
+      "bin.dev_admin.SeededProcessHeartbeatMiddleware",
       *(["bin.dev_admin.AutoLoginMiddleware"] if ARGS.auto_login else []),
       "django.contrib.messages.middleware.MessageMiddleware",
       "django.middleware.clickjacking.XFrameOptionsMiddleware",
@@ -232,8 +233,6 @@ from django.http import HttpResponse, JsonResponse  # noqa: E402
 from django.urls import path  # noqa: E402
 from django.utils import timezone  # noqa: E402
 
-import uvicorn  # noqa: E402
-
 from dj_queue.contrib.asgi import DjQueueLifespan  # noqa: E402
 from dj_queue.models import (  # noqa: E402
   BlockedExecution,
@@ -251,6 +250,14 @@ from dj_queue.models import (  # noqa: E402
 from tests.tasks import add, echo, fail, sleep_for  # noqa: E402
 
 
+SEEDED_PROCESS_NAMES = (
+  "dashboard-supervisor",
+  "dashboard-dispatcher",
+  "dashboard-scheduler",
+  "dashboard-worker-alpha",
+)
+
+
 # ---------------------------------------------------------------------------
 # Bootstrap
 # ---------------------------------------------------------------------------
@@ -264,6 +271,15 @@ class AutoLoginMiddleware:
     if not request.user.is_authenticated:
       user = get_user_model().objects.get(username=ARGS.username)
       login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+    return self.get_response(request)
+
+
+class SeededProcessHeartbeatMiddleware:
+  def __init__(self, get_response):
+    self.get_response = get_response
+
+  def __call__(self, request):
+    refresh_seeded_process_heartbeats()
     return self.get_response(request)
 
 
@@ -306,6 +322,12 @@ def ensure_superuser(username, password):
   return user
 
 
+def refresh_seeded_process_heartbeats(*, now=None):
+  if now is None:
+    now = timezone.now()
+  Process.objects.filter(name__in=SEEDED_PROCESS_NAMES).update(last_heartbeat_at=now)
+
+
 # ---------------------------------------------------------------------------
 # Demo Data
 # ---------------------------------------------------------------------------
@@ -333,7 +355,7 @@ def seed_demo_data():
 
   Job.objects.all().delete()
   Process.objects.filter(name__startswith="legacy-").delete()
-  Process.objects.filter(name__startswith="dashboard-").delete()
+  Process.objects.filter(name__in=SEEDED_PROCESS_NAMES).delete()
   RecurringExecution.objects.all().delete()
   RecurringTask.objects.all().delete()
   Pause.objects.all().delete()
@@ -745,6 +767,8 @@ application = DjQueueLifespan(ASGIStaticFilesHandler(get_asgi_application()), ba
 
 
 def main():
+  import uvicorn
+
   export_runtime_env()
   bootstrap()
   print(f"admin db: {DB_PATH}")
