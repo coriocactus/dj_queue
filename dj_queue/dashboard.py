@@ -31,16 +31,50 @@ from dj_queue.models import (
 )
 from dj_queue.operations.jobs import discard_blocked_jobs, discard_ready_jobs
 
-QUEUE_STATES = (
-  ("ready", "ready"),
-  ("claimed", "claimed"),
-  ("scheduled", "scheduled"),
-  ("blocked", "blocked"),
-  ("failed", "failed"),
-  ("finished", "finished"),
-)
+QUEUE_STATE_CONFIG = {
+  "ready": {
+    "label": "ready",
+    "job_actions": ({"name": "discard", "label": "discard selected"},),
+    "query_filter": {"ready_execution__isnull": False},
+    "query_order": ("-priority", "ready_execution__id"),
+  },
+  "claimed": {
+    "label": "claimed",
+    "job_actions": (),
+    "query_filter": {"claimed_execution__isnull": False},
+    "query_order": ("claimed_execution__created_at", "id"),
+  },
+  "scheduled": {
+    "label": "scheduled",
+    "job_actions": (),
+    "query_filter": {"scheduled_execution__isnull": False},
+    "query_order": ("scheduled_execution__scheduled_at", "-priority", "scheduled_execution__id"),
+  },
+  "blocked": {
+    "label": "blocked",
+    "job_actions": ({"name": "discard", "label": "discard selected"},),
+    "query_filter": {"blocked_execution__isnull": False},
+    "query_order": ("blocked_execution__expires_at", "-priority", "blocked_execution__id"),
+  },
+  "failed": {
+    "label": "failed",
+    "job_actions": (
+      {"name": "retry", "label": "retry selected"},
+      {"name": "discard", "label": "discard selected"},
+    ),
+    "query_filter": {"failed_execution__isnull": False},
+    "query_order": ("-failed_execution__created_at", "id"),
+  },
+  "finished": {
+    "label": "finished",
+    "job_actions": (),
+    "query_filter": {"finished_at__isnull": False},
+    "query_order": ("-finished_at", "id"),
+  },
+}
 
-QUEUE_STATE_LABELS = dict(QUEUE_STATES)
+QUEUE_STATES = tuple((state, config["label"]) for state, config in QUEUE_STATE_CONFIG.items())
+QUEUE_STATE_LABELS = {state: config["label"] for state, config in QUEUE_STATE_CONFIG.items()}
 PAGE_SIZE = 100
 OVERVIEW_PAGE_SIZES = {
   "queues": 18,
@@ -384,15 +418,16 @@ def queue_page_context(*, backend_alias, queue_name, state, page_number, query_p
 
   paginator = Paginator(jobs, PAGE_SIZE)
   page_obj = paginator.get_page(query_params.get("page", page_number))
+  queue_row = _queue_snapshot(
+    backend_alias=backend_alias,
+    queue_name=queue_name,
+    now=now,
+    process_cutoff=process_cutoff,
+  )
   queue_info = QueueInfo(queue_name, backend_alias=backend_alias)
-  queue_paused = queue_info.paused
-  queue_latency_seconds = None if queue_paused else queue_info.latency
-  state_counts = _queue_state_counts(backend_alias=backend_alias, queue_name=queue_name)
-  live_workers = [
-    process
-    for process in Process.objects.using(alias).filter(kind="Worker")
-    if process.last_heartbeat_at >= process_cutoff
-  ]
+  state_counts = {
+    state_name: queue_row[f"{state_name}_count"] for state_name, _label in QUEUE_STATES
+  }
   state_tabs = [
     {
       "name": state_name,
@@ -432,13 +467,9 @@ def queue_page_context(*, backend_alias, queue_name, state, page_number, query_p
     "queue_database_alias": alias,
     "queue_name": queue_name,
     "queue_info": queue_info,
-    "queue_paused": queue_paused,
-    "queue_latency_seconds": queue_latency_seconds,
-    "queue_worker_count": sum(
-      1
-      for worker in live_workers
-      if _queue_matches_selectors(queue_name, worker.metadata.get("queues", []))
-    ),
+    "queue_paused": queue_row["paused"],
+    "queue_latency_seconds": queue_row["latency_seconds"],
+    "queue_worker_count": queue_row["live_worker_count"],
     "state": state,
     "state_label": QUEUE_STATE_LABELS[state],
     "state_tabs": state_tabs,
@@ -450,13 +481,14 @@ def queue_page_context(*, backend_alias, queue_name, state, page_number, query_p
       page_param="page",
       anchor="result_list",
     ),
+    "queue_num_sorted_fields": len(_parse_sort_fields(sort)) if explicit_sort else 0,
     "raw_links": tuple(raw_links),
     "page_obj": page_obj,
     "jobs": list(page_obj.object_list),
     "page_links": (
-      _overview_page_links(
-        paginator=paginator,
-        page_obj=page_obj,
+      _page_links_for_total_pages(
+        total_pages=paginator.num_pages,
+        current_page=page_obj.number,
         query_params=query_params,
         page_param="page",
         sort_param="sort",
@@ -538,16 +570,7 @@ def apply_job_action(*, backend_alias, queue_name, state, action, job_ids):
 
 
 def job_actions_for_state(state):
-  if state == "ready":
-    return ({"name": "discard", "label": "discard selected"},)
-  if state == "blocked":
-    return ({"name": "discard", "label": "discard selected"},)
-  if state == "failed":
-    return (
-      {"name": "retry", "label": "retry selected"},
-      {"name": "discard", "label": "discard selected"},
-    )
-  return ()
+  return QUEUE_STATE_CONFIG[state]["job_actions"]
 
 
 def _summary_cards(*, backend_alias, queue_rows, process_rows, recurring_rows, semaphore_rows):
@@ -653,48 +676,56 @@ def _overview_section(*, section, rows, page_param, page_size, sort_param, query
   raw_sort = query_params.get(sort_param)
   sort, explicit_sort = _resolve_overview_sort(section=section, raw_sort=raw_sort)
   rows = _sort_overview_rows(rows=rows, section=section, sort=sort)
+  sort_value = sort if explicit_sort else None
+
   if section == "processes":
     page = _paginate_process_rows(
       rows=rows,
       page_size=page_size,
       page_number=query_params.get(page_param, 1),
     )
-    return {
-      "headers": _overview_headers(
-        section=section,
-        query_params=query_params,
-        sort_param=sort_param,
-        sort=sort,
-        explicit_sort=explicit_sort,
-        page_param=page_param,
-        anchor=anchor,
-      ),
-      "rows": page["rows"],
-      "total_count": page["total_count"],
-      "pagination_required": page["total_pages"] > 1,
-      "page_links": _page_links_for_total_pages(
-        total_pages=page["total_pages"],
-        current_page=page["number"],
-        query_params=query_params,
-        page_param=page_param,
-        sort_param=sort_param,
-        sort=sort if explicit_sort else None,
-        anchor=anchor,
-      ),
-      "result_count_text": _result_count_text(
-        section=section,
-        total_count=page["total_count"],
-        start=page["start_index"],
-        end=page["end_index"],
-      ),
-      "sort": sort,
-      "num_sorted_fields": len(_parse_sort_fields(sort)) if explicit_sort else 0,
-      "anchor": anchor,
-    }
+  else:
+    page = _paginate_standard_rows(
+      rows=rows,
+      page_size=page_size,
+      page_number=query_params.get(page_param, 1),
+    )
 
-  paginator = Paginator(rows, page_size)
-  page_obj = paginator.get_page(query_params.get(page_param, 1))
+  return _section_payload(
+    section=section,
+    rows=page["rows"],
+    total_count=page["total_count"],
+    total_pages=page["total_pages"],
+    current_page=page["number"],
+    start_index=page["start_index"],
+    end_index=page["end_index"],
+    query_params=query_params,
+    page_param=page_param,
+    sort_param=sort_param,
+    sort=sort,
+    sort_value=sort_value,
+    explicit_sort=explicit_sort,
+    anchor=anchor,
+  )
 
+
+def _section_payload(
+  *,
+  section,
+  rows,
+  total_count,
+  total_pages,
+  current_page,
+  start_index,
+  end_index,
+  query_params,
+  page_param,
+  sort_param,
+  sort,
+  sort_value,
+  explicit_sort,
+  anchor,
+):
   return {
     "headers": _overview_headers(
       section=section,
@@ -705,26 +736,41 @@ def _overview_section(*, section, rows, page_param, page_size, sort_param, query
       page_param=page_param,
       anchor=anchor,
     ),
-    "rows": list(page_obj.object_list),
-    "total_count": paginator.count,
-    "pagination_required": paginator.num_pages > 1,
-    "page_links": _overview_page_links(
-      paginator=paginator,
-      page_obj=page_obj,
+    "rows": rows,
+    "total_count": total_count,
+    "pagination_required": total_pages > 1,
+    "page_links": _page_links_for_total_pages(
+      total_pages=total_pages,
+      current_page=current_page,
       query_params=query_params,
       page_param=page_param,
       sort_param=sort_param,
-      sort=sort if explicit_sort else None,
+      sort=sort_value,
       anchor=anchor,
     ),
-    "result_count_text": _overview_result_count_text(
+    "result_count_text": _result_count_text(
       section=section,
-      page_obj=page_obj,
-      total_count=paginator.count,
+      total_count=total_count,
+      start=start_index,
+      end=end_index,
     ),
     "sort": sort,
     "num_sorted_fields": len(_parse_sort_fields(sort)) if explicit_sort else 0,
     "anchor": anchor,
+  }
+
+
+def _paginate_standard_rows(*, rows, page_size, page_number):
+  paginator = Paginator(rows, page_size)
+  page_obj = paginator.get_page(page_number)
+  total_count = paginator.count
+  return {
+    "rows": list(page_obj.object_list),
+    "number": page_obj.number,
+    "total_pages": paginator.num_pages,
+    "total_count": total_count,
+    "start_index": page_obj.start_index() if total_count else 0,
+    "end_index": page_obj.end_index() if total_count else 0,
   }
 
 
@@ -739,20 +785,6 @@ def _overview_query(*, query_params, page_param, page_number, sort_param=None, s
   if hasattr(params, "urlencode"):
     return params.urlencode()
   return urlencode(params, doseq=True)
-
-
-def _overview_page_links(
-  *, paginator, page_obj, query_params, page_param, sort_param, sort, anchor
-):
-  return _page_links_for_total_pages(
-    total_pages=paginator.num_pages,
-    current_page=page_obj.number,
-    query_params=query_params,
-    page_param=page_param,
-    sort_param=sort_param,
-    sort=sort,
-    anchor=anchor,
-  )
 
 
 def _page_links_for_total_pages(
@@ -785,15 +817,6 @@ def _page_links_for_total_pages(
       }
     )
   return tuple(links)
-
-
-def _overview_result_count_text(*, section, page_obj, total_count):
-  return _result_count_text(
-    section=section,
-    total_count=total_count,
-    start=page_obj.start_index() if total_count else 0,
-    end=page_obj.end_index() if total_count else 0,
-  )
 
 
 def _result_count_text(*, section, total_count, start, end):
@@ -1237,57 +1260,126 @@ def _queue_rows(*, backend_alias, now, process_cutoff):
 
   rows = []
   for queue_name in sorted(queue_names):
-    paused = queue_name in paused_queues
-    oldest_ready_at = oldest_ready.get(queue_name)
-    latency_seconds = None
-    if oldest_ready_at is not None and paused is False:
-      latency_seconds = max((now - oldest_ready_at).total_seconds(), 0.0)
-
-    ready_count = ready_counts.get(queue_name, 0)
-    claimed_count = claimed_counts.get(queue_name, 0)
-    scheduled_count = scheduled_counts.get(queue_name, 0)
-    blocked_count = blocked_counts.get(queue_name, 0)
-    failed_count = failed_counts.get(queue_name, 0)
-    finished_count = finished_counts.get(queue_name, 0)
-    shared_sources = []
-    if paused:
-      shared_sources.append("pause")
-    if queue_name in recurring_queues:
-      shared_sources.append("recurring task")
-
     rows.append(
-      {
-        "name": queue_name,
-        "ready_count": ready_count,
-        "claimed_count": claimed_count,
-        "scheduled_count": scheduled_count,
-        "blocked_count": blocked_count,
-        "failed_count": failed_count,
-        "finished_count": finished_count,
-        "paused": paused,
-        "latency_seconds": latency_seconds,
-        "oldest_scheduled_at": oldest_scheduled.get(queue_name),
-        "oldest_blocked_at": oldest_blocked.get(queue_name),
-        "has_backend_jobs": any(
-          (
-            ready_count,
-            claimed_count,
-            scheduled_count,
-            blocked_count,
-            failed_count,
-            finished_count,
-          )
-        ),
-        "shared_sources": tuple(shared_sources),
-        "shared_source_labels": ", ".join(shared_sources),
-        "live_worker_count": sum(
-          1
-          for worker in live_workers
-          if _queue_matches_selectors(queue_name, worker.metadata.get("queues", []))
-        ),
-      }
+      _queue_snapshot(
+        backend_alias=backend_alias,
+        queue_name=queue_name,
+        now=now,
+        process_cutoff=process_cutoff,
+        ready_count=ready_counts.get(queue_name, 0),
+        claimed_count=claimed_counts.get(queue_name, 0),
+        scheduled_count=scheduled_counts.get(queue_name, 0),
+        blocked_count=blocked_counts.get(queue_name, 0),
+        failed_count=failed_counts.get(queue_name, 0),
+        finished_count=finished_counts.get(queue_name, 0),
+        paused=queue_name in paused_queues,
+        recurring=queue_name in recurring_queues,
+        oldest_ready_at=oldest_ready.get(queue_name),
+        oldest_scheduled_at=oldest_scheduled.get(queue_name),
+        oldest_blocked_at=oldest_blocked.get(queue_name),
+        live_workers=live_workers,
+      )
     )
   return rows
+
+
+def _queue_snapshot(
+  *,
+  backend_alias,
+  queue_name,
+  now,
+  process_cutoff,
+  ready_count=None,
+  claimed_count=None,
+  scheduled_count=None,
+  blocked_count=None,
+  failed_count=None,
+  finished_count=None,
+  paused=None,
+  recurring=None,
+  oldest_ready_at=None,
+  oldest_scheduled_at=None,
+  oldest_blocked_at=None,
+  live_workers=None,
+):
+  alias = get_database_alias(backend_alias)
+  if ready_count is None:
+    state_counts = _queue_state_counts(backend_alias=backend_alias, queue_name=queue_name)
+    ready_count = state_counts["ready"]
+    claimed_count = state_counts["claimed"]
+    scheduled_count = state_counts["scheduled"]
+    blocked_count = state_counts["blocked"]
+    failed_count = state_counts["failed"]
+    finished_count = state_counts["finished"]
+  if paused is None:
+    paused = Pause.objects.using(alias).filter(queue_name=queue_name).exists()
+  if recurring is None:
+    recurring = RecurringTask.objects.using(alias).filter(queue_name=queue_name).exists()
+  if oldest_ready_at is None:
+    oldest_ready_at = (
+      ReadyExecution.objects.using(alias)
+      .filter(job__backend_name=backend_alias, queue_name=queue_name)
+      .aggregate(oldest=Min("job__created_at"))["oldest"]
+    )
+  if oldest_scheduled_at is None:
+    oldest_scheduled_at = (
+      ScheduledExecution.objects.using(alias)
+      .filter(job__backend_name=backend_alias, queue_name=queue_name)
+      .aggregate(oldest=Min("scheduled_at"))["oldest"]
+    )
+  if oldest_blocked_at is None:
+    oldest_blocked_at = (
+      BlockedExecution.objects.using(alias)
+      .filter(job__backend_name=backend_alias, queue_name=queue_name)
+      .aggregate(oldest=Min("expires_at"))["oldest"]
+    )
+  if live_workers is None:
+    live_workers = [
+      process
+      for process in Process.objects.using(alias).filter(kind="Worker")
+      if process.last_heartbeat_at >= process_cutoff
+    ]
+
+  latency_seconds = None
+  if oldest_ready_at is not None and paused is False:
+    latency_seconds = max((now - oldest_ready_at).total_seconds(), 0.0)
+
+  shared_sources = []
+  if paused:
+    shared_sources.append("pause")
+  if recurring:
+    shared_sources.append("recurring task")
+
+  return {
+    "name": queue_name,
+    "ready_count": ready_count,
+    "claimed_count": claimed_count,
+    "scheduled_count": scheduled_count,
+    "blocked_count": blocked_count,
+    "failed_count": failed_count,
+    "finished_count": finished_count,
+    "paused": paused,
+    "latency_seconds": latency_seconds,
+    "oldest_scheduled_at": oldest_scheduled_at,
+    "oldest_blocked_at": oldest_blocked_at,
+    "has_backend_jobs": any(
+      (
+        ready_count,
+        claimed_count,
+        scheduled_count,
+        blocked_count,
+        failed_count,
+        finished_count,
+      )
+    ),
+    "shared_sources": tuple(shared_sources),
+    "shared_source_labels": ", ".join(shared_sources),
+    "live_worker_count": sum(
+      1
+      for worker in live_workers
+      if _queue_matches_selectors(queue_name, worker.metadata.get("queues", []))
+    ),
+  }
 
 
 def _process_rows(*, backend_alias, now, process_cutoff):
@@ -1425,12 +1517,8 @@ def _queue_state_counts(*, backend_alias, queue_name):
     backend_name=backend_alias, queue_name=queue_name
   )
   return {
-    "ready": base_queryset.filter(ready_execution__isnull=False).count(),
-    "claimed": base_queryset.filter(claimed_execution__isnull=False).count(),
-    "scheduled": base_queryset.filter(scheduled_execution__isnull=False).count(),
-    "blocked": base_queryset.filter(blocked_execution__isnull=False).count(),
-    "failed": base_queryset.filter(failed_execution__isnull=False).count(),
-    "finished": base_queryset.filter(finished_at__isnull=False).count(),
+    state: base_queryset.filter(**config["query_filter"]).count()
+    for state, config in QUEUE_STATE_CONFIG.items()
   }
 
 
@@ -1447,31 +1535,8 @@ def _jobs_for_queue_state(*, backend_alias, queue_name, state):
       "failed_execution",
     )
   )
-  if state == "ready":
-    return queryset.filter(ready_execution__isnull=False).order_by(
-      "-priority", "ready_execution__id"
-    )
-  if state == "claimed":
-    return queryset.filter(claimed_execution__isnull=False).order_by(
-      "claimed_execution__created_at", "id"
-    )
-  if state == "scheduled":
-    return queryset.filter(scheduled_execution__isnull=False).order_by(
-      "scheduled_execution__scheduled_at",
-      "-priority",
-      "scheduled_execution__id",
-    )
-  if state == "blocked":
-    return queryset.filter(blocked_execution__isnull=False).order_by(
-      "blocked_execution__expires_at",
-      "-priority",
-      "blocked_execution__id",
-    )
-  if state == "failed":
-    return queryset.filter(failed_execution__isnull=False).order_by(
-      "-failed_execution__created_at", "id"
-    )
-  return queryset.filter(finished_at__isnull=False).order_by("-finished_at", "id")
+  state_config = QUEUE_STATE_CONFIG[state]
+  return queryset.filter(**state_config["query_filter"]).order_by(*state_config["query_order"])
 
 
 def _counts_by_value(queryset, *, field_name):

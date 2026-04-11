@@ -1,0 +1,23 @@
+<section class="module djq-section" id="{{ section_id }}">
+  <div class="djq-section-banner"><h2>{{ title }}</h2></div>
+  <p class="djq-section-copy">{{ copy }}</p>
+  {% if section.rows %}
+    <div class="djq-table-wrap">
+      <table class="{{ table_class }}" id="result_list">
+        <thead>
+          <tr>
+            {% include "admin/dj_queue/_sortable_header_cells.html" with headers=section.headers num_sorted_fields=section.num_sorted_fields %}
+          </tr>
+        </thead>
+        <tbody>
+          {% include rows_template %}
+        </tbody>
+      </table>
+    </div>
+    <div class="djq-table-footer">
+      {% include "admin/dj_queue/_paginator.html" with pagination_id=pagination_id pagination_label=pagination_label pagination_required=section.pagination_required page_links=section.page_links result_count_text=section.result_count_text current_page_class="" link_role_button=True %}
+    </div>
+  {% else %}
+    <p class="djq-empty">{{ empty_text }}</p>
+  {% endif %}
+</section>

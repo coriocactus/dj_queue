@@ -1,7 +1,9 @@
 from contextlib import contextmanager, nullcontext
 import threading
+import time
 
 from django.db import close_old_connections, connections
+from django.db.utils import OperationalError
 from django.utils import timezone
 
 from dj_queue.config import load_backend_config
@@ -28,6 +30,22 @@ def _process_write_context(alias):
   if connections[alias].vendor == "sqlite":
     return _sqlite_process_write_lock
   return nullcontext()
+
+
+def sqlite_retry(operation, *, alias, timeout=1):
+  if connections[alias].vendor != "sqlite":
+    return operation()
+
+  deadline = time.monotonic() + timeout
+  while True:
+    try:
+      return operation()
+    except OperationalError as error:
+      if "locked" not in str(error).lower():
+        raise
+      if time.monotonic() >= deadline:
+        raise
+      time.sleep(0.01)
 
 
 class BaseRunner:
@@ -151,14 +169,17 @@ class BaseRunner:
   def _register_process(self):
     alias = get_database_alias(self.backend_alias)
     with _process_write_context(alias):
-      return Process.objects.using(alias).create(
-        kind=self.process_kind,
-        pid=self.pid,
-        hostname=self.hostname,
-        name=self.name,
-        metadata=self.process_metadata(),
-        supervisor=self.supervisor,
-        last_heartbeat_at=timezone.now(),
+      return sqlite_retry(
+        lambda: Process.objects.using(alias).create(
+          kind=self.process_kind,
+          pid=self.pid,
+          hostname=self.hostname,
+          name=self.name,
+          metadata=self.process_metadata(),
+          supervisor=self.supervisor,
+          last_heartbeat_at=timezone.now(),
+        ),
+        alias=alias,
       )
 
   def _deregister_process(self):
@@ -167,7 +188,9 @@ class BaseRunner:
 
     alias = get_database_alias(self.backend_alias)
     with _process_write_context(alias):
-      Process.objects.using(alias).filter(pk=self.process.pk).delete()
+      sqlite_retry(
+        lambda: Process.objects.using(alias).filter(pk=self.process.pk).delete(), alias=alias
+      )
     self.process = None
 
   def _start_heartbeat_thread(self):
@@ -191,10 +214,13 @@ class BaseRunner:
       try:
         with app_executor():
           with _process_write_context(alias):
-            updated = (
-              Process.objects.using(alias)
-              .filter(pk=self.process.pk)
-              .update(last_heartbeat_at=timezone.now())
+            updated = sqlite_retry(
+              lambda: (
+                Process.objects.using(alias)
+                .filter(pk=self.process.pk)
+                .update(last_heartbeat_at=timezone.now())
+              ),
+              alias=alias,
             )
       except Exception as error:
         handle_thread_error(

@@ -1,0 +1,14 @@
+{% for process in section.rows %}
+  <tr class="{% cycle 'row1' 'row2' %}{% if process.is_group_head %} djq-process-row-group{% endif %}{% if process.is_child %} djq-process-row-child{% endif %}">
+    <th class="djq-col-name">
+      {{ process.name }}
+      {% if process.is_child %}<span class="djq-process-meta">under {{ process.group_parent_name }}</span>{% endif %}
+    </th>
+    <td>{{ process.kind }}</td>
+    <td><span class="{% if process.is_live %}djq-status-live{% else %}djq-status-stale{% endif %}">{% if process.is_live %}live{% else %}stale{% endif %}</span></td>
+    <td>{{ process.last_heartbeat_at|date:"Y-m-d H:i:s" }} ({{ process.heartbeat_age_seconds|floatformat:1 }}s ago)</td>
+    <td>{{ process.hostname }}</td>
+    <td>{{ process.pid }}</td>
+    <td class="djq-col-metadata"><code>{{ process.metadata_json }}</code></td>
+  </tr>
+{% endfor %}

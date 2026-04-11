@@ -221,20 +221,7 @@
                 <span><strong>Paused:</strong> {{ queue_paused|yesno:"yes,no" }}</span>
               </div>
               <div class="queue-toolbar-actions">
-                <form method="post" action="{% url 'admin:dj_queue_dashboard_queue_action' queue_name %}">
-                  {% csrf_token %}
-                  <input type="hidden" name="backend" value="{{ backend_alias }}">
-                  <input type="hidden" name="next" value="{{ request.get_full_path }}">
-                  <input type="hidden" name="action" value="{% if queue_paused %}resume{% else %}pause{% endif %}">
-                  <button type="submit" class="{% if queue_paused %}queue-button-resume{% else %}queue-button-pause{% endif %}">{% if queue_paused %}resume{% else %}pause{% endif %}</button>
-                </form>
-                <form method="post" action="{% url 'admin:dj_queue_dashboard_queue_action' queue_name %}">
-                  {% csrf_token %}
-                  <input type="hidden" name="backend" value="{{ backend_alias }}">
-                  <input type="hidden" name="next" value="{{ request.get_full_path }}">
-                  <input type="hidden" name="action" value="clear">
-                  <button type="submit">clear ready</button>
-                </form>
+                {% include "admin/dj_queue/_queue_controls.html" with queue_name=queue_name backend_alias=backend_alias next_url=request.get_full_path paused=queue_paused show_clear=True pause_toggle_pause_class="queue-button-pause" pause_toggle_resume_class="queue-button-resume" clear_button_class="" controls_class="queue-toolbar-actions" %}
               </div>
             </div>
             {% if raw_links %}
@@ -294,19 +281,7 @@
                           <div class="clear"></div>
                         </th>
                       {% endif %}
-                      {% for header in table_headers %}
-                        <th scope="col"{{ header.class_attrib|safe }}>
-                          {% if header.sortable and header.sorted %}
-                            <div class="sortoptions">
-                              <a class="sortremove" href="{{ header.url_remove }}" title="Remove from sorting"></a>
-                              {% if header.sort_priority %}<span class="sortpriority" title="Sorting priority: {{ header.sort_priority }}">{{ header.sort_priority }}</span>{% endif %}
-                              <a href="{{ header.url_toggle }}" class="toggle {{ header.ascending|yesno:'ascending,descending' }}" title="Toggle sorting"></a>
-                            </div>
-                          {% endif %}
-                          <div class="text"><a role="button" href="{{ header.url_primary }}">{{ header.text|capfirst }}</a></div>
-                          <div class="clear"></div>
-                        </th>
-                      {% endfor %}
+                      {% include "admin/dj_queue/_sortable_header_cells.html" with headers=table_headers num_sorted_fields=queue_num_sorted_fields %}
                     </tr>
                   </thead>
                   <tbody>
@@ -346,25 +321,7 @@
             {% endif %}
 
             <div class="changelist-footer">
-              <nav class="paginator" aria-labelledby="pagination">
-                <h2 id="pagination" class="visually-hidden">Pagination jobs</h2>
-                {% if page_links %}
-                  <ul>
-                    {% for link in page_links %}
-                      <li>
-                        {% if link.is_ellipsis %}
-                          {{ link.label }}
-                        {% elif link.is_current %}
-                          <span class="this-page">{{ link.number }}</span>
-                        {% else %}
-                          <a href="{{ link.url }}">{{ link.number }}</a>
-                        {% endif %}
-                      </li>
-                    {% endfor %}
-                  </ul>
-                {% endif %}
-                {{ result_count_text }}
-              </nav>
+              {% include "admin/dj_queue/_paginator.html" with pagination_id="pagination" pagination_label="Pagination jobs" pagination_required=page_links page_links=page_links result_count_text=result_count_text current_page_class="this-page" link_role_button=False %}
             </div>
           </form>
         </div>

@@ -1,0 +1,19 @@
+<nav class="paginator" aria-labelledby="{{ pagination_id }}">
+  <h2 id="{{ pagination_id }}" class="visually-hidden">{{ pagination_label }}</h2>
+  {% if pagination_required %}
+    <ul>
+      {% for link in page_links %}
+        <li>
+          {% if link.is_ellipsis %}
+            {{ link.label }}
+          {% elif link.is_current %}
+            <span{% if current_page_class %} class="{{ current_page_class }}"{% endif %} aria-current="page">{{ link.number }}</span>
+          {% else %}
+            <a{% if link_role_button %} role="button"{% endif %} href="{{ link.url }}">{{ link.number }}</a>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+  {{ result_count_text }}
+</nav>

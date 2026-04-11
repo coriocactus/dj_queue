@@ -1,0 +1,11 @@
+{% for task in section.rows %}
+  <tr class="{% cycle 'row1' 'row2' %}">
+    <th class="djq-col-name"><a href="{{ task.jobs_url }}">{{ task.key }}</a></th>
+    <td>{{ task.task_path }}</td>
+    <td>{{ task.queue_name }}</td>
+    <td><code>{{ task.schedule }}</code></td>
+    <td>{% if task.static %}static{% else %}dynamic{% endif %}</td>
+    <td>{{ task.last_run_at|default:"-" }}</td>
+    <td>{{ task.next_run_at|default:"-" }}</td>
+  </tr>
+{% endfor %}

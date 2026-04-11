@@ -17,6 +17,7 @@ from dj_queue.config import load_backend_config
 from dj_queue import dashboard
 from dj_queue.api import QueueInfo
 from dj_queue.db import get_database_alias
+from dj_queue.exceptions import EnqueueError
 from dj_queue.models import (
   BlockedExecution,
   Dashboard,
@@ -131,48 +132,44 @@ class DashboardAdmin(admin.ModelAdmin):
     return TemplateResponse(request, "admin/dj_queue/queue_jobs.html", context)
 
   def queue_action_view(self, request, queue_name):
-    if request.method != "POST":
-      return HttpResponseNotAllowed(["POST"])
-
     backend_alias = dashboard.resolve_backend_alias(request.POST.get("backend"))
-    action = request.POST.get("action")
-    try:
-      message = dashboard.apply_queue_action(
+    return self._post_action_response(
+      request,
+      operation=lambda: dashboard.apply_queue_action(
         backend_alias=backend_alias,
         queue_name=queue_name,
-        action=action,
-      )
-    except ValueError as exc:
-      self.message_user(request, str(exc), level=messages.ERROR)
-    else:
-      self.message_user(request, message, level=messages.SUCCESS)
-    return self._redirect(
-      request, self._queue_url(backend_alias=backend_alias, queue_name=queue_name)
+        action=request.POST.get("action"),
+      ),
+      fallback_url=self._queue_url(backend_alias=backend_alias, queue_name=queue_name),
     )
 
   def job_action_view(self, request, queue_name):
-    if request.method != "POST":
-      return HttpResponseNotAllowed(["POST"])
-
     backend_alias = dashboard.resolve_backend_alias(request.POST.get("backend"))
     state = request.POST.get("state", "ready")
-    job_ids = [job_id for job_id in request.POST.getlist("job_ids") if job_id]
-    try:
-      message = dashboard.apply_job_action(
+    return self._post_action_response(
+      request,
+      operation=lambda: dashboard.apply_job_action(
         backend_alias=backend_alias,
         queue_name=queue_name,
         state=state,
         action=request.POST.get("action"),
-        job_ids=job_ids,
-      )
+        job_ids=[job_id for job_id in request.POST.getlist("job_ids") if job_id],
+      ),
+      fallback_url=self._queue_url(
+        backend_alias=backend_alias, queue_name=queue_name, state=state
+      ),
+    )
+
+  def _post_action_response(self, request, operation, fallback_url):
+    if request.method != "POST":
+      return HttpResponseNotAllowed(["POST"])
+    try:
+      message = operation()
     except ValueError as exc:
       self.message_user(request, str(exc), level=messages.ERROR)
     else:
       self.message_user(request, message, level=messages.SUCCESS)
-    return self._redirect(
-      request,
-      self._queue_url(backend_alias=backend_alias, queue_name=queue_name, state=state),
-    )
+    return self._redirect(request, fallback_url)
 
   def _redirect(self, request, fallback_url):
     next_url = request.POST.get("next")
@@ -294,6 +291,12 @@ class HiddenSidebarAdminMixin:
 
   def handle_change_action(self, request, obj, action):
     return HttpResponseRedirect(request.get_full_path())
+
+  def _change_redirect(self, *, object_id, backend_alias):
+    return HttpResponseRedirect(self._change_url(object_id=object_id, backend_alias=backend_alias))
+
+  def _current_object_redirect(self, obj, *, backend_alias):
+    return self._change_redirect(object_id=obj.pk, backend_alias=backend_alias)
 
   def _change_url(self, *, object_id, backend_alias):
     url = reverse(
@@ -501,11 +504,9 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     if action == "enqueue":
       try:
         new_job = enqueue_job_again(obj.pk, backend_alias=obj.backend_name)
-      except Exception as exc:
+      except (EnqueueError, ImportError, AttributeError) as exc:
         self.message_user(request, f"Could not enqueue job: {exc}", level=messages.ERROR)
-        return HttpResponseRedirect(
-          self._change_url(object_id=obj.pk, backend_alias=obj.backend_name)
-        )
+        return self._current_object_redirect(obj, backend_alias=obj.backend_name)
 
       self.message_user(
         request,
@@ -516,29 +517,23 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
         ),
         level=messages.SUCCESS,
       )
-      return HttpResponseRedirect(
-        self._change_url(object_id=obj.pk, backend_alias=obj.backend_name)
-      )
+      return self._current_object_redirect(obj, backend_alias=obj.backend_name)
 
     if obj.status != "failed":
       self.message_user(request, "This job is not failed", level=messages.ERROR)
-      return HttpResponseRedirect(
-        self._change_url(object_id=obj.pk, backend_alias=obj.backend_name)
-      )
+      return self._current_object_redirect(obj, backend_alias=obj.backend_name)
 
     if action == "retry":
       obj.failed_execution.retry()
       self.message_user(request, "Retried failed job", level=messages.SUCCESS)
-      return HttpResponseRedirect(
-        self._change_url(object_id=obj.pk, backend_alias=obj.backend_name)
-      )
+      return self._current_object_redirect(obj, backend_alias=obj.backend_name)
 
     if action == "discard":
       obj.failed_execution.discard()
       self.message_user(request, "Discarded failed job", level=messages.SUCCESS)
       return HttpResponseRedirect(self._changelist_url(backend_alias=obj.backend_name))
 
-    return HttpResponseRedirect(self._change_url(object_id=obj.pk, backend_alias=obj.backend_name))
+    return self._current_object_redirect(obj, backend_alias=obj.backend_name)
 
 
 @admin.register(FailedExecution)
@@ -594,7 +589,7 @@ class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
       self.message_user(request, "Discarded failed job", level=messages.SUCCESS)
       return HttpResponseRedirect(self._changelist_url(backend_alias=backend_alias))
 
-    return HttpResponseRedirect(self._change_url(object_id=obj.pk, backend_alias=backend_alias))
+    return self._current_object_redirect(obj, backend_alias=backend_alias)
 
 
 @admin.register(Process)
@@ -687,7 +682,7 @@ class PauseAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
       )
       return HttpResponseRedirect(self._changelist_url(backend_alias=backend_alias))
 
-    return HttpResponseRedirect(self._change_url(object_id=obj.pk, backend_alias=backend_alias))
+    return self._current_object_redirect(obj, backend_alias=backend_alias)
 
 
 @admin.register(Semaphore)

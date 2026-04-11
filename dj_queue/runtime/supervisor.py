@@ -167,6 +167,8 @@ class AsyncSupervisor(Supervisor):
     super().__init__(*args, **kwargs)
     self.runners = []
     self.runner_threads = []
+    self._graceful_shutdown_requested = False
+    self._exit_fn = os._exit
 
   def start(self):
     process = super().start()
@@ -181,14 +183,35 @@ class AsyncSupervisor(Supervisor):
       runner.request_stop()
     for thread in self.runner_threads:
       thread.join(timeout=1)
-    for runner in self.runners:
-      runner.stop()
-    self.runners.clear()
-    self.runner_threads.clear()
+
+    active_runners = []
+    active_threads = []
+    for index, runner in enumerate(self.runners):
+      thread = self.runner_threads[index] if index < len(self.runner_threads) else None
+      drained = runner.stop()
+      if drained is False:
+        active_runners.append(runner)
+        if thread is not None:
+          active_threads.append(thread)
+    self.runners = active_runners
+    self.runner_threads = active_threads
     return super().stop()
 
   def register_signal_handlers(self):
-    return None
+    signal.signal(signal.SIGTERM, self.handle_sigterm)
+    signal.signal(signal.SIGINT, self.handle_sigterm)
+    signal.signal(signal.SIGQUIT, self.handle_sigquit)
+
+  def handle_sigterm(self, *_args):
+    if self._graceful_shutdown_requested:
+      return False
+
+    self._graceful_shutdown_requested = True
+    self.stop()
+    return True
+
+  def handle_sigquit(self, *_args):
+    self._exit_fn(1)
 
   def start_runners(self):
     if self.runners:
@@ -233,6 +256,8 @@ class AsyncSupervisor(Supervisor):
         )
         replacement = self._rebuild_runner(runner)
         self._replace_runner(runner, replacement)
+        if self._stop_event.is_set():
+          return
         runner = replacement
         runner.start()
     finally:

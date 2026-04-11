@@ -1,6 +1,7 @@
 from datetime import timedelta
 import time
 import threading
+import signal
 from uuid import uuid4
 
 import pytest
@@ -383,6 +384,81 @@ def test_embedded_async_supervisor_does_not_register_signal_handlers(monkeypatch
   wait_until(lambda: Process.objects.filter(supervisor=process).count() == 2)
   assert called == []
   supervisor.stop()
+
+
+def test_standalone_async_supervisor_registers_signal_handlers(monkeypatch):
+  supervisor = build_async_supervisor(tasks_settings=async_tasks_settings(), standalone=True)
+  registered = []
+
+  monkeypatch.setattr(signal, "signal", lambda sig, handler: registered.append((sig, handler)))
+  process = supervisor.start()
+
+  try:
+    wait_until(lambda: Process.objects.filter(supervisor=process).count() == 2)
+    assert [sig for sig, _handler in registered] == [signal.SIGTERM, signal.SIGINT, signal.SIGQUIT]
+  finally:
+    supervisor.stop()
+
+
+def test_async_supervisor_sigterm_is_idempotent():
+  supervisor = build_async_supervisor(tasks_settings=async_tasks_settings(), standalone=True)
+  process = supervisor.start()
+
+  try:
+    wait_until(lambda: Process.objects.filter(supervisor=process).count() == 2)
+    first = supervisor.handle_sigterm()
+    second = supervisor.handle_sigterm()
+  finally:
+    supervisor.stop()
+
+  assert first is True
+  assert second is False
+  assert Process.objects.filter(supervisor=process).exists() is False
+
+
+def test_async_supervisor_sigquit_takes_immediate_exit_path():
+  exited = []
+  supervisor = build_async_supervisor(tasks_settings=async_tasks_settings(), standalone=True)
+  supervisor._exit_fn = lambda code: exited.append(code)
+
+  supervisor.handle_sigquit()
+
+  assert exited == [1]
+
+
+def test_async_supervisor_stop_preserves_undrained_worker_until_work_finishes(monkeypatch):
+  release = threading.Event()
+  finished = threading.Event()
+  tasks_settings = async_tasks_settings(dispatchers=[])
+  tasks_settings["default"]["OPTIONS"]["shutdown_timeout"] = 0.01
+  supervisor = build_async_supervisor(
+    tasks_settings=tasks_settings,
+  )
+  process = supervisor.start()
+
+  try:
+    wait_until(lambda: Process.objects.filter(supervisor=process, kind="Worker").count() == 1)
+
+    worker = supervisor.runners[0]
+    worker_process_pk = worker.process.pk
+
+    def blocking_job(job_id):
+      try:
+        release.wait()
+      finally:
+        finished.set()
+
+    monkeypatch.setattr(worker, "_execute_job", blocking_job)
+
+    worker.pool.submit(worker._execute_job, "slow-job")
+
+    supervisor.stop()
+
+    assert Process.objects.filter(pk=worker_process_pk).exists() is True
+  finally:
+    release.set()
+    wait_until(finished.is_set)
+    wait_until(lambda: Process.objects.filter(supervisor=process, kind="Worker").exists() is False)
 
 
 def test_fork_supervisor_starts_configured_children():

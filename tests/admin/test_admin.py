@@ -22,6 +22,14 @@ from dj_queue.models import (
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
+def assert_readonly_change_view_chrome(content, *, has_submit_row):
+  assert '<ul class="object-tools">' not in content
+  assert ('<div class="submit-row">' in content) is has_submit_row
+  assert ">History<" not in content
+  assert "Save and continue editing" not in content
+  assert 'value="Save"' not in content
+
+
 def make_job(**overrides):
   payload = {
     "args": list(overrides.pop("args", [])),
@@ -212,15 +220,11 @@ def test_failed_execution_change_view_shows_retry_and_discard_actions(admin_clie
 
   assert response.status_code == 200
   content = response.content.decode()
-  assert '<ul class="object-tools">' not in content
-  assert '<div class="submit-row">' in content
+  assert_readonly_change_view_chrome(content, has_submit_row=True)
   assert 'name="_djq_object_action" value="retry"' in content
   assert 'name="_djq_object_action" value="discard"' in content
   assert "Retry failed job" in content
   assert "Discard failed job" in content
-  assert ">History<" not in content
-  assert "Save and continue editing" not in content
-  assert 'value="Save"' not in content
 
 
 def test_failed_execution_change_view_retry_action(admin_client):
@@ -360,17 +364,13 @@ def test_job_change_view_shows_enqueue_retry_and_discard_actions_for_failed_jobs
 
   assert response.status_code == 200
   content = response.content.decode()
-  assert '<ul class="object-tools">' not in content
-  assert '<div class="submit-row">' in content
+  assert_readonly_change_view_chrome(content, has_submit_row=True)
   assert 'name="_djq_object_action" value="enqueue"' in content
   assert 'name="_djq_object_action" value="retry"' in content
   assert 'name="_djq_object_action" value="discard"' in content
   assert "Enqueue job" in content
   assert "Retry failed job" in content
   assert "Discard failed job" in content
-  assert ">History<" not in content
-  assert "Save and continue editing" not in content
-  assert 'value="Save"' not in content
 
 
 def test_job_change_view_shows_enqueue_action_for_non_failed_jobs(admin_client):
@@ -383,14 +383,10 @@ def test_job_change_view_shows_enqueue_action_for_non_failed_jobs(admin_client):
 
   assert response.status_code == 200
   content = response.content.decode()
-  assert '<ul class="object-tools">' not in content
-  assert '<div class="submit-row">' in content
+  assert_readonly_change_view_chrome(content, has_submit_row=True)
   assert 'name="_djq_object_action" value="enqueue"' in content
   assert 'name="_djq_object_action" value="retry"' not in content
   assert 'name="_djq_object_action" value="discard"' not in content
-  assert ">History<" not in content
-  assert "Save and continue editing" not in content
-  assert 'value="Save"' not in content
 
 
 def test_process_change_view_hides_save_controls(admin_client):
@@ -403,11 +399,7 @@ def test_process_change_view_hides_save_controls(admin_client):
 
   assert response.status_code == 200
   content = response.content.decode()
-  assert '<ul class="object-tools">' not in content
-  assert '<div class="submit-row">' not in content
-  assert ">History<" not in content
-  assert "Save and continue editing" not in content
-  assert 'value="Save"' not in content
+  assert_readonly_change_view_chrome(content, has_submit_row=False)
 
 
 def test_pause_change_view_shows_resume_action(admin_client):
@@ -420,12 +412,9 @@ def test_pause_change_view_shows_resume_action(admin_client):
 
   assert response.status_code == 200
   content = response.content.decode()
-  assert '<div class="submit-row">' in content
+  assert_readonly_change_view_chrome(content, has_submit_row=True)
   assert 'name="_djq_object_action" value="resume"' in content
   assert "Resume queue" in content
-  assert ">History<" not in content
-  assert "Save and continue editing" not in content
-  assert 'value="Save"' not in content
 
 
 def test_pause_change_view_resume_action(admin_client):
