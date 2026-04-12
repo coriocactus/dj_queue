@@ -238,7 +238,6 @@ from django.utils import timezone  # noqa: E402
 from dj_queue.contrib.asgi import DjQueueLifespan  # noqa: E402
 from dj_queue.models import (  # noqa: E402
   BlockedExecution,
-  ClaimedExecution,
   FailedExecution,
   Job,
   Pause,
@@ -347,6 +346,7 @@ def bootstrap():
   if not ARGS.no_seed:
     seed_demo_data()
     assert_seed_demo_data_uses_importable_demo_task_paths()
+    assert_seed_demo_data_keeps_alpha_queue_ready_until_manual_unpause()
     assert_seeded_process_heartbeat_middleware_refreshes_dashboard_rows()
 
 
@@ -427,6 +427,22 @@ def assert_seeded_process_heartbeat_middleware_refreshes_dashboard_rows():
   assert all(last_heartbeat_at >= request_started_at for last_heartbeat_at in refreshed)
 
 
+def assert_seed_demo_data_keeps_alpha_queue_ready_until_manual_unpause():
+  alpha_ready_jobs = list(
+    ReadyExecution.objects.filter(queue_name="alpha-demo")
+    .select_related("job")
+    .order_by("-priority", "job_id")
+  )
+
+  assert [row.job.task_path for row in alpha_ready_jobs] == [
+    "tests.tasks.sleep_for",
+    "demo.tasks.refresh_customer_cache",
+    "demo.tasks.generate_statement_pdf",
+  ]
+  assert alpha_ready_jobs[0].job.payload == {"args": [90], "kwargs": {}}
+  assert Job.objects.filter(queue_name="alpha-demo", claimed_execution__isnull=False).count() == 0
+
+
 # ---------------------------------------------------------------------------
 # Demo Data
 # ---------------------------------------------------------------------------
@@ -491,7 +507,7 @@ def seed_demo_data():
     supervisor=dashboard_supervisor,
     last_heartbeat_at=now,
   )
-  alpha_worker = Process.objects.create(
+  Process.objects.create(
     kind="Worker",
     pid=9104,
     hostname="dashboard.local",
@@ -590,6 +606,7 @@ def seed_demo_data():
     )
 
   for priority, task_path in (
+    (25, "tests.tasks.sleep_for"),
     (20, "demo.tasks.refresh_customer_cache"),
     (5, "demo.tasks.generate_statement_pdf"),
   ):
@@ -597,21 +614,13 @@ def seed_demo_data():
       queue_name="alpha-demo",
       priority=priority,
       task_path=task_path,
-      args=["acct_42"],
+      args=[90] if task_path == "tests.tasks.sleep_for" else ["acct_42"],
     )
     ReadyExecution.objects.create(
       job=ready_job,
       queue_name=ready_job.queue_name,
       priority=ready_job.priority,
     )
-
-  claimed_job = make_job(
-    queue_name="alpha-demo",
-    priority=12,
-    task_path="demo.tasks.build_account_snapshot",
-    args=["acct_42"],
-  )
-  ClaimedExecution.objects.create(job=claimed_job, process=alpha_worker)
 
   scheduled_job = make_job(
     queue_name="alpha-demo",
@@ -826,6 +835,7 @@ def enqueue_burst(_request):
 def reset_seed(_request):
   seed_demo_data()
   assert_seed_demo_data_uses_importable_demo_task_paths()
+  assert_seed_demo_data_keeps_alpha_queue_ready_until_manual_unpause()
   assert_seeded_process_heartbeat_middleware_refreshes_dashboard_rows()
   return JsonResponse({"seeded": True, "job_count": Job.objects.count()})
 
