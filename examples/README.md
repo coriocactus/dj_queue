@@ -51,15 +51,15 @@ DB_BACKEND=mariadb examples/ex01_basic_enqueue.py
 
 ## Demo Server
 
-`bin/dev_admin.py` launches a development server with the Django admin,
+`bin/admin.py` launches a development server with the Django admin,
 an embedded `demo` backend worker, and seeded demo data:
 
 ```bash
-bin/dev_admin.py                    # sqlite, http://127.0.0.1:17777/admin/
-bin/dev_admin.py --port 8000        # custom port
-bin/dev_admin.py --no-seed          # keep existing rows instead of reseeding
-bin/dev_admin.py --no-reload        # disable code reload
-bin/dev_admin.py --login-required   # restore the normal admin login screen
+bin/admin.py                    # sqlite, http://127.0.0.1:17777/admin/
+bin/admin.py --port 8000        # custom port
+bin/admin.py --no-seed          # keep existing rows instead of reseeding
+bin/admin.py --no-reload        # disable code reload
+bin/admin.py --login-required   # restore the normal admin login screen
 ```
 
 The dev server auto-signs in to admin as `admin` by default. Use

@@ -125,8 +125,8 @@ if not settings.configured:
       "django.contrib.sessions.middleware.SessionMiddleware",
       "django.middleware.csrf.CsrfViewMiddleware",
       "django.contrib.auth.middleware.AuthenticationMiddleware",
-      "bin.dev_admin.SeededProcessHeartbeatMiddleware",
-      *(["bin.dev_admin.AutoLoginMiddleware"] if ARGS.auto_login else []),
+      "bin.admin.SeededProcessHeartbeatMiddleware",
+      *(["bin.admin.AutoLoginMiddleware"] if ARGS.auto_login else []),
       "django.contrib.messages.middleware.MessageMiddleware",
       "django.middleware.clickjacking.XFrameOptionsMiddleware",
     ],
@@ -877,7 +877,7 @@ def main():
     print(f"login: {ARGS.username} / {ARGS.password}")
   if ARGS.reload:
     uvicorn.run(
-      "bin.dev_admin:application",
+      "bin.admin:application",
       host=ARGS.host,
       port=ARGS.port,
       lifespan="on",
