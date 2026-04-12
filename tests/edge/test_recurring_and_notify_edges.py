@@ -6,7 +6,13 @@ from django.utils import timezone
 
 from dj_queue.api import unschedule_recurring_task
 from dj_queue.models import Job, RecurringExecution, RecurringTask
-from dj_queue.runtime.notify import NoopWakeupBackend, NotifyWakeupBackend, build_wakeup_backend
+from dj_queue.runtime.notify import (
+  NoopWakeupBackend,
+  NotifyWakeupBackend,
+  READY_PAYLOAD,
+  build_wakeup_backend,
+  notify_ready_queues,
+)
 from dj_queue.runtime.scheduler import Scheduler, _latest_run_at
 
 
@@ -173,3 +179,20 @@ def test_notify_watcher_shutdown_is_clean():
 
   assert watcher is not None
   assert watcher.is_alive() is False
+
+
+def test_notify_ready_queues_sends_one_generic_wakeup(monkeypatch):
+  sent = []
+
+  monkeypatch.setattr("dj_queue.runtime.notify.supports_listen_notify", lambda alias: True)
+  monkeypatch.setattr(
+    "dj_queue.runtime.notify.get_database_alias", lambda backend_alias: "default"
+  )
+  monkeypatch.setattr(
+    "dj_queue.runtime.notify._notify",
+    lambda channel, payload, *, backend_alias: sent.append((channel, payload, backend_alias)),
+  )
+
+  notify_ready_queues(("alpha", "alpha", "beta"), backend_alias="default")
+
+  assert sent == [("dj_queue_ready", READY_PAYLOAD, "default")]

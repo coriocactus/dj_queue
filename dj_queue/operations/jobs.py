@@ -225,8 +225,11 @@ def claim_ready_jobs(
 
     jobs = [row.job for row in ready_rows]
     ReadyExecution.objects.using(alias).filter(pk__in=[row.pk for row in ready_rows]).delete()
-    for job in jobs:
-      ClaimedExecution.objects.using(alias).create(job=job, process=process)
+    _bulk_create(
+      alias,
+      ClaimedExecution,
+      [ClaimedExecution(job=job, process=process) for job in jobs],
+    )
 
   for job in jobs:
     log_event("job.claimed", job_id=str(job.id), queue_name=job.queue_name, priority=job.priority)

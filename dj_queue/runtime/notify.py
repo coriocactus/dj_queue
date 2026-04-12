@@ -7,6 +7,7 @@ from dj_queue.db import get_database_alias, supports_listen_notify
 from dj_queue.runtime.errors import handle_thread_error
 
 READY_CHANNEL = "dj_queue_ready"
+READY_PAYLOAD = "ready"
 
 
 class NoopWakeupBackend:
@@ -97,8 +98,7 @@ def notify_ready_queues(queue_names, *, backend_alias="default"):
   if not supports_listen_notify(alias):
     return None
 
-  for queue_name in queue_names:
-    _notify(READY_CHANNEL, queue_name, backend_alias=backend_alias)
+  _notify(READY_CHANNEL, READY_PAYLOAD, backend_alias=backend_alias)
   return None
 
 

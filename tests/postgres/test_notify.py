@@ -8,6 +8,7 @@ from dj_queue.models import Job
 from dj_queue.runtime.notify import (
   NoopWakeupBackend,
   NotifyWakeupBackend,
+  READY_PAYLOAD,
   build_wakeup_backend,
   notify_ready_queues,
 )
@@ -78,7 +79,7 @@ def test_enqueue_ready_job_sends_ready_notify(monkeypatch):
 
   echo.enqueue("notify")
 
-  assert seen == [("dj_queue_ready", "default", "default")]
+  assert seen == [("dj_queue_ready", READY_PAYLOAD, "default")]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -92,7 +93,7 @@ def test_dispatcher_ready_promotion_sends_ready_notify(monkeypatch):
 
   notify_ready_queues(("default",), backend_alias="default")
 
-  assert seen == [("dj_queue_ready", "default", "default")]
+  assert seen == [("dj_queue_ready", READY_PAYLOAD, "default")]
 
 
 @pytest.mark.django_db(transaction=True)

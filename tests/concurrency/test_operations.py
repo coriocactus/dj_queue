@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from dj_queue.models import (
   BlockedExecution,
+  ClaimedExecution,
   FailedExecution,
   Job,
   Pause,
@@ -244,6 +245,19 @@ def test_queue_selector_exact_prefix_and_star_ordering():
   claimed_jobs = claim_ready_jobs(limit=3, queues=("alpha", "mail*", "*"))
 
   assert [str(job.id) for job in claimed_jobs] == [alpha.id, mail.id, default.id]
+
+
+@pytest.mark.django_db
+def test_claim_ready_jobs_bulk_inserts_claimed_rows_for_full_batch():
+  jobs = [make_job(args=[index]) for index in range(3)]
+  for job in jobs:
+    ReadyExecution.objects.create(job=job, queue_name=job.queue_name, priority=job.priority)
+
+  claimed_jobs = claim_ready_jobs(limit=3)
+
+  assert [job.id for job in claimed_jobs] == [jobs[0].id, jobs[1].id, jobs[2].id]
+  assert ClaimedExecution.objects.count() == 3
+  assert ReadyExecution.objects.count() == 0
 
 
 @pytest.mark.django_db
