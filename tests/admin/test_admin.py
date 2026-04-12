@@ -515,6 +515,22 @@ def test_process_admin_displays_metadata(admin_client):
   assert "threads" in content
 
 
+def test_raw_admin_changelist_timestamps_use_compact_format(admin_client):
+  job = make_job()
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_job_changelist"),
+    {"backend": "default"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  expected = timezone.localtime(job.created_at).strftime("%Y-%m-%d %H:%M:%S")
+  assert expected in content
+  assert "a.m." not in content
+  assert "p.m." not in content
+
+
 def test_process_admin_status_filter(admin_client):
   now = timezone.now()
   live = make_process(name="live-worker", last_heartbeat_at=now)
@@ -633,6 +649,30 @@ def test_recurring_task_change_view_unschedule_action(admin_client):
   messages = list(response.context["messages"])
   assert len(messages) == 1
   assert messages[0].message == "Unscheduled recurring task"
+
+
+def test_raw_admin_change_view_timestamps_use_compact_format(admin_client):
+  task = RecurringTask.objects.create(
+    key="nightly",
+    task_path="tests.tasks.echo",
+    payload={"args": [], "kwargs": {}},
+    schedule="0 0 * * *",
+    queue_name="reports",
+    priority=0,
+    static=False,
+  )
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_recurringtask_change", args=[task.pk]),
+    {"backend": "default"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert timezone.localtime(task.created_at).strftime("%Y-%m-%d %H:%M:%S") in content
+  assert timezone.localtime(task.updated_at).strftime("%Y-%m-%d %H:%M:%S") in content
+  assert "a.m." not in content
+  assert "p.m." not in content
 
 
 def test_recurring_task_change_view_unschedule_action_rejects_static_task(admin_client):

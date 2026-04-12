@@ -574,6 +574,32 @@ def test_dashboard_recurring_key_links_to_raw_jobs(admin_client):
   )
 
 
+def test_dashboard_recurring_timestamps_use_compact_format(admin_client):
+  now = timezone.now().replace(microsecond=0)
+  task = RecurringTask.objects.create(
+    key="nightly",
+    task_path="tests.tasks.echo",
+    payload={"args": [], "kwargs": {}},
+    schedule="0 0 * * *",
+    queue_name="default",
+    priority=0,
+    static=False,
+  )
+  RecurringExecution.objects.create(job=None, task_key=task.key, run_at=now)
+
+  response = admin_client.get(reverse("admin:dj_queue_dashboard_changelist"))
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert timezone.localtime(now).strftime("%Y-%m-%d %H:%M:%S") in content
+  expected_next_run = timezone.localtime(dashboard._next_run_at(task.schedule, now)).strftime(
+    "%Y-%m-%d %H:%M:%S"
+  )
+  assert expected_next_run in content
+  assert "a.m." not in content
+  assert "p.m." not in content
+
+
 def test_dashboard_semaphore_key_links_to_raw_jobs(admin_client):
   Semaphore.objects.create(
     key="acct:1",

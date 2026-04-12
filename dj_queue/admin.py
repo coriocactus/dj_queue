@@ -55,6 +55,12 @@ class DjQueueFirstAdminSite(admin.AdminSite):
 admin.site.__class__ = DjQueueFirstAdminSite
 
 
+def _format_admin_datetime(value):
+  if value is None:
+    return None
+  return timezone.template_localtime(value).strftime("%Y-%m-%d %H:%M:%S")
+
+
 @admin.register(Dashboard)
 class DashboardAdmin(admin.ModelAdmin):
   def has_add_permission(self, request):
@@ -423,7 +429,14 @@ class ProcessStatusListFilter(admin.SimpleListFilter):
 class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   backend_filter_field = "backend_name"
   ignored_filter_params = ("backend_name",)
-  list_display = ("id", "task_path", "queue_name_link", "priority", "display_status", "created_at")
+  list_display = (
+    "id",
+    "task_path",
+    "queue_name_link",
+    "priority",
+    "display_status",
+    "display_created_at",
+  )
   list_filter = (
     "queue_name",
     JobStatusListFilter,
@@ -478,6 +491,10 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
       query["state"] = obj.status
     url = f"{reverse('admin:dj_queue_dashboard_queue', args=[obj.queue_name])}?{urlencode(query)}"
     return format_html('<a href="{}">{}</a>', url, obj.queue_name)
+
+  @admin.display(description="created at", ordering="created_at")
+  def display_created_at(self, obj):
+    return _format_admin_datetime(obj.created_at)
 
   def get_change_actions(self, request, obj):
     if obj is None:
@@ -540,7 +557,7 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
 class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   backend_filter_field = "job__backend_name"
   ignored_filter_params = ("job__backend_name",)
-  list_display = ("job", "exception_class", "message", "created_at")
+  list_display = ("job", "exception_class", "message", "display_created_at")
   list_filter = (
     ("job__queue_name", admin.AllValuesFieldListFilter),
     "exception_class",
@@ -561,6 +578,10 @@ class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     for execution in queryset.select_related("job"):
       discarded += execution.discard()
     self.message_user(request, f"Discarded {discarded} failed jobs", level=messages.SUCCESS)
+
+  @admin.display(description="created at", ordering="created_at")
+  def display_created_at(self, obj):
+    return _format_admin_datetime(obj.created_at)
 
   def get_change_actions(self, request, obj):
     if obj is None:
@@ -601,7 +622,7 @@ class ProcessAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     "pid",
     "hostname",
     "metadata_json",
-    "last_heartbeat_at",
+    "display_last_heartbeat_at",
   )
   list_filter = (ProcessStatusListFilter, "kind", "hostname")
   readonly_fields = (
@@ -635,6 +656,10 @@ class ProcessAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   @admin.display(description="metadata")
   def metadata_json(self, obj):
     return json.dumps(obj.metadata, sort_keys=True)
+
+  @admin.display(description="last heartbeat at", ordering="last_heartbeat_at")
+  def display_last_heartbeat_at(self, obj):
+    return _format_admin_datetime(obj.last_heartbeat_at)
 
 
 @admin.register(RecurringTask)
@@ -715,9 +740,13 @@ class RecurringTaskAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
 
 @admin.register(Pause)
 class PauseAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
-  list_display = ("queue_name", "created_at")
+  list_display = ("queue_name", "display_created_at")
   readonly_fields = ("queue_name", "created_at")
   search_fields = ("queue_name",)
+
+  @admin.display(description="created at", ordering="created_at")
+  def display_created_at(self, obj):
+    return _format_admin_datetime(obj.created_at)
 
   def get_change_actions(self, request, obj):
     if obj is None:
@@ -744,7 +773,7 @@ class PauseAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
 
 @admin.register(Semaphore)
 class SemaphoreAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
-  list_display = ("key", "value", "limit", "display_blocked_waiters", "expires_at")
+  list_display = ("key", "value", "limit", "display_blocked_waiters", "display_expires_at")
   readonly_fields = ("key", "value", "limit", "expires_at", "created_at", "updated_at")
   search_fields = ("key",)
 
@@ -768,3 +797,7 @@ class SemaphoreAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   @admin.display(description="blocked waiters", ordering="blocked_waiter_count")
   def display_blocked_waiters(self, obj):
     return obj.blocked_waiter_count
+
+  @admin.display(description="expires at", ordering="expires_at")
+  def display_expires_at(self, obj):
+    return _format_admin_datetime(obj.expires_at)

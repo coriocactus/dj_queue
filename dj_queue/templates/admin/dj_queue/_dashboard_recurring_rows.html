@@ -1,3 +1,5 @@
+{% load dj_queue_admin %}
+
 {% for task in section.rows %}
   <tr class="{% cycle 'row1' 'row2' %}">
     <th class="djq-col-name"><a href="{{ task.jobs_url }}">{{ task.key }}</a></th>
@@ -5,7 +7,7 @@
     <td>{{ task.queue_name }}</td>
     <td><code>{{ task.schedule }}</code></td>
     <td>{% if task.static %}static{% else %}dynamic{% endif %}</td>
-    <td>{{ task.last_run_at|default:"-" }}</td>
-    <td>{{ task.next_run_at|default:"-" }}</td>
+    <td>{{ task.last_run_at|djq_datetime|default:"-" }}</td>
+    <td>{{ task.next_run_at|djq_datetime|default:"-" }}</td>
   </tr>
 {% endfor %}
