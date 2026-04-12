@@ -17,7 +17,7 @@ It keeps the queue, live execution state, runtime metadata, and task results in 
 - immediate, scheduled, recurring, and concurrency-limited work
 
 `dj_queue` is inspired by Rails' [Solid Queue](https://github.com/rails/solid_queue),
-but shaped to fit Django's [task backend API](https://docs.djangoproject.com/en/6.0/topics/tasks/).
+shaped to fit Django's [task backend API](https://docs.djangoproject.com/en/6.0/topics/tasks/).
 
 ## Why dj_queue
 
