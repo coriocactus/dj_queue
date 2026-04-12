@@ -406,6 +406,29 @@ def discard_ready_jobs(*, job_ids=None, batch_size=500, backend_alias="default")
   return len(jobs)
 
 
+def discard_scheduled_jobs(*, job_ids=None, batch_size=500, backend_alias="default"):
+  alias = get_database_alias(backend_alias)
+  config = load_backend_config(backend_alias)
+
+  with transaction.atomic(using=alias):
+    queryset = ScheduledExecution.objects.using(alias).select_related("job").order_by("id")
+    if job_ids is not None:
+      queryset = queryset.filter(job_id__in=job_ids)
+    scheduled_rows = list(
+      locked_queryset(queryset, use_skip_locked=config.use_skip_locked)[:batch_size]
+    )
+    jobs = [row.job for row in scheduled_rows]
+    if not jobs:
+      return 0
+
+    Job.objects.using(alias).filter(pk__in=[job.pk for job in jobs]).delete()
+
+  for job in jobs:
+    _release_concurrency_slot(job)
+    log_event("job.discarded", job_id=str(job.id), reason="scheduled")
+  return len(jobs)
+
+
 def discard_blocked_jobs(*, job_ids=None, batch_size=500, backend_alias="default"):
   alias = get_database_alias(backend_alias)
   config = load_backend_config(backend_alias)

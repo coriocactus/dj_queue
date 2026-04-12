@@ -20,7 +20,12 @@ from dj_queue.models import (
   ScheduledExecution,
 )
 from dj_queue.operations.cleanup import clear_finished_jobs
-from dj_queue.operations.jobs import discard_failed_job, discard_ready_jobs, retry_failed_job
+from dj_queue.operations.jobs import (
+  discard_failed_job,
+  discard_ready_jobs,
+  discard_scheduled_jobs,
+  retry_failed_job,
+)
 from tests.tasks import add, async_echo, echo, limited, limited_discard
 
 
@@ -260,6 +265,25 @@ def test_discard_ready_jobs_in_batches():
   assert deleted == 2
   assert Job.objects.count() == 1
   assert ReadyExecution.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_discard_scheduled_jobs_in_batches():
+  future = timezone.now() + timedelta(minutes=5)
+  for index in range(3):
+    job = make_job(args=[index], scheduled_at=future)
+    ScheduledExecution.objects.create(
+      job=job,
+      queue_name=job.queue_name,
+      priority=job.priority,
+      scheduled_at=future,
+    )
+
+  deleted = discard_scheduled_jobs(batch_size=2)
+
+  assert deleted == 2
+  assert Job.objects.count() == 1
+  assert ScheduledExecution.objects.count() == 1
 
 
 @pytest.mark.django_db

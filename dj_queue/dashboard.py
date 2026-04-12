@@ -29,7 +29,12 @@ from dj_queue.models import (
   ScheduledExecution,
   Semaphore,
 )
-from dj_queue.operations.jobs import discard_blocked_jobs, discard_ready_jobs
+from dj_queue.operations.jobs import (
+  discard_blocked_jobs,
+  discard_ready_jobs,
+  discard_scheduled_jobs,
+  enqueue_job_again,
+)
 
 QUEUE_STATE_CONFIG = {
   "ready": {
@@ -46,7 +51,7 @@ QUEUE_STATE_CONFIG = {
   },
   "scheduled": {
     "label": "scheduled",
-    "job_actions": (),
+    "job_actions": ({"name": "discard", "label": "discard selected"},),
     "query_filter": {"scheduled_execution__isnull": False},
     "query_order": ("scheduled_execution__scheduled_at", "-priority", "scheduled_execution__id"),
   },
@@ -67,7 +72,7 @@ QUEUE_STATE_CONFIG = {
   },
   "finished": {
     "label": "finished",
-    "job_actions": (),
+    "job_actions": ({"name": "enqueue", "label": "enqueue selected again"},),
     "query_filter": {"finished_at__isnull": False},
     "query_order": ("-finished_at", "id"),
   },
@@ -532,6 +537,14 @@ def apply_job_action(*, backend_alias, queue_name, state, action, job_ids):
     )
     return f"discarded {deleted} ready jobs from {queue_name}"
 
+  if state == "scheduled" and action == "discard":
+    deleted = discard_scheduled_jobs(
+      job_ids=job_ids,
+      batch_size=max(len(job_ids), 1),
+      backend_alias=backend_alias,
+    )
+    return f"discarded {deleted} scheduled jobs from {queue_name}"
+
   if state == "blocked" and action == "discard":
     deleted = discard_blocked_jobs(
       job_ids=job_ids,
@@ -565,6 +578,20 @@ def apply_job_action(*, backend_alias, queue_name, state, action, job_ids):
     for execution in executions:
       discarded += execution.discard()
     return f"discarded {discarded} failed jobs from {queue_name}"
+
+  if state == "finished" and action == "enqueue":
+    alias = get_database_alias(backend_alias)
+    jobs = list(
+      Job.objects.using(alias).filter(
+        pk__in=job_ids,
+        backend_name=backend_alias,
+        queue_name=queue_name,
+        finished_at__isnull=False,
+      )
+    )
+    for job in jobs:
+      enqueue_job_again(job.pk, backend_alias=backend_alias)
+    return f"enqueued {len(jobs)} finished jobs again from {queue_name}"
 
   raise ValueError(f"unsupported {state!r} job action {action!r}")
 

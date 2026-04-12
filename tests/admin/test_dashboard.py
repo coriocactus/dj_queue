@@ -15,6 +15,7 @@ from dj_queue.models import (
   ReadyExecution,
   RecurringExecution,
   RecurringTask,
+  ScheduledExecution,
   Semaphore,
 )
 
@@ -59,6 +60,18 @@ def make_failed_job(**overrides):
     exception_class="builtins.ValueError",
     message="boom",
     traceback="traceback",
+  )
+  return job
+
+
+def make_scheduled_job(**overrides):
+  scheduled_at = overrides.pop("scheduled_at", timezone.now() + timedelta(minutes=5))
+  job = make_job(scheduled_at=scheduled_at, **overrides)
+  ScheduledExecution.objects.create(
+    job=job,
+    queue_name=job.queue_name,
+    priority=job.priority,
+    scheduled_at=scheduled_at,
   )
   return job
 
@@ -656,7 +669,11 @@ def test_dashboard_queue_pause_resume_and_clear_actions(admin_client, settings):
 
 def test_dashboard_queue_bulk_actions(admin_client):
   ready_job = make_ready_job(queue_name="alpha")
+  scheduled_job = make_scheduled_job(queue_name="alpha")
   failed_job = make_failed_job(queue_name="alpha")
+  finished_job = make_job(
+    queue_name="alpha", finished_at=timezone.now(), return_value={"ok": True}
+  )
   url = reverse("admin:dj_queue_dashboard_job_action", args=["alpha"])
 
   response = admin_client.post(
@@ -672,6 +689,37 @@ def test_dashboard_queue_bulk_actions(admin_client):
   assert response.status_code == 302
   assert FailedExecution.objects.filter(job_id=failed_job.pk).exists() is False
   assert Job.objects.filter(pk=failed_job.pk, ready_execution__isnull=False).exists() is True
+
+  response = admin_client.post(
+    url,
+    {
+      "backend": "default",
+      "state": "scheduled",
+      "action": "discard",
+      "_selected_action": [str(scheduled_job.pk)],
+    },
+  )
+
+  assert response.status_code == 302
+  assert Job.objects.filter(pk=scheduled_job.pk).exists() is False
+
+  response = admin_client.post(
+    url,
+    {
+      "backend": "default",
+      "state": "finished",
+      "action": "enqueue",
+      "_selected_action": [str(finished_job.pk)],
+    },
+  )
+
+  assert response.status_code == 302
+  cloned_job = Job.objects.exclude(pk__in=[ready_job.pk, failed_job.pk, finished_job.pk]).get()
+  assert cloned_job.task_path == finished_job.task_path
+  assert cloned_job.priority == finished_job.priority
+  assert cloned_job.payload == finished_job.payload
+  assert cloned_job.backend_name == finished_job.backend_name
+  assert ReadyExecution.objects.filter(job=cloned_job).exists() is True
 
   response = admin_client.post(
     url,
