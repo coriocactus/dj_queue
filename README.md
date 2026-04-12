@@ -139,9 +139,11 @@ If Django admin is installed, `dj_queue` adds an operator dashboard at
 - backend-aware dashboard and raw changelists
 - queue controls: pause, resume, clear ready
 - job detail action: enqueue a fresh copy of any stored job
+- recurring-task actions: unschedule from list and detail views
 - pause detail action: resume the paused queue from the raw pause row
 - failed-job actions: retry and discard from list and detail views
 - queue drill-down pages for state-specific inspection
+- queue drill-down actions: discard ready, scheduled, and blocked jobs; retry or discard failed jobs; enqueue finished jobs again
 
 **Dashboard overview**
 
@@ -191,8 +193,9 @@ results = process_item.get_backend().enqueue_all(
 
 ### Enqueue after commit
 
-`enqueue()` writes immediately. If a task depends on rows that are still inside
-the current transaction, use `enqueue_on_commit()`:
+`enqueue()` writes immediately and returns a real persisted task result ID. If a
+task depends on rows that are still inside the current transaction, use
+`enqueue_on_commit()`:
 
 ```python
 from django.db import transaction
@@ -203,6 +206,10 @@ with transaction.atomic():
   order = create_order()
   enqueue_on_commit(send_receipt, order.id)
 ```
+
+`dj_queue` does not defer inserts implicitly or return placeholder result IDs for
+uncommitted work. Use the helper above or `transaction.on_commit()` directly
+when the job must not exist before commit.
 
 ### Examples
 
@@ -248,14 +255,18 @@ python manage.py dj_queue --skip-recurring
 Mode and topology notes:
 
 - `fork` is the default standalone mode
-- `async` runs supervised actors in threads inside one process
+- `async` is also supported as a standalone mode and runs supervised actors in threads inside one process
 - `--only-work` starts workers without dispatchers or scheduler
 - `--only-dispatch` starts dispatchers without workers or scheduler
 - `--skip-recurring` starts without the scheduler
 
 `fork` runs each worker, dispatcher, and scheduler as a separate OS process.
 `async` runs them as threads in one process, i.e., lower memory, less isolation.
-Default is `fork`. Use `async` for embedded mode or memory-constrained environments.
+Default is `fork`. Use standalone `async` when you want one-process supervision
+with lower memory use and less isolation, or embedded `async` when `dj_queue`
+should live inside an ASGI or Gunicorn server process.
+
+In `async` mode, worker `processes > 1` is ignored and normalized to `1`.
 
 ### Claiming order
 
@@ -267,6 +278,29 @@ Default is `fork`. Use `async` for embedded mode or memory-constrained environme
 For example, a worker configured with `queues: ["email", "default"]` will
 prefer ready work from `email` before `default`, even if `default` contains
 higher-priority rows.
+
+If you combine queue order with priorities, queue selector order still wins
+across queues. Prefer one primary scheduling mechanism per worker when you can.
+
+### Signals and recovery
+
+In standalone mode, both `fork` and `async` `python manage.py dj_queue`
+supervisors own runtime signal handling:
+
+- `SIGTERM` and `SIGINT` request graceful shutdown
+- `SIGQUIT` takes the immediate hard-exit path
+- `shutdown_timeout` controls how long the runtime waits for in-flight work to drain
+- `supervisor_pidfile` can prevent duplicate standalone supervisors on one host
+
+Runners heartbeat into the queue database. If claimed work is left behind,
+`dj_queue` preserves it as failed work that operators can inspect and retry:
+
+- `ProcessExitError`: a supervised runner exited unexpectedly
+- `ProcessPrunedError`: a runner heartbeat expired and the process was pruned
+- `ProcessMissingError`: claimed work was found without its registered process
+
+Use `python manage.py dj_queue_health` to check whether any fresh runtime
+process rows exist for a backend.
 
 ## Database Support
 
@@ -291,6 +325,31 @@ must be JSON round-trippable.
 
 If you need to pass model instances, files, or custom objects, store them
 elsewhere and pass identifiers or serialized data instead.
+
+## Errors When Enqueuing
+
+`DjQueueBackend.enqueue()` raises `dj_queue.exceptions.EnqueueError` for
+backend-side validation failures instead of silently dropping work.
+
+Common reasons include:
+
+- args or kwargs are not JSON round-trippable
+- `concurrency_key` is set without `concurrency_limit`
+- `concurrency_key` cannot be resolved from the enqueue arguments
+- `concurrency_key` does not resolve to a non-empty string up to 255 chars
+- `on_conflict` is not `"block"` or `"discard"`
+
+```python
+from dj_queue.exceptions import EnqueueError
+
+try:
+  sync_account.enqueue(account_id, "refresh")
+except EnqueueError as exc:
+  handle_enqueue_error(exc)
+```
+
+Task execution errors are different: they become failed jobs and stay
+inspectable in the queue database.
 
 ## Recurring Tasks
 
@@ -347,6 +406,14 @@ config.
 The scheduler is part of the normal `dj_queue` runtime. You do not run a
 separate recurring service.
 
+Recurring notes:
+
+- schedules are cron expressions
+- only dynamic tasks can be unscheduled at runtime; unscheduling a static task returns `0`
+- Django admin exposes the same unschedule operation on recurring-task list and detail views
+- multiple schedulers sharing the same recurring config dedupe firing in the database
+- finished-job cleanup runs as internal scheduler maintenance when `preserve_finished_jobs=True` and `clear_finished_jobs_after` is set
+
 ## Concurrency Controls
 
 Tasks can opt into database-backed concurrency limits.
@@ -392,6 +459,12 @@ orders.resume()
 orders.clear()
 ```
 
+Queue control notes:
+
+- pausing a queue stops future claims, not enqueueing or already-claimed work
+- `clear()` discards ready jobs only
+- pass `backend_alias=` when you want to target a non-default `TASKS` alias
+
 Operational commands:
 
 ```bash
@@ -400,6 +473,9 @@ python manage.py dj_queue_health --max-age 120
 python manage.py dj_queue_prune --older-than 86400
 python manage.py dj_queue_prune --task-path myapp.tasks.cleanup
 ```
+
+The runtime, health, and prune commands all accept `--backend` to target a
+non-default backend alias.
 
 ## Failed Jobs
 
@@ -415,6 +491,25 @@ from dj_queue.operations.jobs import discard_failed_job, retry_failed_job
 
 retry_failed_job(job_id)
 discard_failed_job(job_id)
+```
+
+Model helpers are available too:
+
+```python
+from dj_queue.exceptions import UndiscardableError
+from dj_queue.models import ClaimedExecution, FailedExecution
+
+failed = FailedExecution.objects.get(job_id=job_id)
+failed.retry()
+failed.discard()
+
+FailedExecution.retry_all(FailedExecution.objects.order_by("job_id"))
+FailedExecution.discard_all_in_batches()
+
+try:
+  ClaimedExecution.discard_all_in_batches()
+except UndiscardableError:
+  pass
 ```
 
 Failures stay inspectable until you act on them.
@@ -533,10 +628,15 @@ Start with these options:
 - `database_alias`: database alias for queue tables and runtime activity
 - `preserve_finished_jobs` and `clear_finished_jobs_after`: result retention and cleanup
 
-Additional operational tuning is available when needed, including
-`use_skip_locked`, `listen_notify`, `silence_polling`,
-`process_heartbeat_interval`, `process_alive_threshold`, `shutdown_timeout`, and
-`on_thread_error`.
+Additional operational tuning is available when needed:
+
+- `use_skip_locked`: use `SKIP LOCKED` when the active backend supports it
+- `listen_notify`: PostgreSQL-only worker wakeup optimization layered on top of polling
+- `silence_polling`: suppress `dj_queue`'s own poll-cycle noise without mutating Django's global SQL logger
+- `process_heartbeat_interval` and `process_alive_threshold`: process liveness reporting and stale-runner detection
+- `shutdown_timeout`: graceful drain window before standalone shutdown gives up on waiting
+- `supervisor_pidfile`: optional pidfile guard for standalone supervisors
+- `on_thread_error`: dotted callback path for runtime infrastructure exceptions
 
 On PostgreSQL, `listen_notify` uses the same Django PostgreSQL driver
 configuration as the main database connection. Install a compatible driver in
@@ -606,6 +706,63 @@ Environment overrides currently supported by `dj_queue` itself:
 - `DJ_QUEUE_CONFIG`
 - `DJ_QUEUE_MODE`
 - `DJ_QUEUE_SKIP_RECURRING`
+
+## Lifecycle Hooks
+
+Register hooks before starting the runtime, typically during Django startup.
+Each callback receives the live supervisor or runner instance.
+
+```python
+from dj_queue.hooks import on_start, on_worker_start, register_hook
+
+@on_start
+def supervisor_started(process):
+  print(process.name)
+
+@on_worker_start
+def worker_started(process):
+  print(process.metadata)
+
+@register_hook("scheduler.exit")
+def scheduler_exited(process):
+  print(process.name)
+```
+
+Available hook helpers:
+
+- supervisor: `on_start`, `on_stop`, `on_exit`
+- worker: `on_worker_start`, `on_worker_stop`, `on_worker_exit`
+- dispatcher: `on_dispatcher_start`, `on_dispatcher_stop`, `on_dispatcher_exit`
+- scheduler: `on_scheduler_start`, `on_scheduler_stop`, `on_scheduler_exit`
+- generic events: `register_hook("worker.start")`, `register_hook("dispatcher.stop")`, and so on
+
+Hook notes:
+
+- hooks fire in registration order
+- hook failures do not block later hooks
+- hook failures are isolated and routed through `on_thread_error`
+
+### Runtime infrastructure errors
+
+Set `on_thread_error` to a dotted callable path when you want custom handling
+for queue-runtime exceptions:
+
+```python
+TASKS = {
+  "default": {
+    "BACKEND": "dj_queue.backend.DjQueueBackend",
+    "QUEUES": [],
+    "OPTIONS": {
+      "on_thread_error": "myapp.queue.report_runtime_error",
+    },
+  },
+}
+```
+
+The callback receives the raised exception object for background runtime issues
+such as hook failures, heartbeat failures, notify-watcher failures, and managed
+runner crashes. It is not used for exceptions raised by your task code; those
+become failed jobs instead.
 
 ## License
 
