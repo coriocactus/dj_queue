@@ -665,7 +665,7 @@ def test_dashboard_queue_bulk_actions(admin_client):
       "backend": "default",
       "state": "failed",
       "action": "retry",
-      "job_ids": [str(failed_job.pk)],
+      "_selected_action": [str(failed_job.pk)],
     },
   )
 
@@ -679,7 +679,7 @@ def test_dashboard_queue_bulk_actions(admin_client):
       "backend": "default",
       "state": "ready",
       "action": "discard",
-      "job_ids": [str(ready_job.pk)],
+      "_selected_action": [str(ready_job.pk)],
     },
   )
 
@@ -697,7 +697,7 @@ def test_dashboard_queue_bulk_actions_require_explicit_selection(admin_client):
       "backend": "default",
       "state": "ready",
       "action": "",
-      "job_ids": [str(ready_job.pk)],
+      "_selected_action": [str(ready_job.pk)],
     },
     follow=True,
   )
@@ -746,6 +746,56 @@ def test_dashboard_queue_view_uses_django_changelist_structure(admin_client):
   assert "<h1>" in content
   assert "› alpha" in content
   assert f'href="{reverse("admin:dj_queue_job_change", args=[job.pk])}?backend=default"' in content
+
+
+def test_dashboard_queue_view_includes_django_admin_action_assets(admin_client):
+  make_ready_job(queue_name="alpha")
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_dashboard_queue", args=["alpha"]),
+    {"backend": "default", "state": "ready"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert reverse("admin:jsi18n") in content
+  assert 'src="/static/admin/js/actions.js"' in content
+
+
+def test_dashboard_queue_view_uses_django_admin_action_field_names(admin_client):
+  for _ in range(3):
+    make_ready_job(queue_name="alpha")
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_dashboard_queue", args=["alpha"]),
+    {"backend": "default", "state": "ready"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert 'name="_selected_action"' in content
+  assert 'data-actions-icnt="3"' in content
+  assert 'id="action-toggle"' in content
+  assert 'class="select-across"' in content
+
+
+def test_dashboard_queue_view_exposes_scheduled_and_finished_actions(admin_client):
+  make_scheduled_job(queue_name="alpha")
+  make_job(queue_name="alpha", finished_at=timezone.now(), return_value={"ok": True})
+
+  scheduled = admin_client.get(
+    reverse("admin:dj_queue_dashboard_queue", args=["alpha"]),
+    {"backend": "default", "state": "scheduled"},
+  )
+  finished = admin_client.get(
+    reverse("admin:dj_queue_dashboard_queue", args=["alpha"]),
+    {"backend": "default", "state": "finished"},
+  )
+
+  assert scheduled.status_code == 200
+  assert '<option value="discard">discard selected</option>' in scheduled.content.decode()
+  assert finished.status_code == 200
+  assert '<option value="enqueue">enqueue selected again</option>' in finished.content.decode()
 
 
 def test_dashboard_queue_controls_use_distinct_pause_resume_styles(admin_client):

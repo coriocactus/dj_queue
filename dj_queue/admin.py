@@ -153,7 +153,7 @@ class DashboardAdmin(admin.ModelAdmin):
         queue_name=queue_name,
         state=state,
         action=request.POST.get("action"),
-        job_ids=[job_id for job_id in request.POST.getlist("job_ids") if job_id],
+        job_ids=[job_id for job_id in request.POST.getlist("_selected_action") if job_id],
       ),
       fallback_url=self._queue_url(
         backend_alias=backend_alias, queue_name=queue_name, state=state

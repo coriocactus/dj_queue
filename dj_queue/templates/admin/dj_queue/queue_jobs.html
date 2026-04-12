@@ -183,6 +183,14 @@
   </style>
 {% endblock extrastyle %}
 
+{% block extrahead %}
+  {{ block.super }}
+  {% if job_actions and jobs %}
+    <script src="{% url 'admin:jsi18n' %}"></script>
+    <script src="{% static 'admin/js/actions.js' %}" defer></script>
+  {% endif %}
+{% endblock extrahead %}
+
 {% block bodyclass %}
   {{ block.super }} app-dj_queue model-dashboard change-list
 {% endblock bodyclass %}
@@ -265,6 +273,7 @@
                     {% endfor %}
                   </select>
                 </label>
+                <input type="hidden" name="select_across" value="0" class="select-across">
                 <button type="submit" class="button" name="index" value="0">Run</button>
                 <span class="action-counter" data-actions-icnt="{{ jobs|length }}">0 of {{ jobs|length }} selected</span>
               </div>
@@ -277,7 +286,7 @@
                     <tr>
                       {% if job_actions %}
                         <th scope="col" class="action-checkbox-column">
-                          <div class="text"><span><input type="checkbox" id="action-toggle"></span></div>
+                          <div class="text"><span><input type="checkbox" id="action-toggle" aria-label="Select all objects on this page for an action"></span></div>
                           <div class="clear"></div>
                         </th>
                       {% endif %}
@@ -288,7 +297,7 @@
                     {% for job in jobs %}
                       <tr class="{% cycle 'row1' 'row2' %}">
                         {% if job_actions %}
-                          <td class="action-checkbox"><input type="checkbox" class="action-select" name="job_ids" value="{{ job.id }}"></td>
+                          <td class="action-checkbox"><input type="checkbox" class="action-select" name="_selected_action" value="{{ job.id }}"></td>
                         {% endif %}
                         <th scope="row">
                           <a href="{% url 'admin:dj_queue_job_change' job.id %}?backend={{ backend_alias }}"><code>{{ job.id }}</code></a>
