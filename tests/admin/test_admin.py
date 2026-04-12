@@ -587,6 +587,119 @@ def test_recurring_task_admin_filters(admin_client):
   assert "hourly" not in content
 
 
+def test_recurring_task_change_view_shows_unschedule_action(admin_client):
+  task = RecurringTask.objects.create(
+    key="nightly",
+    task_path="tests.tasks.echo",
+    payload={"args": [], "kwargs": {}},
+    schedule="0 0 * * *",
+    queue_name="reports",
+    priority=0,
+    static=False,
+  )
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_recurringtask_change", args=[task.pk]),
+    {"backend": "default"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert_readonly_change_view_chrome(content, has_submit_row=True)
+  assert 'name="_djq_object_action" value="unschedule"' in content
+  assert "Unschedule recurring task" in content
+
+
+def test_recurring_task_change_view_unschedule_action(admin_client):
+  task = RecurringTask.objects.create(
+    key="nightly",
+    task_path="tests.tasks.echo",
+    payload={"args": [], "kwargs": {}},
+    schedule="0 0 * * *",
+    queue_name="reports",
+    priority=0,
+    static=False,
+  )
+
+  response = admin_client.post(
+    f"{reverse('admin:dj_queue_recurringtask_change', args=[task.pk])}?backend=default",
+    {"_djq_object_action": "unschedule"},
+    follow=True,
+  )
+
+  assert response.status_code == 200
+  assert RecurringTask.objects.filter(pk=task.pk).exists() is False
+  assert response.request["PATH_INFO"] == reverse("admin:dj_queue_recurringtask_changelist")
+  messages = list(response.context["messages"])
+  assert len(messages) == 1
+  assert messages[0].message == "Unscheduled recurring task"
+
+
+def test_recurring_task_change_view_unschedule_action_rejects_static_task(admin_client):
+  task = RecurringTask.objects.create(
+    key="nightly",
+    task_path="tests.tasks.echo",
+    payload={"args": [], "kwargs": {}},
+    schedule="0 0 * * *",
+    queue_name="reports",
+    priority=0,
+    static=True,
+  )
+
+  response = admin_client.post(
+    f"{reverse('admin:dj_queue_recurringtask_change', args=[task.pk])}?backend=default",
+    {"_djq_object_action": "unschedule"},
+    follow=True,
+  )
+
+  assert response.status_code == 200
+  assert RecurringTask.objects.filter(pk=task.pk, static=True).exists() is True
+  assert response.request["PATH_INFO"] == reverse(
+    "admin:dj_queue_recurringtask_change", args=[task.pk]
+  )
+  messages = list(response.context["messages"])
+  assert len(messages) == 1
+  assert messages[0].message == "Static recurring tasks cannot be unscheduled"
+
+
+def test_recurring_task_admin_unschedule_action_preserves_static_failures(admin_client):
+  dynamic_task = RecurringTask.objects.create(
+    key="nightly",
+    task_path="tests.tasks.echo",
+    payload={"args": [], "kwargs": {}},
+    schedule="0 0 * * *",
+    queue_name="reports",
+    priority=0,
+    static=False,
+  )
+  static_task = RecurringTask.objects.create(
+    key="hourly",
+    task_path="tests.tasks.echo",
+    payload={"args": [], "kwargs": {}},
+    schedule="0 * * * *",
+    queue_name="maintenance",
+    priority=0,
+    static=True,
+  )
+
+  response = admin_client.post(
+    f"{reverse('admin:dj_queue_recurringtask_changelist')}?backend=default",
+    {
+      "action": "unschedule_tasks",
+      "_selected_action": [str(dynamic_task.pk), str(static_task.pk)],
+    },
+    follow=True,
+  )
+
+  assert response.status_code == 200
+  assert RecurringTask.objects.filter(pk=dynamic_task.pk).exists() is False
+  assert RecurringTask.objects.filter(pk=static_task.pk, static=True).exists() is True
+  messages = list(response.context["messages"])
+  assert len(messages) == 2
+  assert messages[0].message == "Unscheduled 1 recurring task"
+  assert messages[1].message == "Could not unschedule 1 static recurring task"
+
+
 def test_backend_scoped_raw_admin_pages_show_backend_filter(admin_client):
   for url_name in (
     "admin:dj_queue_job_changelist",

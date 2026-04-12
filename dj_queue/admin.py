@@ -15,7 +15,7 @@ from django.utils import timezone
 
 from dj_queue.config import load_backend_config
 from dj_queue import dashboard
-from dj_queue.api import QueueInfo
+from dj_queue.api import QueueInfo, unschedule_recurring_task
 from dj_queue.db import get_database_alias
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import (
@@ -639,6 +639,7 @@ class ProcessAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
 
 @admin.register(RecurringTask)
 class RecurringTaskAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
+  actions = ("unschedule_tasks",)
   list_display = ("key", "task_path", "schedule", "queue_name", "priority", "static")
   list_filter = ("queue_name", "static")
   readonly_fields = (
@@ -654,6 +655,62 @@ class RecurringTaskAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     "updated_at",
   )
   search_fields = ("key", "task_path", "queue_name")
+
+  @admin.action(description="Unschedule selected recurring tasks")
+  def unschedule_tasks(self, request, queryset):
+    backend_alias = self._backend_alias(request)
+    unscheduled = 0
+    static_failures = 0
+
+    for recurring_task in queryset.only("key", "static"):
+      if recurring_task.static:
+        static_failures += 1
+        continue
+      unscheduled += unschedule_recurring_task(recurring_task.key, backend_alias=backend_alias)
+
+    if unscheduled:
+      suffix = "s" if unscheduled != 1 else ""
+      self.message_user(
+        request,
+        f"Unscheduled {unscheduled} recurring task{suffix}",
+        level=messages.SUCCESS,
+      )
+
+    if static_failures:
+      suffix = "s" if static_failures != 1 else ""
+      self.message_user(
+        request,
+        f"Could not unschedule {static_failures} static recurring task{suffix}",
+        level=messages.ERROR,
+      )
+
+  def get_change_actions(self, request, obj):
+    if obj is None:
+      return ()
+    return (
+      {
+        "name": "unschedule",
+        "label": "Unschedule recurring task",
+        "css_class": "djq-object-action-discard",
+      },
+    )
+
+  def handle_change_action(self, request, obj, action):
+    backend_alias = self._backend_alias(request)
+    if action == "unschedule":
+      deleted = unschedule_recurring_task(obj.key, backend_alias=backend_alias)
+      if deleted:
+        self.message_user(request, "Unscheduled recurring task", level=messages.SUCCESS)
+        return HttpResponseRedirect(self._changelist_url(backend_alias=backend_alias))
+
+      self.message_user(
+        request,
+        "Static recurring tasks cannot be unscheduled",
+        level=messages.ERROR,
+      )
+      return self._current_object_redirect(obj, backend_alias=backend_alias)
+
+    return self._current_object_redirect(obj, backend_alias=backend_alias)
 
 
 @admin.register(Pause)
