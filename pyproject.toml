@@ -5,7 +5,7 @@ build-backend = "uv_build"
 [project]
 name = "dj-queue"
 version = "0.4.0"
-description = "Database-backed task queue backend for Django's django.tasks framework"
+description = "Database-backed task queue backend for Django’s Tasks framework."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
