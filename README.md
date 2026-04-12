@@ -314,6 +314,8 @@ process rows exist for a backend.
 Polling is the portability path everywhere. Backend-specific features improve
 latency and throughput but are not correctness requirements.
 
+For production PostgreSQL operational guidance, see [Postgres Queue Health](#postgres-queue-health).
+
 ## Data Contract
 
 Job payloads and persisted return values are stored in JSON columns, so they
@@ -564,6 +566,28 @@ python manage.py migrate dj_queue --database queue
 
 With this setup, `dj_queue`'s ORM queries and raw SQL helpers stay on the queue
 database.
+
+## Postgres Queue Health
+
+Operational and configuration guidance for scaling with `dj_queue` in
+production PostgreSQL deployments, covering dedicated database setup, retention
+policy, and autovacuum tuning.
+
+- Use a dedicated queue database via `database_alias`. Keep reporting and
+  long-running transactions off the queue database.
+- Keep retention short. Set `preserve_finished_jobs = False` if you do not need
+  successful results. Otherwise use bounded `clear_finished_jobs_after`,
+  `clear_failed_jobs_after`, and `clear_recurring_executions_after` values.
+- Run `python manage.py dj_queue_prune` regularly for stricter cleanup.
+- Keep `use_skip_locked = True` and `listen_notify = True` unless you have a
+  specific reason not to.
+- Tune autovacuum for `dj_queue_jobs` and the high-churn
+  `dj_queue_*_executions` tables, often default OLTP settings are too
+  conservative for queue workloads.
+- Keep transactions short across workers and the rest of your app. Long-lived
+  transactions pin dead tuples and delay vacuum.
+- Monitor dead tuples, autovacuum frequency, and long-running queries before
+  reaching for partitioning or bulk-ingest paths.
 
 ## Embedded Server Mode
 
