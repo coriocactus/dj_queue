@@ -15,8 +15,8 @@ logger = logging.getLogger("dj_queue.stress")
 pytestmark = [
   pytest.mark.django_db(transaction=True),
   pytest.mark.skipif(
-    os.environ.get("RUN_STRESS") != "1",
-    reason="run separately with RUN_STRESS=1",
+    os.environ.get("STRESS") != "1",
+    reason="run separately with STRESS=1",
   ),
   pytest.mark.skipif(
     os.environ.get("DB_BACKEND", "sqlite") == "postgres",

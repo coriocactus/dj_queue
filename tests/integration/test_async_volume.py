@@ -19,8 +19,8 @@ pytestmark = [
   pytest.mark.django_db(transaction=True),
   pytest.mark.postgres,
   pytest.mark.skipif(
-    os.environ.get("RUN_STRESS") != "1",
-    reason="run separately with RUN_STRESS=1",
+    os.environ.get("STRESS") != "1",
+    reason="run separately with STRESS=1",
   ),
 ]
 
