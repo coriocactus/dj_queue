@@ -346,6 +346,8 @@ def bootstrap():
   ensure_superuser(ARGS.username, ARGS.password)
   if not ARGS.no_seed:
     seed_demo_data()
+    assert_seed_demo_data_uses_importable_demo_task_paths()
+    assert_seeded_process_heartbeat_middleware_refreshes_dashboard_rows()
 
 
 def export_runtime_env():
@@ -384,6 +386,45 @@ def refresh_seeded_process_heartbeats(*, now=None):
   if now is None:
     now = timezone.now()
   Process.objects.filter(name__in=SEEDED_PROCESS_NAMES).update(last_heartbeat_at=now)
+
+
+# ---------------------------------------------------------------------------
+# Harness Assertions
+# ---------------------------------------------------------------------------
+
+
+def assert_seed_demo_data_uses_importable_demo_task_paths():
+  from django.utils.module_loading import import_string
+
+  task_paths = set(
+    Job.objects.filter(task_path__startswith="demo.tasks.").values_list("task_path", flat=True)
+  )
+
+  assert task_paths
+  for task_path in task_paths:
+    task = import_string(task_path)
+    assert task.module_path == task_path
+
+
+def assert_seeded_process_heartbeat_middleware_refreshes_dashboard_rows():
+  from django.http import HttpResponse
+  from django.test import RequestFactory
+
+  stale_at = timezone.now() - timedelta(minutes=10)
+  Process.objects.filter(name__in=SEEDED_PROCESS_NAMES).update(last_heartbeat_at=stale_at)
+
+  request_started_at = timezone.now()
+  middleware = SeededProcessHeartbeatMiddleware(lambda request: HttpResponse("ok"))
+  response = middleware(RequestFactory().get("/admin/"))
+  assert response.status_code == 200
+
+  refreshed = list(
+    Process.objects.filter(name__in=SEEDED_PROCESS_NAMES).values_list(
+      "last_heartbeat_at", flat=True
+    )
+  )
+  assert len(refreshed) == len(SEEDED_PROCESS_NAMES)
+  assert all(last_heartbeat_at >= request_started_at for last_heartbeat_at in refreshed)
 
 
 # ---------------------------------------------------------------------------
@@ -784,6 +825,8 @@ def enqueue_burst(_request):
 
 def reset_seed(_request):
   seed_demo_data()
+  assert_seed_demo_data_uses_importable_demo_task_paths()
+  assert_seeded_process_heartbeat_middleware_refreshes_dashboard_rows()
   return JsonResponse({"seeded": True, "job_count": Job.objects.count()})
 
 
