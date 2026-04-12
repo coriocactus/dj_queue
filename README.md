@@ -482,6 +482,10 @@ python manage.py dj_queue_prune --task-key nightly_cleanup
 The runtime, health, and prune commands all accept `--backend` to target a
 non-default backend alias.
 
+For `dj_queue_prune`, `--task-path` filters finished and failed job cleanup by
+task import path, while `--task-key` filters recurring execution cleanup by
+recurring task key.
+
 ## Failed Jobs
 
 When a task raises, `dj_queue` keeps the job and its failed execution row in the
