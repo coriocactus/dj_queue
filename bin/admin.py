@@ -89,6 +89,27 @@ ARGS = parse_args(sys.argv[1:] if __name__ == "__main__" else [])
 DB_PATH = Path(ARGS.db).expanduser().resolve()
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
+DEMO_STATIC_RECURRING_SPECS = (
+  ("demo-hourly-report", "reports", "0 * * * *", 5, "hourly report build", 40),
+  ("cleanup-stale-sessions", "maintenance", "15 * * * *", 0, "cleanup stale sessions", 75),
+  ("ship-daily-digest", "alerts", "30 7 * * *", 3, "ship daily digest", 700),
+  ("rebuild-search-index", "maintenance", "0 2 * * *", 8, "rebuild search index", 900),
+  ("sync-crm", "reports", "0 */2 * * *", 2, "sync crm", 110),
+  ("trim-finished-jobs", "maintenance", "0 3 * * *", -1, "trim finished jobs", 820),
+)
+
+DEMO_STATIC_RECURRING = {
+  key: {
+    "task_path": "tests.tasks.echo",
+    "schedule": schedule,
+    "queue_name": queue_name,
+    "priority": priority,
+    "description": description,
+    "args": [key],
+  }
+  for key, queue_name, schedule, priority, description, _minutes_ago in DEMO_STATIC_RECURRING_SPECS
+}
+
 from django.conf import settings  # noqa: E402
 
 if not settings.configured:
@@ -170,7 +191,7 @@ if not settings.configured:
             "dynamic_tasks_enabled": True,
             "polling_interval": 5,
           },
-          "recurring": {},
+          "recurring": DEMO_STATIC_RECURRING,
           "preserve_finished_jobs": True,
           "process_heartbeat_interval": 1,
           "process_alive_threshold": 120,
@@ -345,6 +366,7 @@ def bootstrap():
   ensure_superuser(ARGS.username, ARGS.password)
   if not ARGS.no_seed:
     seed_demo_data()
+    assert_seed_demo_data_includes_demo_static_recurring_config()
     assert_seed_demo_data_uses_importable_demo_task_paths()
     assert_seed_demo_data_keeps_alpha_queue_ready_until_manual_unpause()
     assert_seeded_process_heartbeat_middleware_refreshes_dashboard_rows()
@@ -425,6 +447,18 @@ def assert_seeded_process_heartbeat_middleware_refreshes_dashboard_rows():
   )
   assert len(refreshed) == len(SEEDED_PROCESS_NAMES)
   assert all(last_heartbeat_at >= request_started_at for last_heartbeat_at in refreshed)
+
+
+def assert_seed_demo_data_includes_demo_static_recurring_config():
+  configured_keys = set(DEMO_STATIC_RECURRING)
+  seeded_keys = set(
+    RecurringTask.objects.filter(static=True, key__in=configured_keys).values_list(
+      "key", flat=True
+    )
+  )
+
+  assert configured_keys
+  assert seeded_keys == configured_keys
 
 
 def assert_seed_demo_data_keeps_alpha_queue_ready_until_manual_unpause():
@@ -543,7 +577,6 @@ def seed_demo_data():
 
   recurring_specs = (
     ("demo-nightly", "maintenance", "0 0 1 1 *", -5, "demo recurring task", False, 540),
-    ("demo-hourly-report", "reports", "0 * * * *", 5, "hourly report build", True, 40),
     (
       "critical-audit",
       "critical-review",
@@ -553,7 +586,6 @@ def seed_demo_data():
       False,
       5,
     ),
-    ("cleanup-stale-sessions", "maintenance", "15 * * * *", 0, "cleanup stale sessions", True, 75),
     (
       "refresh-dashboard-caches",
       "interactive",
@@ -563,9 +595,7 @@ def seed_demo_data():
       False,
       9,
     ),
-    ("ship-daily-digest", "alerts", "30 7 * * *", 3, "ship daily digest", True, 700),
     ("fetch-billing-events", "reports", "*/20 * * * *", 4, "fetch billing events", False, 12),
-    ("rebuild-search-index", "maintenance", "0 2 * * *", 8, "rebuild search index", True, 900),
     (
       "critical-sla-check",
       "critical-review",
@@ -576,20 +606,24 @@ def seed_demo_data():
       3,
     ),
     ("expire-demo-tokens", "interactive", "45 * * * *", 1, "expire demo tokens", False, 22),
-    ("sync-crm", "reports", "0 */2 * * *", 2, "sync crm", True, 110),
     ("notify-stuck-jobs", "alerts", "*/30 * * * *", 6, "notify stuck jobs", False, 25),
-    ("trim-finished-jobs", "maintenance", "0 3 * * *", -1, "trim finished jobs", True, 820),
+    *(
+      (key, queue_name, schedule, priority, description, True, minutes_ago)
+      for key, queue_name, schedule, priority, description, minutes_ago in DEMO_STATIC_RECURRING_SPECS
+    ),
   )
   for key, queue_name, schedule, priority, description, static, minutes_ago in recurring_specs:
-    RecurringTask.objects.create(
+    RecurringTask.objects.update_or_create(
       key=key,
-      task_path="tests.tasks.echo",
-      payload={"args": [key], "kwargs": {}},
-      schedule=schedule,
-      queue_name=queue_name,
-      priority=priority,
-      description=description,
-      static=static,
+      defaults={
+        "task_path": "tests.tasks.echo",
+        "payload": {"args": [key], "kwargs": {}},
+        "schedule": schedule,
+        "queue_name": queue_name,
+        "priority": priority,
+        "description": description,
+        "static": static,
+      },
     )
     RecurringExecution.objects.create(task_key=key, run_at=now - timedelta(minutes=minutes_ago))
 
@@ -834,6 +868,7 @@ def enqueue_burst(_request):
 
 def reset_seed(_request):
   seed_demo_data()
+  assert_seed_demo_data_includes_demo_static_recurring_config()
   assert_seed_demo_data_uses_importable_demo_task_paths()
   assert_seed_demo_data_keeps_alpha_queue_ready_until_manual_unpause()
   assert_seeded_process_heartbeat_middleware_refreshes_dashboard_rows()
