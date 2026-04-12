@@ -607,7 +607,7 @@ def test_recurring_task_change_view_shows_unschedule_action(admin_client):
   content = response.content.decode()
   assert_readonly_change_view_chrome(content, has_submit_row=True)
   assert 'name="_djq_object_action" value="unschedule"' in content
-  assert "Unschedule recurring task" in content
+  assert "Unschedule" in content
 
 
 def test_recurring_task_change_view_unschedule_action(admin_client):

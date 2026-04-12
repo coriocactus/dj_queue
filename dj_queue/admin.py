@@ -690,7 +690,7 @@ class RecurringTaskAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     return (
       {
         "name": "unschedule",
-        "label": "Unschedule recurring task",
+        "label": "Unschedule",
         "css_class": "djq-object-action-discard",
       },
     )
