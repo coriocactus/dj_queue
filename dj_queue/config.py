@@ -44,6 +44,8 @@ DEFAULT_OPTIONS = {
   "supervisor_pidfile": None,
   "preserve_finished_jobs": True,
   "clear_finished_jobs_after": 86400,
+  "clear_failed_jobs_after": None,
+  "clear_recurring_executions_after": None,
   "default_concurrency_duration": 180,
   "database_alias": "default",
   "use_skip_locked": True,
@@ -112,6 +114,8 @@ class BackendConfig(ConfigValue):
   supervisor_pidfile: str | None = None
   preserve_finished_jobs: bool = True
   clear_finished_jobs_after: int | None = 86400
+  clear_failed_jobs_after: int | None = None
+  clear_recurring_executions_after: int | None = None
   default_concurrency_duration: int = 180
   database_alias: str = "default"
   use_skip_locked: bool = True
@@ -189,6 +193,8 @@ def _load_backend_config_cached(
     recurring,
     preserve_finished_jobs=bool(resolved_options["preserve_finished_jobs"]),
     clear_finished_jobs_after=resolved_options["clear_finished_jobs_after"],
+    clear_failed_jobs_after=resolved_options["clear_failed_jobs_after"],
+    clear_recurring_executions_after=resolved_options["clear_recurring_executions_after"],
   ):
     scheduler = None
 
@@ -211,6 +217,10 @@ def _load_backend_config_cached(
     supervisor_pidfile=resolved_options["supervisor_pidfile"],
     preserve_finished_jobs=bool(resolved_options["preserve_finished_jobs"]),
     clear_finished_jobs_after=_optional_int(resolved_options["clear_finished_jobs_after"]),
+    clear_failed_jobs_after=_optional_int(resolved_options["clear_failed_jobs_after"]),
+    clear_recurring_executions_after=_optional_int(
+      resolved_options["clear_recurring_executions_after"]
+    ),
     default_concurrency_duration=int(resolved_options["default_concurrency_duration"]),
     database_alias=str(resolved_options["database_alias"]),
     use_skip_locked=bool(resolved_options["use_skip_locked"]),
@@ -425,8 +435,14 @@ def _scheduler_has_work(
   *,
   preserve_finished_jobs: bool,
   clear_finished_jobs_after: Any,
+  clear_failed_jobs_after: Any,
+  clear_recurring_executions_after: Any,
 ) -> bool:
-  has_cleanup = preserve_finished_jobs and clear_finished_jobs_after is not None
+  has_cleanup = (
+    (preserve_finished_jobs and clear_finished_jobs_after is not None)
+    or clear_failed_jobs_after is not None
+    or clear_recurring_executions_after is not None
+  )
   return scheduler.dynamic_tasks_enabled or bool(recurring) or has_cleanup
 
 

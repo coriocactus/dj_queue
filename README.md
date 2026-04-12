@@ -413,6 +413,8 @@ Recurring notes:
 - Django admin exposes the same unschedule operation on recurring-task list and detail views
 - multiple schedulers sharing the same recurring config dedupe firing in the database
 - finished-job cleanup runs as internal scheduler maintenance when `preserve_finished_jobs=True` and `clear_finished_jobs_after` is set
+- failed-job cleanup can run as internal scheduler maintenance when `clear_failed_jobs_after` is set
+- recurring execution reservation cleanup can run as internal scheduler maintenance when `clear_recurring_executions_after` is set
 
 ## Concurrency Controls
 
@@ -471,7 +473,10 @@ Operational commands:
 python manage.py dj_queue_health
 python manage.py dj_queue_health --max-age 120
 python manage.py dj_queue_prune --older-than 86400
+python manage.py dj_queue_prune --failed-older-than 604800
+python manage.py dj_queue_prune --recurring-older-than 2592000
 python manage.py dj_queue_prune --task-path myapp.tasks.cleanup
+python manage.py dj_queue_prune --task-key nightly_cleanup
 ```
 
 The runtime, health, and prune commands all accept `--backend` to target a
@@ -626,7 +631,9 @@ Start with these options:
 - `dispatchers`: scheduled promotion and concurrency maintenance settings
 - `scheduler`: dynamic recurring polling settings
 - `database_alias`: database alias for queue tables and runtime activity
-- `preserve_finished_jobs` and `clear_finished_jobs_after`: result retention and cleanup
+- `preserve_finished_jobs` and `clear_finished_jobs_after`: successful result retention and cleanup
+- `clear_failed_jobs_after`: optional failed-job retention window
+- `clear_recurring_executions_after`: optional recurring reservation retention window
 
 Additional operational tuning is available when needed:
 
@@ -670,6 +677,8 @@ mode: async
 database_alias: queue
 preserve_finished_jobs: true
 clear_finished_jobs_after: 86400
+clear_failed_jobs_after: null
+clear_recurring_executions_after: null
 listen_notify: true
 silence_polling: true
 

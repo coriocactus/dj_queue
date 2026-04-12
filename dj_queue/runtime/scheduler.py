@@ -8,7 +8,11 @@ from django.utils import timezone
 from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias
 from dj_queue.models import RecurringTask
-from dj_queue.operations.cleanup import clear_finished_jobs
+from dj_queue.operations.cleanup import (
+  clear_failed_jobs,
+  clear_finished_jobs,
+  clear_recurring_executions,
+)
 from dj_queue.operations.recurring import fire_recurring_task, upsert_static_recurring_tasks
 from dj_queue.runtime.base import BaseRunner, app_executor
 
@@ -76,8 +80,13 @@ class Scheduler(BaseRunner):
       "dynamic_tasks_enabled": self.config.scheduler.dynamic_tasks_enabled,
       "polling_interval": self.config.scheduler.polling_interval,
       "static_task_count": len(self.config.recurring),
-      "cleanup_enabled": self.config.preserve_finished_jobs
-      and self.config.clear_finished_jobs_after is not None,
+      "cleanup_enabled": any(
+        (
+          self.config.preserve_finished_jobs and self.config.clear_finished_jobs_after is not None,
+          self.config.clear_failed_jobs_after is not None,
+          self.config.clear_recurring_executions_after is not None,
+        )
+      ),
     }
 
   def sync_static_tasks(self):
@@ -112,15 +121,26 @@ class Scheduler(BaseRunner):
     return fired_jobs
 
   def _run_cleanup(self, now):
-    if not self.config.preserve_finished_jobs:
-      return 0
-    if self.config.clear_finished_jobs_after is None:
-      return 0
-    return clear_finished_jobs(
-      older_than=self.config.clear_finished_jobs_after,
-      backend_alias=self.backend_alias,
-      now=now,
-    )
+    deleted = 0
+    if self.config.preserve_finished_jobs and self.config.clear_finished_jobs_after is not None:
+      deleted += clear_finished_jobs(
+        older_than=self.config.clear_finished_jobs_after,
+        backend_alias=self.backend_alias,
+        now=now,
+      )
+    if self.config.clear_failed_jobs_after is not None:
+      deleted += clear_failed_jobs(
+        older_than=self.config.clear_failed_jobs_after,
+        backend_alias=self.backend_alias,
+        now=now,
+      )
+    if self.config.clear_recurring_executions_after is not None:
+      deleted += clear_recurring_executions(
+        older_than=self.config.clear_recurring_executions_after,
+        backend_alias=self.backend_alias,
+        now=now,
+      )
+    return deleted
 
 
 def _latest_run_at(schedule, now):

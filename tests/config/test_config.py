@@ -19,6 +19,8 @@ def test_config_defaults_resolve(settings):
   assert config.database_alias == "default"
   assert config.use_skip_locked is True
   assert config.listen_notify is True
+  assert config.clear_failed_jobs_after is None
+  assert config.clear_recurring_executions_after is None
   assert json.dumps(config.as_dict())
 
 
@@ -54,6 +56,8 @@ def test_scheduler_omitted_when_no_scheduler_work_exists(settings):
       "OPTIONS": {
         "preserve_finished_jobs": False,
         "clear_finished_jobs_after": None,
+        "clear_failed_jobs_after": None,
+        "clear_recurring_executions_after": None,
         "recurring": {},
       },
     },
@@ -62,6 +66,24 @@ def test_scheduler_omitted_when_no_scheduler_work_exists(settings):
   config = load_backend_config()
 
   assert config.scheduler is None
+
+
+def test_failed_or_recurring_cleanup_keeps_scheduler_enabled(settings):
+  settings.TASKS = {
+    "default": {
+      "OPTIONS": {
+        "preserve_finished_jobs": False,
+        "clear_finished_jobs_after": None,
+        "clear_failed_jobs_after": 60,
+        "clear_recurring_executions_after": 120,
+        "recurring": {},
+      },
+    },
+  }
+
+  config = load_backend_config()
+
+  assert config.scheduler == SchedulerConfig()
 
 
 def test_config_precedence_cli_over_env_over_yaml_over_settings(settings, tmp_path):

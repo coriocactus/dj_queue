@@ -17,9 +17,14 @@ from dj_queue.models import (
   Job,
   Process,
   ReadyExecution,
+  RecurringExecution,
   ScheduledExecution,
 )
-from dj_queue.operations.cleanup import clear_finished_jobs
+from dj_queue.operations.cleanup import (
+  clear_failed_jobs,
+  clear_finished_jobs,
+  clear_recurring_executions,
+)
 from dj_queue.operations.jobs import (
   discard_failed_job,
   discard_ready_jobs,
@@ -310,6 +315,74 @@ def test_clear_finished_jobs_by_age_and_task_path():
   assert Job.objects.filter(pk=old_finished.pk).exists() is False
   assert Job.objects.filter(pk=recent_finished.pk).exists() is True
   assert Job.objects.filter(task_path=add.module_path).exists() is True
+
+
+@pytest.mark.django_db
+def test_clear_failed_jobs_by_age_and_task_path():
+  old_job = make_job(task=echo)
+  old_failed = FailedExecution.objects.create(
+    job=old_job,
+    exception_class="ValueError",
+    message="old",
+    traceback="old",
+  )
+  FailedExecution.objects.filter(pk=old_failed.pk).update(
+    created_at=timezone.now() - timedelta(minutes=10)
+  )
+
+  other_job = make_job(task=add)
+  other_failed = FailedExecution.objects.create(
+    job=other_job,
+    exception_class="ValueError",
+    message="other",
+    traceback="other",
+  )
+  FailedExecution.objects.filter(pk=other_failed.pk).update(
+    created_at=timezone.now() - timedelta(minutes=10)
+  )
+
+  recent_job = make_job(task=echo)
+  recent_failed = FailedExecution.objects.create(
+    job=recent_job,
+    exception_class="ValueError",
+    message="recent",
+    traceback="recent",
+  )
+  FailedExecution.objects.filter(pk=recent_failed.pk).update(
+    created_at=timezone.now() - timedelta(seconds=10)
+  )
+
+  deleted = clear_failed_jobs(older_than=60, task_path=echo.module_path, batch_size=10)
+
+  assert deleted == 1
+  assert Job.objects.filter(pk=old_job.pk).exists() is False
+  assert Job.objects.filter(pk=other_job.pk).exists() is True
+  assert Job.objects.filter(pk=recent_job.pk).exists() is True
+
+
+@pytest.mark.django_db
+def test_clear_recurring_executions_by_age_and_task_key():
+  old_execution = RecurringExecution.objects.create(task_key="nightly", run_at=timezone.now())
+  RecurringExecution.objects.filter(pk=old_execution.pk).update(
+    run_at=timezone.now() - timedelta(minutes=10)
+  )
+
+  other_execution = RecurringExecution.objects.create(task_key="hourly", run_at=timezone.now())
+  RecurringExecution.objects.filter(pk=other_execution.pk).update(
+    run_at=timezone.now() - timedelta(minutes=10)
+  )
+
+  recent_execution = RecurringExecution.objects.create(task_key="nightly", run_at=timezone.now())
+  RecurringExecution.objects.filter(pk=recent_execution.pk).update(
+    run_at=timezone.now() - timedelta(seconds=10)
+  )
+
+  deleted = clear_recurring_executions(older_than=60, task_key="nightly", batch_size=10)
+
+  assert deleted == 1
+  assert RecurringExecution.objects.filter(pk=old_execution.pk).exists() is False
+  assert RecurringExecution.objects.filter(pk=other_execution.pk).exists() is True
+  assert RecurringExecution.objects.filter(pk=recent_execution.pk).exists() is True
 
 
 @pytest.mark.django_db

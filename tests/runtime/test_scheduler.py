@@ -6,7 +6,7 @@ import pytest
 from django.utils import timezone
 
 from dj_queue.api import schedule_recurring_task, unschedule_recurring_task
-from dj_queue.models import Job, Process, RecurringExecution, RecurringTask
+from dj_queue.models import FailedExecution, Job, Process, RecurringExecution, RecurringTask
 from dj_queue.runtime.scheduler import Scheduler
 from tests.tasks import echo
 
@@ -18,6 +18,8 @@ def scheduler_tasks_settings(
   recurring=None,
   dynamic_tasks_enabled=False,
   clear_finished_jobs_after=None,
+  clear_failed_jobs_after=None,
+  clear_recurring_executions_after=None,
   preserve_finished_jobs=True,
 ):
   return {
@@ -33,6 +35,8 @@ def scheduler_tasks_settings(
         },
         "recurring": recurring or {},
         "clear_finished_jobs_after": clear_finished_jobs_after,
+        "clear_failed_jobs_after": clear_failed_jobs_after,
+        "clear_recurring_executions_after": clear_recurring_executions_after,
         "preserve_finished_jobs": preserve_finished_jobs,
       },
     }
@@ -277,6 +281,78 @@ def test_internal_cleanup_deletes_only_old_finished_jobs():
 
   assert Job.objects.filter(pk=old_job.pk).exists() is False
   assert Job.objects.filter(pk=recent_job.pk).exists() is True
+  scheduler.stop()
+
+
+def test_internal_cleanup_deletes_old_failed_jobs_when_configured():
+  now = fixed_now()
+  old_job = Job.objects.create(
+    task_path=echo.module_path,
+    queue_name=echo.queue_name,
+    priority=echo.priority,
+    payload={"args": [], "kwargs": {}},
+    backend_name=echo.backend,
+  )
+  recent_job = Job.objects.create(
+    task_path=echo.module_path,
+    queue_name=echo.queue_name,
+    priority=echo.priority,
+    payload={"args": [], "kwargs": {}},
+    backend_name=echo.backend,
+  )
+  old_failed = FailedExecution.objects.create(
+    job=old_job,
+    exception_class="ValueError",
+    message="old",
+    traceback="old",
+  )
+  recent_failed = FailedExecution.objects.create(
+    job=recent_job,
+    exception_class="ValueError",
+    message="recent",
+    traceback="recent",
+  )
+  FailedExecution.objects.filter(pk=old_failed.pk).update(created_at=now - timedelta(minutes=10))
+  FailedExecution.objects.filter(pk=recent_failed.pk).update(
+    created_at=now - timedelta(seconds=10)
+  )
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      clear_failed_jobs_after=60,
+      preserve_finished_jobs=False,
+    )
+  )
+  scheduler.start()
+
+  scheduler.poll_once(now=now)
+
+  assert Job.objects.filter(pk=old_job.pk).exists() is False
+  assert Job.objects.filter(pk=recent_job.pk).exists() is True
+  scheduler.stop()
+
+
+def test_internal_cleanup_deletes_old_recurring_executions_when_configured():
+  now = fixed_now()
+  old_execution = RecurringExecution.objects.create(
+    task_key="nightly",
+    run_at=now - timedelta(minutes=10),
+  )
+  recent_execution = RecurringExecution.objects.create(
+    task_key="nightly",
+    run_at=now - timedelta(seconds=10),
+  )
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      clear_recurring_executions_after=60,
+      preserve_finished_jobs=False,
+    )
+  )
+  scheduler.start()
+
+  scheduler.poll_once(now=now)
+
+  assert RecurringExecution.objects.filter(pk=old_execution.pk).exists() is False
+  assert RecurringExecution.objects.filter(pk=recent_execution.pk).exists() is True
   scheduler.stop()
 
 
