@@ -145,6 +145,12 @@ class BaseRunner:
   def process_metadata(self):
     return {}
 
+  def runtime_metadata(self):
+    return {
+      "backend_alias": self.backend_alias,
+      **self.process_metadata(),
+    }
+
   def _begin_stop(self):
     if self._stopped:
       return None
@@ -175,7 +181,7 @@ class BaseRunner:
           pid=self.pid,
           hostname=self.hostname,
           name=self.name,
-          metadata=self.process_metadata(),
+          metadata=self.runtime_metadata(),
           supervisor=self.supervisor,
           last_heartbeat_at=timezone.now(),
         ),

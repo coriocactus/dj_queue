@@ -76,6 +76,26 @@ def test_queue_info_size():
   assert QueueInfo("emails").size == 2
 
 
+def test_queue_info_stays_backend_scoped_on_shared_queue_db(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {"database_alias": "default"},
+    },
+    "secondary": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {"database_alias": "default"},
+    },
+  }
+  make_ready_job(queue_name="emails", backend_name="default")
+  make_ready_job(queue_name="emails", backend_name="secondary")
+
+  assert QueueInfo("emails", backend_alias="default").size == 1
+  assert QueueInfo("emails", backend_alias="secondary").size == 1
+
+
 def test_queue_info_latency():
   old_job = make_ready_job(queue_name="emails")
   ReadyExecution.objects.filter(job=old_job).update(

@@ -178,3 +178,45 @@ def test_use_skip_locked_false_preserves_correctness(
     assert [job.pk for job in claimed] == [first.pk, second.pk]
     assert ClaimedExecution.objects.using("queue").count() == 2
     assert ReadyExecution.objects.using("queue").count() == 0
+
+
+def test_claim_ready_jobs_stays_backend_scoped_on_shared_queue_db(
+  tmp_path, django_db_blocker, queue_test_settings
+):
+  queue_test_settings(
+    databases=_sqlite_databases(tmp_path),
+    tasks={
+      "default": {
+        "BACKEND": "dj_queue.backend.DjQueueBackend",
+        "QUEUES": [],
+        "OPTIONS": {
+          "database_alias": "queue",
+          "workers": [{"queues": "*", "threads": 1, "processes": 1, "polling_interval": 0.01}],
+          "dispatchers": [],
+          "scheduler": None,
+        },
+      },
+      "secondary": {
+        "BACKEND": "dj_queue.backend.DjQueueBackend",
+        "QUEUES": [],
+        "OPTIONS": {
+          "database_alias": "queue",
+          "workers": [{"queues": "*", "threads": 1, "processes": 1, "polling_interval": 0.01}],
+          "dispatchers": [],
+          "scheduler": None,
+        },
+      },
+    },
+  )
+
+  with django_db_blocker.unblock():
+    call_command("migrate", "dj_queue", database="queue", interactive=False, verbosity=0)
+
+    default_job = _make_ready_job(backend_name="default", priority=10)
+    secondary_job = _make_ready_job(backend_name="secondary", priority=20)
+
+    claimed = claim_ready_jobs(limit=2, backend_alias="default")
+
+    assert [job.pk for job in claimed] == [default_job.pk]
+    assert ClaimedExecution.objects.using("queue").filter(job=default_job).exists() is True
+    assert ReadyExecution.objects.using("queue").filter(job=secondary_job).exists() is True

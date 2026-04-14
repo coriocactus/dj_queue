@@ -5,7 +5,6 @@ from datetime import timedelta
 from urllib.parse import urlencode
 from uuid import UUID
 
-from croniter import croniter
 from django.conf import settings
 from django.core.paginator import Paginator
 from django.db.models import Count, Max, Min
@@ -13,6 +12,7 @@ from django.http import Http404
 from django.urls import reverse
 from django.utils import timezone
 
+from dj_queue import observability
 from dj_queue.api import QueueInfo
 from dj_queue.config import load_backend_config
 from dj_queue.db import database_capabilities, get_database_alias
@@ -318,28 +318,39 @@ def resolve_backend_alias(raw_backend_alias):
 
 
 def dashboard_context(*, backend_alias, query_params=None):
-  queue_database_alias = get_database_alias(backend_alias)
   config = load_backend_config(backend_alias)
-  now = timezone.now()
-  process_cutoff = now - timedelta(seconds=config.process_alive_threshold)
   if query_params is None:
     query_params = {}
 
-  queue_rows = _queue_rows(backend_alias=backend_alias, now=now, process_cutoff=process_cutoff)
-  backend_queue_rows, shared_queue_rows = _split_queue_rows(queue_rows)
-  process_rows = _process_rows(
-    backend_alias=backend_alias,
-    now=now,
-    process_cutoff=process_cutoff,
-  )
-  recurring_rows = _recurring_rows(backend_alias=backend_alias, now=now)
-  semaphore_rows = _semaphore_rows(backend_alias=backend_alias)
+  snapshot = observability.backend_snapshot(backend_alias=backend_alias)
+  backend_queue_rows, shared_queue_rows = observability.split_queue_rows(snapshot["queue_rows"])
+  process_rows = snapshot["process_rows"]
+  recurring_rows = [
+    {
+      **row,
+      "jobs_url": _job_changelist_url(
+        backend_alias=backend_alias,
+        recurring_task_key=row["key"],
+      ),
+    }
+    for row in snapshot["recurring_rows"]
+  ]
+  semaphore_rows = [
+    {
+      **row,
+      "jobs_url": _job_changelist_url(
+        backend_alias=backend_alias,
+        concurrency_key=row["key"],
+      ),
+    }
+    for row in snapshot["semaphore_rows"]
+  ]
 
   return {
     "backend_alias": backend_alias,
     "backend_choices": backend_choices(),
     "config": config,
-    "queue_database_alias": queue_database_alias,
+    "queue_database_alias": snapshot["queue_database_alias"],
     "summary_cards": _summary_cards(
       backend_alias=backend_alias,
       queue_rows=backend_queue_rows,
@@ -349,7 +360,7 @@ def dashboard_context(*, backend_alias, query_params=None):
     ),
     "backend_facts": _backend_facts(
       config=config,
-      queue_database_alias=queue_database_alias,
+      queue_database_alias=snapshot["queue_database_alias"],
       recurring_count=len(recurring_rows),
       semaphore_count=len(semaphore_rows),
     ),
@@ -423,7 +434,7 @@ def queue_page_context(*, backend_alias, queue_name, state, page_number, query_p
 
   paginator = Paginator(jobs, PAGE_SIZE)
   page_obj = paginator.get_page(query_params.get("page", page_number))
-  queue_row = _queue_snapshot(
+  queue_row = observability.queue_snapshot(
     backend_alias=backend_alias,
     queue_name=queue_name,
     now=now,
@@ -649,14 +660,7 @@ def _summary_cards(*, backend_alias, queue_rows, process_rows, recurring_rows, s
 
 
 def _split_queue_rows(queue_rows):
-  backend_queue_rows = []
-  shared_queue_rows = []
-  for row in queue_rows:
-    if row["has_backend_jobs"]:
-      backend_queue_rows.append(row)
-      continue
-    shared_queue_rows.append(row)
-  return backend_queue_rows, shared_queue_rows
+  return observability.split_queue_rows(queue_rows)
 
 
 def _backend_facts(*, config, queue_database_alias, recurring_count, semaphore_count):
@@ -1574,19 +1578,8 @@ def _counts_by_value(queryset, *, field_name):
 
 
 def _next_run_at(schedule, now):
-  return croniter(schedule, now).get_next(type(now))
+  return observability.next_run_at(schedule, now)
 
 
 def _queue_matches_selectors(queue_name, selectors):
-  normalized = tuple(selectors or ())
-  if normalized in ((), ("*",)):
-    return True
-
-  for selector in normalized:
-    if selector == "*":
-      return True
-    if selector.endswith("*") and queue_name.startswith(selector[:-1]):
-      return True
-    if selector == queue_name:
-      return True
-  return False
+  return observability.queue_matches_selectors(queue_name, selectors)

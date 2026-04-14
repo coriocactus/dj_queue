@@ -789,7 +789,7 @@ def test_dashboard_queue_view_uses_django_changelist_structure(admin_client):
     pid=201,
     hostname="localhost",
     name="worker-1",
-    metadata={"queues": ["alpha"]},
+    metadata={"backend_alias": "default", "queues": ["alpha"]},
     last_heartbeat_at=timezone.now(),
   )
 

@@ -92,3 +92,15 @@ def test_runner_start_stop_fires_runner_hooks():
   ]
 
   clear_hooks()
+
+
+def test_runner_registers_backend_alias_in_metadata():
+  runner = DummyRunner()
+
+  process = runner.start()
+
+  assert process.metadata == {
+    "backend_alias": "default",
+    "polling_interval": runner.config.polling_interval,
+  }
+  runner.stop()

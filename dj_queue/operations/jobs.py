@@ -211,7 +211,11 @@ def claim_ready_jobs(
   paused_queue_names = list(Pause.objects.using(alias).values_list("queue_name", flat=True))
 
   with transaction.atomic(using=alias):
-    queryset = ReadyExecution.objects.using(alias).select_related("job")
+    queryset = (
+      ReadyExecution.objects.using(alias)
+      .select_related("job")
+      .filter(job__backend_name=backend_alias)
+    )
     if paused_queue_names:
       queryset = queryset.exclude(queue_name__in=paused_queue_names)
     ready_rows = _select_ready_rows(
@@ -391,7 +395,12 @@ def discard_ready_jobs(*, job_ids=None, batch_size=500, backend_alias="default")
   config = load_backend_config(backend_alias)
 
   with transaction.atomic(using=alias):
-    queryset = ReadyExecution.objects.using(alias).select_related("job").order_by("id")
+    queryset = (
+      ReadyExecution.objects.using(alias)
+      .select_related("job")
+      .filter(job__backend_name=backend_alias)
+      .order_by("id")
+    )
     if job_ids is not None:
       queryset = queryset.filter(job_id__in=job_ids)
     ready_rows = list(
@@ -414,7 +423,12 @@ def discard_scheduled_jobs(*, job_ids=None, batch_size=500, backend_alias="defau
   config = load_backend_config(backend_alias)
 
   with transaction.atomic(using=alias):
-    queryset = ScheduledExecution.objects.using(alias).select_related("job").order_by("id")
+    queryset = (
+      ScheduledExecution.objects.using(alias)
+      .select_related("job")
+      .filter(job__backend_name=backend_alias)
+      .order_by("id")
+    )
     if job_ids is not None:
       queryset = queryset.filter(job_id__in=job_ids)
     scheduled_rows = list(
@@ -437,7 +451,12 @@ def discard_blocked_jobs(*, job_ids=None, batch_size=500, backend_alias="default
   config = load_backend_config(backend_alias)
 
   with transaction.atomic(using=alias):
-    queryset = BlockedExecution.objects.using(alias).select_related("job").order_by("id")
+    queryset = (
+      BlockedExecution.objects.using(alias)
+      .select_related("job")
+      .filter(job__backend_name=backend_alias)
+      .order_by("id")
+    )
     if job_ids is not None:
       queryset = queryset.filter(job_id__in=job_ids)
     blocked_rows = list(

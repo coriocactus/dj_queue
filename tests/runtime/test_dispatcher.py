@@ -81,6 +81,7 @@ def test_dispatcher_registers_process_with_metadata():
   assert process.kind == "Dispatcher"
   assert process.name == "dispatcher-1"
   assert process.metadata == {
+    "backend_alias": "default",
     "batch_size": 25,
     "polling_interval": 0.5,
     "concurrency_maintenance": True,

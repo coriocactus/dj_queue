@@ -325,7 +325,10 @@ def test_prune_command_uses_backend_config_for_failed_and_recurring_windows(sett
 
 
 def test_dj_queue_health_reports_live_and_dead_states():
-  make_process(last_heartbeat_at=timezone.now())
+  make_process(
+    metadata={"backend_alias": "default"},
+    last_heartbeat_at=timezone.now(),
+  )
 
   healthy_stdout = StringIO()
   call_command("dj_queue_health", stdout=healthy_stdout)
@@ -342,6 +345,28 @@ def test_health_command_max_age_override_changes_freshness_threshold():
 
   with pytest.raises(SystemExit, match="1"):
     call_command("dj_queue_health", "--max-age", "10")
+
+
+def test_health_command_stays_backend_scoped_on_shared_queue_db(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {"database_alias": "default"},
+    },
+    "secondary": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {"database_alias": "default"},
+    },
+  }
+  make_process(
+    metadata={"backend_alias": "secondary"},
+    last_heartbeat_at=timezone.now(),
+  )
+
+  with pytest.raises(SystemExit, match="1"):
+    call_command("dj_queue_health", "--backend", "default")
 
 
 def test_procline_is_best_effort_when_dependency_missing(monkeypatch):

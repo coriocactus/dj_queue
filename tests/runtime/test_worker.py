@@ -112,6 +112,7 @@ def test_worker_registers_process_with_metadata():
   assert process.pid == 101
   assert process.hostname == "host"
   assert process.metadata == {
+    "backend_alias": "default",
     "queues": ["alpha", "beta*"],
     "threads": 2,
     "polling_interval": 0.25,

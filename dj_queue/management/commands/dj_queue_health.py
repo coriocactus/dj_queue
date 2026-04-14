@@ -24,7 +24,14 @@ class Command(BaseCommand):
 
     cutoff = timezone.now() - timedelta(seconds=max_age)
     alias = get_database_alias(backend_alias)
-    healthy = Process.objects.using(alias).filter(last_heartbeat_at__gte=cutoff).exists()
+    healthy = (
+      Process.objects.using(alias)
+      .filter(
+        metadata__backend_alias=backend_alias,
+        last_heartbeat_at__gte=cutoff,
+      )
+      .exists()
+    )
     if healthy:
       self.stdout.write("healthy")
       return
