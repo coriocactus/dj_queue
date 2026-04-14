@@ -1015,6 +1015,20 @@ def test_dashboard_queue_view_supports_multi_column_sorting(admin_client):
   assert "sort=-task.-priority#result_list" not in content
 
 
+def test_dashboard_queue_view_supports_sorting_finished_json_values(admin_client):
+  alpha = make_job(queue_name="alpha", finished_at=timezone.now(), return_value={"a": 1})
+  beta = make_job(queue_name="alpha", finished_at=timezone.now(), return_value={"b": 1})
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_dashboard_queue", args=["alpha"]),
+    {"backend": "default", "state": "finished", "sort": "return_value"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert content.index(str(alpha.id)) < content.index(str(beta.id))
+
+
 def test_dashboard_queue_pagination_omits_default_sort(admin_client, monkeypatch):
   monkeypatch.setattr(dashboard, "PAGE_SIZE", 1)
   for index in range(3):

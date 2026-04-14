@@ -34,10 +34,12 @@ Issues = "https://github.com/coriocactus/dj_queue/issues"
 
 [project.optional-dependencies]
 postgres = ["psycopg>=3.3.3"]
+prometheus = ["prometheus_client>=0.4.0"]
 
 [dependency-groups]
 dev = [
   "cryptography>=46.0.6",
+  "prometheus-client>=0.4.0",
   "psycopg>=3.3.3",
   "pymysql>=1.1.2",
   "pytest>=9.0.2",

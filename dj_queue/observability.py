@@ -31,6 +31,7 @@ class BackendChoice:
   database_alias: str
 
 
+
 def configured_backend_aliases():
   tasks = getattr(settings, "TASKS", {})
   aliases = tuple(tasks)
@@ -90,6 +91,25 @@ def all_backend_snapshots(*, now=None):
   if now is None:
     now = timezone.now()
   return [backend_snapshot(backend_alias=alias, now=now) for alias in configured_backend_aliases()]
+
+
+def stats_payload(*, now=None):
+  snapshots = all_backend_snapshots(now=now)
+  return {
+    "backends": [
+      {
+        "backend_alias": snapshot["backend_alias"],
+        "queue_database_alias": snapshot["queue_database_alias"],
+        "process_alive_threshold": snapshot["process_alive_threshold"],
+        "queues": snapshot["queue_rows"],
+        "runner_metrics": snapshot["runner_metrics"],
+        "recurring": snapshot["recurring_rows"],
+        "semaphores": snapshot["semaphore_rows"],
+      }
+      for snapshot in snapshots
+    ]
+  }
+
 
 
 def split_queue_rows(queue_rows):

@@ -253,7 +253,7 @@ from django.core.asgi import get_asgi_application  # noqa: E402
 from django.core.management import call_command  # noqa: E402
 from django.http import HttpResponse, JsonResponse  # noqa: E402
 from django.tasks import task  # noqa: E402
-from django.urls import path  # noqa: E402
+from django.urls import include, path  # noqa: E402
 from django.utils import timezone  # noqa: E402
 
 from dj_queue.contrib.asgi import DjQueueLifespan  # noqa: E402
@@ -835,6 +835,8 @@ def index(_request):
       <body style=\"font-family: sans-serif; max-width: 56rem; margin: 3rem auto; line-height: 1.5;\">
         <h1>dj_queue admin dev</h1>
         <p><a href=\"/admin/\">Open Django admin</a></p>
+        <p><a href=\"/dj_queue/stats.json\">Open queue statistics JSON</a></p>
+        <p><a href=\"/dj_queue/metrics\">Open Prometheus metrics</a></p>
         <p><a href=\"/enqueue/\">Enqueue a live demo job</a></p>
         <p><a href=\"/enqueue-burst/\">Enqueue a burst of demo jobs</a></p>
         <p><a href=\"/seed/\">Reset seeded dashboard data</a></p>
@@ -896,6 +898,7 @@ def result_job(_request, job_id: UUID):
 urlpatterns = [
   path("", index),
   path("admin/", admin.site.urls),
+  path("dj_queue/", include("dj_queue.urls")),
   path("enqueue/", enqueue_job),
   path("enqueue-burst/", enqueue_burst),
   path("seed/", reset_seed),

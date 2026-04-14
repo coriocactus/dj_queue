@@ -45,19 +45,15 @@ Install the package:
 pip install dj-queue
 ```
 
-Backend-specific extras are available when you want `dj_queue` to install a
-database adapter for you:
+Optional extras:
 
 ```bash
-pip install "dj-queue[postgres]"
+pip install "dj-queue[postgres]"    # psycopg for PostgreSQL + LISTEN/NOTIFY
+pip install "dj-queue[prometheus]"  # prometheus_client for /dj_queue/metrics
 ```
 
-Notes:
-
-- `postgres` installs `psycopg`, which Django's PostgreSQL backend and
-  `dj_queue`'s optional `LISTEN/NOTIFY` wakeups use
-- for MySQL or MariaDB, install and configure a Django-compatible driver in
-  your application following Django's database docs
+For MySQL or MariaDB, install and configure a Django-compatible driver
+following Django's database docs.
 
 Add `dj_queue` to `INSTALLED_APPS`, register the router, and point Django's task
 backend at `DjQueueBackend`:
@@ -328,31 +324,6 @@ must be JSON round-trippable.
 If you need to pass model instances, files, or custom objects, store them
 elsewhere and pass identifiers or serialized data instead.
 
-## Errors When Enqueuing
-
-`DjQueueBackend.enqueue()` raises `dj_queue.exceptions.EnqueueError` for
-backend-side validation failures instead of silently dropping work.
-
-Common reasons include:
-
-- args or kwargs are not JSON round-trippable
-- `concurrency_key` is set without `concurrency_limit`
-- `concurrency_key` cannot be resolved from the enqueue arguments
-- `concurrency_key` does not resolve to a non-empty string up to 255 chars
-- `on_conflict` is not `"block"` or `"discard"`
-
-```python
-from dj_queue.exceptions import EnqueueError
-
-try:
-  sync_account.enqueue(account_id, "refresh")
-except EnqueueError as exc:
-  handle_enqueue_error(exc)
-```
-
-Task execution errors are different: they become failed jobs and stay
-inspectable in the queue database.
-
 ## Recurring Tasks
 
 `dj_queue` supports both static recurring tasks from settings and dynamic
@@ -524,6 +495,31 @@ except UndiscardableError:
 ```
 
 Failures stay inspectable until you act on them.
+
+## Errors When Enqueuing
+
+`DjQueueBackend.enqueue()` raises `dj_queue.exceptions.EnqueueError` for
+backend-side validation failures instead of silently dropping work.
+
+Common reasons include:
+
+- args or kwargs are not JSON round-trippable
+- `concurrency_key` is set without `concurrency_limit`
+- `concurrency_key` cannot be resolved from the enqueue arguments
+- `concurrency_key` does not resolve to a non-empty string up to 255 chars
+- `on_conflict` is not `"block"` or `"discard"`
+
+```python
+from dj_queue.exceptions import EnqueueError
+
+try:
+  sync_account.enqueue(account_id, "refresh")
+except EnqueueError as exc:
+  handle_enqueue_error(exc)
+```
+
+Task execution errors are different: they become failed jobs and stay
+inspectable in the queue database.
 
 ## Multi-Database Setup
 
@@ -800,6 +796,42 @@ The callback receives the raised exception object for background runtime issues
 such as hook failures, heartbeat failures, notify-watcher failures, and managed
 runner crashes. It is not used for exceptions raised by your task code; those
 become failed jobs instead.
+
+## Monitoring
+
+Queue statistics are available in JSON via `/dj_queue/stats.json` and in
+Prometheus text format via `/dj_queue/metrics`. 
+
+Include `dj_queue.urls` to expose them:
+
+```python
+urlpatterns += [path("dj_queue/", include("dj_queue.urls"))]
+```
+
+The `/dj_queue/metrics` endpoint requires the `prometheus` extra:
+
+```bash
+pip install "dj-queue[prometheus]"
+```
+
+Exported metric families:
+
+- `dj_queue_queue_jobs{backend,queue,state}`
+- `dj_queue_queue_paused{backend,queue}`
+- `dj_queue_queue_latency_seconds{backend,queue}`
+- `dj_queue_queue_live_workers{backend,queue}`
+- `dj_queue_runner_processes{backend,status}`
+- `dj_queue_runner_processes_by_kind{backend,kind,status}`
+- `dj_queue_recurring_tasks{queue_database}`
+- `dj_queue_semaphores{queue_database}`
+- `dj_queue_database_process_rows{queue_database}`
+
+Datadog users can scrape the same endpoint via the OpenMetrics integration.
+
+Both endpoints support bearer token authentication. Set
+`DJ_QUEUE_OBSERVABILITY_TOKEN` in `settings.py` and include it as
+`Authorization: Bearer <token>`. Leave it unset if you protect these URLs at
+the network or proxy layer.
 
 ## License
 
