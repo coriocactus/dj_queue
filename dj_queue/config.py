@@ -164,7 +164,7 @@ def _load_backend_config_cached(
   env = json.loads(env_key)
   tasks_settings = json.loads(tasks_settings_key)
   backend_block = _backend_block(tasks_settings, backend_alias)
-  resolved_options = _resolved_options(backend_block, cli_overrides, env)
+  resolved_options = _resolved_options(backend_alias, backend_block, cli_overrides, env)
 
   mode = resolved_options["mode"]
   if mode not in {"fork", "async"}:
@@ -248,6 +248,7 @@ def _backend_block(
 
 
 def _resolved_options(
+  backend_alias: str,
   backend_block: Mapping[str, Any],
   cli_overrides: Mapping[str, Any],
   env: Mapping[str, str],
@@ -260,7 +261,7 @@ def _resolved_options(
   resolved_options.update(settings_options)
 
   config_path = cli_overrides.get("config") or env.get("DJ_QUEUE_CONFIG")
-  resolved_options.update(_load_yaml_options(config_path))
+  resolved_options.update(_load_yaml_options(config_path, backend_alias=backend_alias))
 
   env_mode = env.get("DJ_QUEUE_MODE")
   if env_mode is not None:
@@ -273,7 +274,7 @@ def _resolved_options(
   return resolved_options
 
 
-def _load_yaml_options(config_path: Any) -> dict[str, Any]:
+def _load_yaml_options(config_path: Any, *, backend_alias: str) -> dict[str, Any]:
   if not config_path:
     return {}
 
@@ -282,7 +283,24 @@ def _load_yaml_options(config_path: Any) -> dict[str, Any]:
     return {}
   if not isinstance(config_payload, dict):
     raise ImproperlyConfigured("DJ_QUEUE_CONFIG must point to a YAML mapping")
-  return config_payload
+
+  raw_backends = config_payload.get("backends")
+  if raw_backends is None:
+    return config_payload
+
+  if len(config_payload) != 1:
+    raise ImproperlyConfigured(
+      "DJ_QUEUE_CONFIG must use either a flat options mapping or a top-level 'backends' mapping"
+    )
+  if not isinstance(raw_backends, Mapping):
+    raise ImproperlyConfigured("DJ_QUEUE_CONFIG 'backends' must be a mapping")
+
+  backend_options = raw_backends.get(backend_alias)
+  if backend_options is None:
+    return {}
+  if not isinstance(backend_options, Mapping):
+    raise ImproperlyConfigured(f"DJ_QUEUE_CONFIG backends[{backend_alias!r}] must be a mapping")
+  return dict(backend_options)
 
 
 def _resolve_skip_recurring(
@@ -324,6 +342,9 @@ def _validated_callback_path(callback_path: Any) -> str | None:
 
 
 def _build_worker_configs(raw_workers: Any, mode: str) -> tuple[WorkerConfig, ...]:
+  if isinstance(raw_workers, Mapping):
+    raw_workers = [raw_workers]
+
   workers: list[WorkerConfig] = []
   for raw_worker in raw_workers or []:
     if not isinstance(raw_worker, Mapping):
@@ -351,6 +372,9 @@ def _build_worker_configs(raw_workers: Any, mode: str) -> tuple[WorkerConfig, ..
 
 
 def _build_dispatcher_configs(raw_dispatchers: Any) -> tuple[DispatcherConfig, ...]:
+  if isinstance(raw_dispatchers, Mapping):
+    raw_dispatchers = [raw_dispatchers]
+
   dispatchers: list[DispatcherConfig] = []
   for raw_dispatcher in raw_dispatchers or []:
     if not isinstance(raw_dispatcher, Mapping):

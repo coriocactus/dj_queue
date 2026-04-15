@@ -127,6 +127,235 @@ def test_config_precedence_cli_over_env_over_yaml_over_settings(settings, tmp_pa
   assert cli_config.silence_polling is True
 
 
+def test_multi_backend_yaml_selects_requested_alias(settings, tmp_path):
+  settings.TASKS = {
+    "default": {
+      "OPTIONS": {
+        "mode": "fork",
+        "database_alias": "default",
+      },
+    },
+    "critical": {
+      "OPTIONS": {
+        "mode": "fork",
+        "database_alias": "default",
+      },
+    },
+  }
+  config_path = tmp_path / "dj_queue.yaml"
+  config_path.write_text(
+    "\n".join(
+      (
+        "backends:",
+        "  default:",
+        "    mode: async",
+        "    database_alias: queue_default",
+        "  critical:",
+        "    mode: fork",
+        "    database_alias: queue_critical",
+      )
+    ),
+    encoding="utf-8",
+  )
+
+  default_config = load_backend_config(
+    env={
+      "DJ_QUEUE_CONFIG": str(config_path),
+    }
+  )
+  critical_config = load_backend_config(
+    "critical",
+    env={
+      "DJ_QUEUE_CONFIG": str(config_path),
+    },
+  )
+
+  assert default_config.mode == "async"
+  assert default_config.database_alias == "queue_default"
+  assert critical_config.mode == "fork"
+  assert critical_config.database_alias == "queue_critical"
+
+
+def test_multi_backend_yaml_missing_alias_falls_back_to_tasks(settings, tmp_path):
+  settings.TASKS = {
+    "secondary": {
+      "OPTIONS": {
+        "mode": "async",
+        "database_alias": "queue_secondary",
+      },
+    }
+  }
+  config_path = tmp_path / "dj_queue.yaml"
+  config_path.write_text(
+    "\n".join(
+      (
+        "backends:",
+        "  default:",
+        "    mode: fork",
+      )
+    ),
+    encoding="utf-8",
+  )
+
+  config = load_backend_config(
+    "secondary",
+    env={
+      "DJ_QUEUE_CONFIG": str(config_path),
+    },
+  )
+
+  assert config.mode == "async"
+  assert config.database_alias == "queue_secondary"
+
+
+def test_multi_backend_yaml_rejects_non_mapping_backends(settings, tmp_path):
+  settings.TASKS = {
+    "default": {
+      "OPTIONS": {},
+    }
+  }
+  config_path = tmp_path / "dj_queue.yaml"
+  config_path.write_text("backends: []\n", encoding="utf-8")
+
+  with pytest.raises(ImproperlyConfigured, match="'backends' must be a mapping"):
+    load_backend_config(
+      env={
+        "DJ_QUEUE_CONFIG": str(config_path),
+      }
+    )
+
+
+def test_multi_backend_yaml_rejects_non_mapping_backend_entry(settings, tmp_path):
+  settings.TASKS = {
+    "default": {
+      "OPTIONS": {},
+    }
+  }
+  config_path = tmp_path / "dj_queue.yaml"
+  config_path.write_text(
+    "\n".join(
+      (
+        "backends:",
+        "  default: true",
+      )
+    ),
+    encoding="utf-8",
+  )
+
+  with pytest.raises(ImproperlyConfigured, match=r"backends\['default'\] must be a mapping"):
+    load_backend_config(
+      env={
+        "DJ_QUEUE_CONFIG": str(config_path),
+      }
+    )
+
+
+def test_multi_backend_yaml_rejects_mixed_shapes(settings, tmp_path):
+  settings.TASKS = {
+    "default": {
+      "OPTIONS": {},
+    }
+  }
+  config_path = tmp_path / "dj_queue.yaml"
+  config_path.write_text(
+    "\n".join(
+      (
+        "mode: async",
+        "backends:",
+        "  default:",
+        "    database_alias: queue",
+      )
+    ),
+    encoding="utf-8",
+  )
+
+  with pytest.raises(ImproperlyConfigured, match="must use either a flat options mapping"):
+    load_backend_config(
+      env={
+        "DJ_QUEUE_CONFIG": str(config_path),
+      }
+    )
+
+
+def test_workers_single_mapping_is_normalized_to_one_item_list(settings):
+  settings.TASKS = {
+    "default": {
+      "OPTIONS": {
+        "workers": {
+          "queues": ["default", "email*"],
+          "threads": 8,
+          "processes": 2,
+          "polling_interval": 0.1,
+        },
+      },
+    }
+  }
+
+  config = load_backend_config()
+
+  assert config.workers == (
+    WorkerConfig(
+      queues=("default", "email*"),
+      threads=8,
+      processes=2,
+      polling_interval=0.1,
+    ),
+  )
+
+
+def test_dispatchers_single_mapping_is_normalized_to_one_item_list(settings):
+  settings.TASKS = {
+    "default": {
+      "OPTIONS": {
+        "dispatchers": {
+          "batch_size": 250,
+          "polling_interval": 2,
+          "concurrency_maintenance": False,
+          "concurrency_maintenance_interval": 900,
+        },
+      },
+    }
+  }
+
+  config = load_backend_config()
+
+  assert config.dispatchers == (
+    DispatcherConfig(
+      batch_size=250,
+      polling_interval=2,
+      concurrency_maintenance=False,
+      concurrency_maintenance_interval=900,
+    ),
+  )
+
+
+def test_workers_single_mapping_still_normalizes_async_processes_to_one(settings):
+  settings.TASKS = {
+    "default": {
+      "OPTIONS": {
+        "mode": "async",
+        "workers": {
+          "queues": "default",
+          "threads": 4,
+          "processes": 3,
+        },
+      },
+    }
+  }
+
+  with pytest.warns(UserWarning, match="normalizing to 1"):
+    config = load_backend_config()
+
+  assert config.workers == (
+    WorkerConfig(
+      queues=("default",),
+      threads=4,
+      processes=1,
+      polling_interval=0.1,
+    ),
+  )
+
+
 @pytest.mark.parametrize(
   ("value", "skip_recurring"),
   (
@@ -165,8 +394,8 @@ def test_load_backend_config_caches_repeated_inputs(settings, monkeypatch):
   }
   calls = []
 
-  def fake_load_yaml_options(path):
-    calls.append(path)
+  def fake_load_yaml_options(path, *, backend_alias):
+    calls.append((path, backend_alias))
     return {}
 
   monkeypatch.setattr("dj_queue.config._load_yaml_options", fake_load_yaml_options)
@@ -175,7 +404,7 @@ def test_load_backend_config_caches_repeated_inputs(settings, monkeypatch):
   second = load_backend_config(env={"DJ_QUEUE_CONFIG": "/tmp/dj-queue.yaml"})
 
   assert first == second
-  assert calls == ["/tmp/dj-queue.yaml"]
+  assert calls == [("/tmp/dj-queue.yaml", "default")]
 
 
 def test_load_backend_config_cache_invalidates_when_settings_change(settings):

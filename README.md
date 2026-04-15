@@ -52,9 +52,6 @@ pip install "dj-queue[postgres]"    # psycopg for PostgreSQL + LISTEN/NOTIFY
 pip install "dj-queue[prometheus]"  # prometheus_client for /dj_queue/metrics
 ```
 
-For MySQL or MariaDB, install and configure a Django-compatible driver
-following Django's database docs.
-
 Add `dj_queue` to `INSTALLED_APPS`, register the router, and point Django's task
 backend at `DjQueueBackend`:
 
@@ -134,12 +131,10 @@ If Django admin is installed, `dj_queue` adds an operator dashboard at
 - queue, process, recurring-task, and semaphore overview
 - backend-aware dashboard and raw changelists
 - queue controls: pause, resume, clear ready
-- job detail action: enqueue a fresh copy of any stored job
-- recurring-task actions: unschedule from list and detail views
-- pause detail action: resume the paused queue from the raw pause row
-- failed-job actions: retry and discard from list and detail views
+- job actions: enqueue a fresh copy of any stored job
+- failed jobs: retry and discard from list and detail views
+- unschedule dynamic recurring tasks
 - queue drill-down pages for state-specific inspection
-- queue drill-down actions: discard ready, scheduled, and blocked jobs; retry or discard failed jobs; enqueue finished jobs again
 
 **Dashboard overview**
 
@@ -298,6 +293,16 @@ Runners heartbeat into the queue database. If claimed work is left behind,
 Use `python manage.py dj_queue_health` to check whether any fresh runtime
 process rows exist for a backend.
 
+### Data Contract
+
+Job payloads and persisted return values are stored in JSON columns, so they must be JSON round-trippable.
+
+- enqueueing args or kwargs that cannot round-trip through JSON fails immediately
+- returning a non-JSON-serializable value marks the job failed instead of
+  leaving it claimed forever
+
+If you need to pass model instances, files, or custom objects, store them elsewhere and pass identifiers or serialized data instead.
+
 ## Database Support
 
 | Backend | Support level | Notes |
@@ -307,22 +312,11 @@ process rows exist for a backend.
 | MariaDB 10.6+ | supported | polling plus `SKIP LOCKED` |
 | SQLite | supported with limits | polling only, serialized writes, no `SKIP LOCKED`, no `LISTEN/NOTIFY`; practical for development, CI, and smaller deployments |
 
-Polling is the portability path everywhere. Backend-specific features improve
-latency and throughput but are not correctness requirements.
+For MySQL or MariaDB, install and configure a Django-compatible driver following Django's database docs.
+
+Polling is the portability path everywhere. Backend-specific features improve latency and throughput but are not correctness requirements.
 
 For production PostgreSQL operational guidance, see [Postgres Queue Health](#postgres-queue-health).
-
-## Data Contract
-
-Job payloads and persisted return values are stored in JSON columns, so they
-must be JSON round-trippable.
-
-- enqueueing args or kwargs that cannot round-trip through JSON fails immediately
-- returning a non-JSON-serializable value marks the job failed instead of
-  leaving it claimed forever
-
-If you need to pass model instances, files, or custom objects, store them
-elsewhere and pass identifiers or serialized data instead.
 
 ## Recurring Tasks
 
@@ -379,7 +373,7 @@ config.
 The scheduler is part of the normal `dj_queue` runtime. You do not run a
 separate recurring service.
 
-Recurring notes:
+Notes:
 
 - schedules are cron expressions
 - recurring task keys are scoped per backend alias
@@ -698,9 +692,13 @@ python manage.py dj_queue --config /etc/dj_queue.yml
 DJ_QUEUE_CONFIG=/etc/dj_queue.yml python manage.py dj_queue
 ```
 
-The YAML file should contain a single mapping of backend option values. It uses
-the same shape as `TASKS[backend_alias]["OPTIONS"]`, not the full Django
-`TASKS` structure:
+The YAML file is an overlay on `TASKS[backend_alias]["OPTIONS"]`. It supports
+two shapes:
+
+- a flat mapping of option values for the selected backend alias
+- a `backends` mapping keyed by backend alias, where only the selected alias is applied
+
+Flat mapping example:
 
 ```yaml
 mode: async
@@ -737,8 +735,28 @@ recurring:
     description: nightly cleanup
 ```
 
-This file is merged on top of `TASKS[backend_alias]["OPTIONS"]`, then any
-environment-variable and CLI overrides win after that.
+Multi-backend overlay example:
+
+```yaml
+backends:
+  default:
+    mode: async
+    database_alias: default
+    workers:
+      - queues: ["default", "email*"]
+        threads: 8
+        processes: 1
+        polling_interval: 0.1
+
+  critical:
+    mode: fork
+    database_alias: queue
+    workers:
+      - queues: ["alerts", "critical-review"]
+        threads: 2
+        processes: 1
+        polling_interval: 0.05
+```
 
 Environment overrides currently supported by `dj_queue` itself:
 
@@ -831,8 +849,6 @@ Exported metric families:
 - `dj_queue_recurring_tasks{backend}`
 - `dj_queue_semaphores{queue_database}`
 - `dj_queue_process_rows{backend}`
-
-Datadog users can scrape the same endpoint via the OpenMetrics integration.
 
 Both endpoints support bearer token authentication. Set
 `DJ_QUEUE_OBSERVABILITY_TOKEN` in `settings.py` and include it as
