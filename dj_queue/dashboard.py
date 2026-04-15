@@ -16,6 +16,7 @@ from dj_queue.db import database_capabilities, get_database_alias
 from dj_queue.models import FailedExecution, Job
 from dj_queue.operations.jobs import (
   discard_blocked_jobs,
+  discard_failed_jobs,
   discard_ready_jobs,
   discard_scheduled_jobs,
   enqueue_job_again,
@@ -530,19 +531,11 @@ def apply_job_action(*, backend_alias, queue_name, state, action, job_ids):
     return f"retried {retried} failed jobs from {queue_name}"
 
   if state == "failed" and action == "discard":
-    alias = get_database_alias(backend_alias)
-    discarded = 0
-    executions = list(
-      FailedExecution.objects.using(alias)
-      .select_related("job")
-      .filter(
-        job_id__in=job_ids,
-        job__backend_alias=backend_alias,
-        job__queue_name=queue_name,
-      )
+    discarded = discard_failed_jobs(
+      job_ids=job_ids,
+      batch_size=max(len(job_ids), 1),
+      backend_alias=backend_alias,
     )
-    for execution in executions:
-      discarded += execution.discard()
     return f"discarded {discarded} failed jobs from {queue_name}"
 
   if state == "finished" and action == "enqueue":

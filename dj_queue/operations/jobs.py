@@ -219,11 +219,7 @@ def claim_ready_jobs(
   )
 
   with transaction.atomic(using=alias):
-    queryset = (
-      ReadyExecution.objects.using(alias)
-      .select_related("job")
-      .filter(job__backend_alias=backend_alias)
-    )
+    queryset = ReadyExecution.objects.using(alias).filter(job__backend_alias=backend_alias)
     if paused_queue_names:
       queryset = queryset.exclude(queue_name__in=paused_queue_names)
     ready_rows = _select_ready_rows(
@@ -235,7 +231,12 @@ def claim_ready_jobs(
     if not ready_rows:
       return []
 
-    jobs = [row.job for row in ready_rows]
+    jobs_by_id = {
+      job.id: job
+      for job in Job.objects.using(alias).filter(pk__in=[row.job_id for row in ready_rows])
+    }
+    jobs = [jobs_by_id[row.job_id] for row in ready_rows]
+
     ReadyExecution.objects.using(alias).filter(pk__in=[row.pk for row in ready_rows]).delete()
     _bulk_create(
       alias,
@@ -338,7 +339,11 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
     if not scheduled_rows:
       return []
 
-    jobs = list(Job.objects.using(alias).filter(pk__in=[row.job_id for row in scheduled_rows]))
+    jobs_by_id = {
+      job.id: job
+      for job in Job.objects.using(alias).filter(pk__in=[row.job_id for row in scheduled_rows])
+    }
+    jobs = [jobs_by_id[row.job_id] for row in scheduled_rows]
 
     ScheduledExecution.objects.using(alias).filter(
       pk__in=[row.pk for row in scheduled_rows]
@@ -386,16 +391,33 @@ def enqueue_job_again(job_id, *, backend_alias="default"):
   return job
 
 
-def discard_failed_job(job_id, *, backend_alias="default"):
+def discard_failed_jobs(*, job_ids=None, batch_size=500, backend_alias="default"):
   alias = get_database_alias(backend_alias)
-  queryset = Job.objects.using(alias).filter(pk=job_id, failed_execution__isnull=False)
-  deleted = queryset.count()
-  if not deleted:
-    return 0
 
-  queryset.delete()
-  log_event("job.discarded", job_id=str(job_id), reason="failed")
-  return deleted
+  with transaction.atomic(using=alias):
+    queryset = (
+      FailedExecution.objects.using(alias).filter(job__backend_alias=backend_alias).order_by("id")
+    )
+    if job_ids is not None:
+      queryset = queryset.filter(job_id__in=job_ids)
+    failed_rows = list(queryset[:batch_size])
+    if not failed_rows:
+      return 0
+
+    jobs_by_id = {
+      job.id: job
+      for job in Job.objects.using(alias).filter(pk__in=[row.job_id for row in failed_rows])
+    }
+    jobs = [jobs_by_id[row.job_id] for row in failed_rows]
+    Job.objects.using(alias).filter(pk__in=[row.job_id for row in failed_rows]).delete()
+
+  for job in jobs:
+    log_event("job.discarded", job_id=str(job.id), reason="failed")
+  return len(jobs)
+
+
+def discard_failed_job(job_id, *, backend_alias="default"):
+  return discard_failed_jobs(job_ids=[job_id], batch_size=1, backend_alias=backend_alias)
 
 
 def discard_ready_jobs(*, job_ids=None, batch_size=500, backend_alias="default"):
@@ -404,21 +426,22 @@ def discard_ready_jobs(*, job_ids=None, batch_size=500, backend_alias="default")
 
   with transaction.atomic(using=alias):
     queryset = (
-      ReadyExecution.objects.using(alias)
-      .select_related("job")
-      .filter(job__backend_alias=backend_alias)
-      .order_by("id")
+      ReadyExecution.objects.using(alias).filter(job__backend_alias=backend_alias).order_by("id")
     )
     if job_ids is not None:
       queryset = queryset.filter(job_id__in=job_ids)
     ready_rows = list(
       locked_queryset(queryset, use_skip_locked=config.use_skip_locked)[:batch_size]
     )
-    jobs = [row.job for row in ready_rows]
-    if not jobs:
+    if not ready_rows:
       return 0
 
-    Job.objects.using(alias).filter(pk__in=[job.pk for job in jobs]).delete()
+    jobs_by_id = {
+      job.id: job
+      for job in Job.objects.using(alias).filter(pk__in=[row.job_id for row in ready_rows])
+    }
+    jobs = [jobs_by_id[row.job_id] for row in ready_rows]
+    Job.objects.using(alias).filter(pk__in=[row.job_id for row in ready_rows]).delete()
 
   for job in jobs:
     _release_concurrency_slot(job)
@@ -433,7 +456,6 @@ def discard_scheduled_jobs(*, job_ids=None, batch_size=500, backend_alias="defau
   with transaction.atomic(using=alias):
     queryset = (
       ScheduledExecution.objects.using(alias)
-      .select_related("job")
       .filter(job__backend_alias=backend_alias)
       .order_by("id")
     )
@@ -442,11 +464,15 @@ def discard_scheduled_jobs(*, job_ids=None, batch_size=500, backend_alias="defau
     scheduled_rows = list(
       locked_queryset(queryset, use_skip_locked=config.use_skip_locked)[:batch_size]
     )
-    jobs = [row.job for row in scheduled_rows]
-    if not jobs:
+    if not scheduled_rows:
       return 0
 
-    Job.objects.using(alias).filter(pk__in=[job.pk for job in jobs]).delete()
+    jobs_by_id = {
+      job.id: job
+      for job in Job.objects.using(alias).filter(pk__in=[row.job_id for row in scheduled_rows])
+    }
+    jobs = [jobs_by_id[row.job_id] for row in scheduled_rows]
+    Job.objects.using(alias).filter(pk__in=[row.job_id for row in scheduled_rows]).delete()
 
   for job in jobs:
     _release_concurrency_slot(job)
@@ -460,21 +486,22 @@ def discard_blocked_jobs(*, job_ids=None, batch_size=500, backend_alias="default
 
   with transaction.atomic(using=alias):
     queryset = (
-      BlockedExecution.objects.using(alias)
-      .select_related("job")
-      .filter(job__backend_alias=backend_alias)
-      .order_by("id")
+      BlockedExecution.objects.using(alias).filter(job__backend_alias=backend_alias).order_by("id")
     )
     if job_ids is not None:
       queryset = queryset.filter(job_id__in=job_ids)
     blocked_rows = list(
       locked_queryset(queryset, use_skip_locked=config.use_skip_locked)[:batch_size]
     )
-    jobs = [row.job for row in blocked_rows]
-    if not jobs:
+    if not blocked_rows:
       return 0
 
-    Job.objects.using(alias).filter(pk__in=[job.pk for job in jobs]).delete()
+    jobs_by_id = {
+      job.id: job
+      for job in Job.objects.using(alias).filter(pk__in=[row.job_id for row in blocked_rows])
+    }
+    jobs = [jobs_by_id[row.job_id] for row in blocked_rows]
+    Job.objects.using(alias).filter(pk__in=[row.job_id for row in blocked_rows]).delete()
 
   for job in jobs:
     log_event("job.discarded", job_id=str(job.id), reason="blocked")

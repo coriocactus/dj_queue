@@ -278,14 +278,13 @@ class FailedExecution(models.Model):
 
   @classmethod
   def discard_all_in_batches(cls, *, batch_size=500, backend_alias="default"):
-    alias = get_database_alias(backend_alias)
-    deleted = 0
-    while True:
-      job_ids = list(cls.objects.using(alias).values_list("job_id", flat=True)[:batch_size])
-      if not job_ids:
-        return deleted
-      for job_id in job_ids:
-        deleted += _discard_failed_job(job_id, backend_alias=backend_alias)
+    operation = import_string("dj_queue.operations.jobs.discard_failed_jobs")
+    return _discard_jobs_for_state(
+      cls,
+      operation,
+      batch_size=batch_size,
+      backend_alias=backend_alias,
+    )
 
 
 def _retry_failed_job(job_id, *, backend_alias):
