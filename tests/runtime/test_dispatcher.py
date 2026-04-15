@@ -34,7 +34,7 @@ def make_scheduled_job(task=echo, *, scheduled_at=None, **overrides):
     queue_name=overrides.pop("queue_name", task.queue_name),
     priority=overrides.pop("priority", task.priority),
     payload=payload,
-    backend_name=overrides.pop("backend_name", task.backend),
+    backend_alias=overrides.pop("backend_alias", task.backend),
     scheduled_at=overrides.pop("job_scheduled_at", scheduled_at),
     concurrency_key=overrides.pop("concurrency_key", None),
     finished_at=overrides.pop("finished_at", None),
@@ -78,10 +78,10 @@ def test_dispatcher_registers_process_with_metadata():
 
   process = dispatcher.start()
 
+  assert process.backend_alias == "default"
   assert process.kind == "Dispatcher"
   assert process.name == "dispatcher-1"
   assert process.metadata == {
-    "backend_alias": "default",
     "batch_size": 25,
     "polling_interval": 0.5,
     "concurrency_maintenance": True,

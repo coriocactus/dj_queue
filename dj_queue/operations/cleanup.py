@@ -90,7 +90,9 @@ def clear_recurring_executions(
     now = timezone.now()
   cutoff = now - timedelta(seconds=older_than)
   queryset = (
-    RecurringExecution.objects.using(alias).filter(run_at__lt=cutoff).order_by("run_at", "id")
+    RecurringExecution.objects.using(alias)
+    .filter(backend_alias=backend_alias, run_at__lt=cutoff)
+    .order_by("run_at", "id")
   )
   if task_key is not None:
     queryset = queryset.filter(task_key=task_key)
@@ -99,5 +101,12 @@ def clear_recurring_executions(
   if not execution_ids:
     return 0
 
-  deleted, _ = RecurringExecution.objects.using(alias).filter(pk__in=execution_ids).delete()
+  deleted, _ = (
+    RecurringExecution.objects.using(alias)
+    .filter(
+      backend_alias=backend_alias,
+      pk__in=execution_ids,
+    )
+    .delete()
+  )
   return deleted

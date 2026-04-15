@@ -9,7 +9,13 @@ from dj_queue.operations.jobs import enqueue_job
 def upsert_static_recurring_tasks(recurring_configs, *, backend_alias="default"):
   alias = get_database_alias(backend_alias)
   active_keys = set()
-  existing = {task.key: task for task in RecurringTask.objects.using(alias).filter(static=True)}
+  existing = {
+    task.key: task
+    for task in RecurringTask.objects.using(alias).filter(
+      backend_alias=backend_alias,
+      static=True,
+    )
+  }
   to_create = []
 
   for recurring_config in recurring_configs.values():
@@ -28,7 +34,9 @@ def upsert_static_recurring_tasks(recurring_configs, *, backend_alias="default")
     }
     existing_task = existing.get(recurring_config.key)
     if existing_task is None:
-      to_create.append(RecurringTask(key=recurring_config.key, **desired))
+      to_create.append(
+        RecurringTask(backend_alias=backend_alias, key=recurring_config.key, **desired)
+      )
       continue
 
     changed_fields = []
@@ -44,7 +52,7 @@ def upsert_static_recurring_tasks(recurring_configs, *, backend_alias="default")
   if to_create:
     RecurringTask.objects.using(alias).bulk_create(to_create)
 
-  queryset = RecurringTask.objects.using(alias).filter(static=True)
+  queryset = RecurringTask.objects.using(alias).filter(backend_alias=backend_alias, static=True)
   if active_keys:
     queryset = queryset.exclude(key__in=active_keys)
   queryset.delete()
@@ -56,6 +64,7 @@ def fire_recurring_task(recurring_task, run_at, *, backend_alias="default"):
   with transaction.atomic(using=alias):
     try:
       execution = RecurringExecution.objects.using(alias).create(
+        backend_alias=backend_alias,
         task_key=recurring_task.key,
         run_at=run_at,
       )

@@ -7,6 +7,7 @@ from django.utils import timezone
 from datetime import timedelta
 
 from dj_queue.config import load_backend_config
+from dj_queue.db import get_database_alias
 from dj_queue.exceptions import ProcessExitError, ProcessMissingError, ProcessPrunedError
 from dj_queue.log import log_event
 from dj_queue.models import ClaimedExecution, Process
@@ -119,8 +120,11 @@ class Supervisor(BaseRunner):
       self.pidfile = None
 
   def fail_startup_orphaned_jobs(self):
+    alias = get_database_alias(self.backend_alias)
     orphaned_job_ids = list(
-      ClaimedExecution.objects.filter(process__isnull=True).values_list("job_id", flat=True)
+      ClaimedExecution.objects.using(alias)
+      .filter(process__isnull=True, job__backend_alias=self.backend_alias)
+      .values_list("job_id", flat=True)
     )
     failed_jobs = []
     with app_executor():
@@ -138,8 +142,12 @@ class Supervisor(BaseRunner):
   def prune_stale_process_rows(self, *, now=None):
     if now is None:
       now = timezone.now()
+    alias = get_database_alias(self.backend_alias)
     cutoff = now - timedelta(seconds=self.config.process_alive_threshold)
-    queryset = Process.objects.filter(last_heartbeat_at__lt=cutoff)
+    queryset = Process.objects.using(alias).filter(
+      backend_alias=self.backend_alias,
+      last_heartbeat_at__lt=cutoff,
+    )
     if self.process is not None:
       queryset = queryset.exclude(pk=self.process.pk)
 
@@ -147,7 +155,9 @@ class Supervisor(BaseRunner):
     pruned_processes = []
     for process in stale_processes:
       claimed_job_ids = list(
-        ClaimedExecution.objects.filter(process=process).values_list("job_id", flat=True)
+        ClaimedExecution.objects.using(alias)
+        .filter(process=process)
+        .values_list("job_id", flat=True)
       )
       with app_executor():
         for job_id in claimed_job_ids:
@@ -463,12 +473,17 @@ class ForkSupervisor(Supervisor):
     return self.check_children()
 
   def _fail_claimed_jobs_for_pid(self, pid):
-    process = Process.objects.filter(pid=pid).first()
+    alias = get_database_alias(self.backend_alias)
+    process = (
+      Process.objects.using(alias).filter(pid=pid, backend_alias=self.backend_alias).first()
+    )
     if process is None:
       return []
 
     claimed_job_ids = list(
-      ClaimedExecution.objects.filter(process=process).values_list("job_id", flat=True)
+      ClaimedExecution.objects.using(alias)
+      .filter(process=process)
+      .values_list("job_id", flat=True)
     )
     failed_jobs = []
     with app_executor():

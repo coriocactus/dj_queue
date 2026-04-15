@@ -40,18 +40,18 @@ try:
       )
       recurring_tasks = GaugeMetricFamily(
         "dj_queue_recurring_tasks",
-        "Current recurring task count by queue database",
-        labels=["queue_database"],
+        "Current recurring task count by backend",
+        labels=["backend"],
       )
       semaphores = GaugeMetricFamily(
         "dj_queue_semaphores",
         "Current semaphore count by queue database",
         labels=["queue_database"],
       )
-      db_process_rows = GaugeMetricFamily(
-        "dj_queue_database_process_rows",
-        "Current process row count by queue database",
-        labels=["queue_database"],
+      process_rows = GaugeMetricFamily(
+        "dj_queue_process_rows",
+        "Current process row count by backend",
+        labels=["backend"],
       )
 
       seen_queue_databases = set()
@@ -92,21 +92,22 @@ try:
               counts.get(status, 0),
             )
 
+        recurring_tasks.add_metric(
+          [backend_alias],
+          len(snapshot["recurring_rows"]),
+        )
+        process_rows.add_metric(
+          [backend_alias],
+          len(snapshot["process_rows"]),
+        )
+
         if queue_database_alias in seen_queue_databases:
           continue
         seen_queue_databases.add(queue_database_alias)
 
-        recurring_tasks.add_metric(
-          [queue_database_alias],
-          len(snapshot["recurring_rows"]),
-        )
         semaphores.add_metric(
           [queue_database_alias],
           len(snapshot["semaphore_rows"]),
-        )
-        db_process_rows.add_metric(
-          [queue_database_alias],
-          len(snapshot["process_rows"]),
         )
 
       yield queue_jobs
@@ -117,7 +118,7 @@ try:
       yield runner_processes_by_kind
       yield recurring_tasks
       yield semaphores
-      yield db_process_rows
+      yield process_rows
 
   registry = CollectorRegistry(auto_describe=False)
   registry.register(DjQueueCollector())

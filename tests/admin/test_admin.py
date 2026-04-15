@@ -42,7 +42,7 @@ def make_job(**overrides):
     queue_name=overrides.pop("queue_name", "default"),
     priority=overrides.pop("priority", 0),
     payload=payload,
-    backend_name=overrides.pop("backend_name", "default"),
+    backend_alias=overrides.pop("backend_alias", "default"),
     scheduled_at=overrides.pop("scheduled_at", None),
     concurrency_key=overrides.pop("concurrency_key", None),
     finished_at=overrides.pop("finished_at", None),
@@ -64,6 +64,7 @@ def make_failed_job(**overrides):
 
 def make_process(**overrides):
   return Process.objects.create(
+    backend_alias=overrides.pop("backend_alias", "default"),
     kind=overrides.pop("kind", "Worker"),
     pid=overrides.pop("pid", 12345),
     hostname=overrides.pop("hostname", "localhost"),
@@ -149,6 +150,7 @@ def test_job_admin_queue_name_links_to_matching_queue_state(admin_client):
 
 def test_job_admin_recurring_task_filter(admin_client):
   task = RecurringTask.objects.create(
+    backend_alias="default",
     key="nightly",
     task_path="tests.tasks.echo",
     payload={"args": [], "kwargs": {}},
@@ -159,7 +161,12 @@ def test_job_admin_recurring_task_filter(admin_client):
   )
   recurring_job = make_job(task_path="tests.tasks.recurring")
   _other_job = make_job(task_path="tests.tasks.other")
-  RecurringExecution.objects.create(job=recurring_job, task_key=task.key, run_at=timezone.now())
+  RecurringExecution.objects.create(
+    backend_alias="default",
+    job=recurring_job,
+    task_key=task.key,
+    run_at=timezone.now(),
+  )
 
   response = admin_client.get(
     reverse("admin:dj_queue_job_changelist"),
@@ -279,12 +286,12 @@ def test_job_admin_backend_param_controls_shared_database_scope(admin_client, se
       "OPTIONS": {},
     },
   }
-  default_job = make_job(task_path="tests.tasks.default", backend_name="default")
-  secondary_job = make_job(task_path="tests.tasks.secondary", backend_name="secondary")
+  default_job = make_job(task_path="tests.tasks.default", backend_alias="default")
+  secondary_job = make_job(task_path="tests.tasks.secondary", backend_alias="secondary")
 
   response = admin_client.get(
     reverse("admin:dj_queue_job_changelist"),
-    {"backend": "secondary", "backend_name": "default"},
+    {"backend": "secondary", "backend_alias": "default"},
   )
 
   assert response.status_code == 200
@@ -309,12 +316,12 @@ def test_failed_execution_admin_backend_param_controls_shared_database_scope(
       "OPTIONS": {},
     },
   }
-  default_job, _ = make_failed_job(task_path="tests.tasks.default", backend_name="default")
-  secondary_job, _ = make_failed_job(task_path="tests.tasks.secondary", backend_name="secondary")
+  default_job, _ = make_failed_job(task_path="tests.tasks.default", backend_alias="default")
+  secondary_job, _ = make_failed_job(task_path="tests.tasks.secondary", backend_alias="secondary")
 
   response = admin_client.get(
     reverse("admin:dj_queue_failedexecution_changelist"),
-    {"backend": "secondary", "job__backend_name": "default"},
+    {"backend": "secondary", "job__backend_alias": "default"},
   )
 
   assert response.status_code == 200
@@ -471,7 +478,7 @@ def test_job_change_view_enqueue_action(admin_client):
   assert new_job.queue_name == job.queue_name
   assert new_job.priority == job.priority
   assert new_job.payload == job.payload
-  assert new_job.backend_name == job.backend_name
+  assert new_job.backend_alias == job.backend_alias
   assert new_job.scheduled_at == job.scheduled_at
   assert ReadyExecution.objects.filter(job=new_job).exists() is True
   messages = list(response.context["messages"])
@@ -747,7 +754,6 @@ def test_backend_scoped_raw_admin_pages_show_backend_filter(admin_client):
     "admin:dj_queue_process_changelist",
     "admin:dj_queue_recurringtask_changelist",
     "admin:dj_queue_pause_changelist",
-    "admin:dj_queue_semaphore_changelist",
   ):
     response = admin_client.get(reverse(url_name))
 
@@ -755,6 +761,13 @@ def test_backend_scoped_raw_admin_pages_show_backend_filter(admin_client):
     content = response.content.decode()
     assert 'id="changelist-filter"' in content
     assert "By backend" in content
+
+  semaphore_response = admin_client.get(reverse("admin:dj_queue_semaphore_changelist"))
+
+  assert semaphore_response.status_code == 200
+  semaphore_content = semaphore_response.content.decode()
+  assert 'id="changelist-filter"' in semaphore_content
+  assert "By backend" in semaphore_content
 
 
 def test_semaphore_admin_blocked_waiters_sort(admin_client):
@@ -856,7 +869,7 @@ def test_job_change_view_breadcrumb_links_preserve_backend(admin_client, setting
       "OPTIONS": {},
     },
   }
-  job = make_job(backend_name="secondary")
+  job = make_job(backend_alias="secondary")
 
   response = admin_client.get(
     reverse("admin:dj_queue_job_change", args=[job.pk]),

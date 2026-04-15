@@ -63,7 +63,7 @@ def make_finished_job(*, finished_at, return_value, task=echo):
     queue_name=task.queue_name,
     priority=task.priority,
     payload={"args": [], "kwargs": {}},
-    backend_name=task.backend,
+    backend_alias=task.backend,
     finished_at=finished_at,
     return_value=return_value,
   )
@@ -98,7 +98,7 @@ def test_scheduler_persists_static_tasks():
 
   scheduler.sync_static_tasks()
 
-  task = RecurringTask.objects.get(key="static-task")
+  task = RecurringTask.objects.get(backend_alias="default", key="static-task")
   assert task.static is True
   assert task.payload == {"args": ["hello"], "kwargs": {}}
   assert task.queue_name == "maintenance"
@@ -115,8 +115,15 @@ def test_scheduler_persists_static_tasks():
   )
   scheduler.sync_static_tasks()
 
-  assert RecurringTask.objects.filter(key="static-task").exists() is False
-  assert RecurringTask.objects.filter(key="replacement-task", static=True).exists() is True
+  assert RecurringTask.objects.filter(backend_alias="default", key="static-task").exists() is False
+  assert (
+    RecurringTask.objects.filter(
+      backend_alias="default",
+      key="replacement-task",
+      static=True,
+    ).exists()
+    is True
+  )
 
 
 def test_scheduler_static_sync_is_idempotent_when_unchanged():
@@ -134,12 +141,17 @@ def test_scheduler_static_sync_is_idempotent_when_unchanged():
   )
 
   scheduler.sync_static_tasks()
-  first_updated_at = RecurringTask.objects.get(key="static-task").updated_at
+  first_updated_at = RecurringTask.objects.get(
+    backend_alias="default", key="static-task"
+  ).updated_at
 
   time.sleep(0.01)
   scheduler.sync_static_tasks()
 
-  assert RecurringTask.objects.get(key="static-task").updated_at == first_updated_at
+  assert (
+    RecurringTask.objects.get(backend_alias="default", key="static-task").updated_at
+    == first_updated_at
+  )
 
 
 def test_scheduler_fires_static_task():
@@ -160,7 +172,7 @@ def test_scheduler_fires_static_task():
   fired_jobs = scheduler.poll_once(now=now)
 
   assert [job.payload for job in fired_jobs] == [{"args": ["hello"], "kwargs": {}}]
-  assert RecurringExecution.objects.count() == 1
+  assert RecurringExecution.objects.filter(backend_alias="default").count() == 1
   scheduler.stop()
 
 
@@ -183,7 +195,7 @@ def test_scheduler_dedup_across_instances():
   scheduler_two.poll_once(now=now)
 
   assert Job.objects.count() == 1
-  assert RecurringExecution.objects.count() == 1
+  assert RecurringExecution.objects.filter(backend_alias="default").count() == 1
   scheduler_one.stop()
   scheduler_two.stop()
 
@@ -242,7 +254,9 @@ def test_scheduler_reschedules_changed_dynamic_task():
   fired_jobs = scheduler.poll_once(now=now)
 
   assert [job.payload for job in fired_jobs] == [{"args": ["updated"], "kwargs": {}}]
-  assert RecurringTask.objects.get(key="dynamic-task").schedule == "* * * * *"
+  assert (
+    RecurringTask.objects.get(backend_alias="default", key="dynamic-task").schedule == "* * * * *"
+  )
   scheduler.stop()
 
 
@@ -256,7 +270,7 @@ def test_internal_cleanup_runs_without_persisted_internal_recurring_task():
 
   scheduler.poll_once(now=fixed_now())
 
-  assert RecurringTask.objects.count() == 0
+  assert RecurringTask.objects.filter(backend_alias="default").count() == 0
   scheduler.stop()
 
 
@@ -291,14 +305,14 @@ def test_internal_cleanup_deletes_old_failed_jobs_when_configured():
     queue_name=echo.queue_name,
     priority=echo.priority,
     payload={"args": [], "kwargs": {}},
-    backend_name=echo.backend,
+    backend_alias=echo.backend,
   )
   recent_job = Job.objects.create(
     task_path=echo.module_path,
     queue_name=echo.queue_name,
     priority=echo.priority,
     payload={"args": [], "kwargs": {}},
-    backend_name=echo.backend,
+    backend_alias=echo.backend,
   )
   old_failed = FailedExecution.objects.create(
     job=old_job,
@@ -334,10 +348,12 @@ def test_internal_cleanup_deletes_old_failed_jobs_when_configured():
 def test_internal_cleanup_deletes_old_recurring_executions_when_configured():
   now = fixed_now()
   old_execution = RecurringExecution.objects.create(
+    backend_alias="default",
     task_key="nightly",
     run_at=now - timedelta(minutes=10),
   )
   recent_execution = RecurringExecution.objects.create(
+    backend_alias="default",
     task_key="nightly",
     run_at=now - timedelta(seconds=10),
   )

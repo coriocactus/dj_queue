@@ -4,7 +4,8 @@ from django.db import models
 
 
 class RecurringTask(models.Model):
-  key = models.CharField(max_length=255, unique=True)
+  backend_alias = models.CharField(max_length=64, default="default")
+  key = models.CharField(max_length=255)
   task_path = models.CharField(max_length=255)
   payload = models.JSONField(null=True, blank=True)
   schedule = models.CharField(max_length=255)
@@ -17,6 +18,13 @@ class RecurringTask(models.Model):
 
   class Meta:
     db_table = "dj_queue_recurring_tasks"
+    constraints = [
+      models.UniqueConstraint(
+        fields=["backend_alias", "key"],
+        name="dj_queue_recurring_tasks_backend_alias_key_unique",
+      )
+    ]
+    indexes = [models.Index(fields=["backend_alias", "key"])]
 
   def clean(self):
     super().clean()
@@ -29,6 +37,7 @@ class RecurringTask(models.Model):
 
 
 class RecurringExecution(models.Model):
+  backend_alias = models.CharField(max_length=64, default="default")
   job = models.OneToOneField(
     "dj_queue.Job",
     null=True,
@@ -44,8 +53,8 @@ class RecurringExecution(models.Model):
     db_table = "dj_queue_recurring_executions"
     constraints = [
       models.UniqueConstraint(
-        fields=["task_key", "run_at"],
-        name="dj_queue_recurring_executions_task_key_run_at_unique",
+        fields=["backend_alias", "task_key", "run_at"],
+        name="dj_queue_recur_exec_backend_run_at_unique",
       )
     ]
-    indexes = [models.Index(fields=["task_key", "run_at"])]
+    indexes = [models.Index(fields=["backend_alias", "task_key", "run_at"])]

@@ -27,7 +27,7 @@ class Command(BaseCommand):
     healthy = (
       Process.objects.using(alias)
       .filter(
-        metadata__backend_alias=backend_alias,
+        backend_alias=backend_alias,
         last_heartbeat_at__gte=cutoff,
       )
       .exists()

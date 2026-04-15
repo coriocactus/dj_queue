@@ -20,6 +20,7 @@ def test_schedule_recurring_task_creates_dynamic_row():
   )
 
   assert task.key == "dynamic-task"
+  assert task.backend_alias == "default"
   assert task.static is False
   assert task.payload == {"args": ["hello"], "kwargs": {"value": "world"}}
   assert task.queue_name == "maintenance"
@@ -37,7 +38,51 @@ def test_unschedule_recurring_task_removes_dynamic_row():
   deleted = unschedule_recurring_task("dynamic-task")
 
   assert deleted == 1
-  assert RecurringTask.objects.filter(key="dynamic-task").exists() is False
+  assert (
+    RecurringTask.objects.filter(backend_alias="default", key="dynamic-task").exists() is False
+  )
+
+
+def test_recurring_tasks_are_backend_scoped(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {"database_alias": "default"},
+    },
+    "secondary": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {"database_alias": "default"},
+    },
+  }
+  schedule_recurring_task(
+    key="dynamic-task",
+    task_path="tests.tasks.echo",
+    schedule="* * * * *",
+    backend_alias="default",
+  )
+  schedule_recurring_task(
+    key="dynamic-task",
+    task_path="tests.tasks.echo",
+    schedule="0 * * * *",
+    backend_alias="secondary",
+  )
+
+  assert RecurringTask.objects.filter(backend_alias="default", key="dynamic-task").exists() is True
+  assert (
+    RecurringTask.objects.filter(backend_alias="secondary", key="dynamic-task").exists() is True
+  )
+
+  deleted = unschedule_recurring_task("dynamic-task", backend_alias="default")
+
+  assert deleted == 1
+  assert (
+    RecurringTask.objects.filter(backend_alias="default", key="dynamic-task").exists() is False
+  )
+  assert (
+    RecurringTask.objects.filter(backend_alias="secondary", key="dynamic-task").exists() is True
+  )
 
 
 def test_invalid_cron_is_rejected():

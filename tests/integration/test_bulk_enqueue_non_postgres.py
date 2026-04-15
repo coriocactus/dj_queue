@@ -26,11 +26,11 @@ pytestmark = [
 
 
 def test_bulk_enqueue_stress_smoke_on_non_postgres_backends():
-  backend_name = os.environ.get("DB_BACKEND", "sqlite")
-  task_count = 5_000 if backend_name == "sqlite" else 3_000
+  db_backend = os.environ.get("DB_BACKEND", "sqlite")
+  task_count = 5_000 if db_backend == "sqlite" else 3_000
   backend = echo.get_backend()
   bulk_calls = [(echo, (f"bulk-{index}",), {}) for index in range(task_count)]
-  logger.info("bulk enqueue smoke start backend=%s task_count=%s", backend_name, task_count)
+  logger.info("bulk enqueue smoke start backend=%s task_count=%s", db_backend, task_count)
 
   Job.objects.count()
 
@@ -39,7 +39,7 @@ def test_bulk_enqueue_stress_smoke_on_non_postgres_backends():
   bulk_duration = perf_counter() - bulk_started_at
   logger.info(
     "bulk enqueue smoke bulk backend=%s task_count=%s duration=%.3fs",
-    backend_name,
+    db_backend,
     task_count,
     bulk_duration,
   )
@@ -56,7 +56,7 @@ def test_bulk_enqueue_stress_smoke_on_non_postgres_backends():
   single_duration = perf_counter() - single_started_at
   logger.info(
     "bulk enqueue smoke single backend=%s task_count=%s duration=%.3fs speedup=%.2fx",
-    backend_name,
+    db_backend,
     task_count,
     single_duration,
     single_duration / bulk_duration if bulk_duration else float("inf"),

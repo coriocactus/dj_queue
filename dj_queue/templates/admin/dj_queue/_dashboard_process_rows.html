@@ -4,6 +4,7 @@
       {{ process.name }}
       {% if process.is_child %}<span class="djq-process-meta">under {{ process.group_parent_name }}</span>{% endif %}
     </th>
+    <td>{{ process.backend_alias }}</td>
     <td>{{ process.kind }}</td>
     <td><span class="{% if process.is_live %}djq-status-live{% else %}djq-status-stale{% endif %}">{% if process.is_live %}live{% else %}stale{% endif %}</span></td>
     <td>{{ process.last_heartbeat_at|date:"Y-m-d H:i:s" }} ({{ process.heartbeat_age_seconds|floatformat:1 }}s ago)</td>

@@ -45,7 +45,7 @@ class Job(models.Model):
   queue_name = models.CharField(max_length=64, default="default")
   priority = models.SmallIntegerField(default=0)
   payload = models.JSONField(default=dict)
-  backend_name = models.CharField(max_length=64)
+  backend_alias = models.CharField(max_length=64)
   scheduled_at = models.DateTimeField(null=True, blank=True)
   concurrency_key = models.CharField(max_length=255, null=True, blank=True)
   finished_at = models.DateTimeField(null=True, blank=True)
@@ -118,6 +118,7 @@ class ReadyExecution(models.Model):
   queue_name = models.CharField(max_length=64)
   priority = models.SmallIntegerField()
   created_at = models.DateTimeField(auto_now_add=True)
+  latency_started_at = models.DateTimeField(null=True, blank=True)
 
   class Meta:
     db_table = "dj_queue_ready_executions"
@@ -262,10 +263,10 @@ class FailedExecution(models.Model):
     return super().save(*args, **kwargs)
 
   def retry(self):
-    return _retry_failed_job(self.job_id, backend_alias=self.job.backend_name)
+    return _retry_failed_job(self.job_id, backend_alias=self.job.backend_alias)
 
   def discard(self):
-    return _discard_failed_job(self.job_id, backend_alias=self.job.backend_name)
+    return _discard_failed_job(self.job_id, backend_alias=self.job.backend_alias)
 
   @classmethod
   def retry_all(cls, queryset):

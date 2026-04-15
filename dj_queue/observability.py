@@ -6,6 +6,7 @@ from datetime import timedelta
 from croniter import croniter
 from django.conf import settings
 from django.db.models import Count, Max, Min
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from dj_queue.config import load_backend_config
@@ -29,7 +30,6 @@ from dj_queue.models import (
 class BackendChoice:
   alias: str
   database_alias: str
-
 
 
 def configured_backend_aliases():
@@ -64,12 +64,6 @@ def backend_snapshot(*, backend_alias, now=None):
     process_cutoff=process_cutoff,
     scope="backend",
   )
-  queue_database_process_rows = process_rows(
-    backend_alias=backend_alias,
-    now=now,
-    process_cutoff=process_cutoff,
-    scope="database",
-  )
   recurring_rows = recurring_rows_for_backend(backend_alias=backend_alias, now=now)
   semaphore_rows = semaphore_rows_for_backend(backend_alias=backend_alias)
   runner_metrics = process_counts(backend_process_rows)
@@ -79,8 +73,7 @@ def backend_snapshot(*, backend_alias, now=None):
     "queue_database_alias": queue_database_alias,
     "process_alive_threshold": config.process_alive_threshold,
     "queue_rows": queue_state_rows,
-    "process_rows": queue_database_process_rows,
-    "runner_process_rows": backend_process_rows,
+    "process_rows": backend_process_rows,
     "recurring_rows": recurring_rows,
     "semaphore_rows": semaphore_rows,
     "runner_metrics": runner_metrics,
@@ -111,18 +104,6 @@ def stats_payload(*, now=None):
   }
 
 
-
-def split_queue_rows(queue_rows):
-  backend_queue_rows = []
-  shared_queue_rows = []
-  for row in queue_rows:
-    if row["has_backend_jobs"]:
-      backend_queue_rows.append(row)
-      continue
-    shared_queue_rows.append(row)
-  return backend_queue_rows, shared_queue_rows
-
-
 def process_counts(process_rows):
   counts = {
     "live": 0,
@@ -143,50 +124,58 @@ def queue_rows(*, backend_alias, now, process_cutoff):
   queue_names = set()
 
   ready_counts = _counts_by_value(
-    ReadyExecution.objects.using(alias).filter(job__backend_name=backend_alias),
+    ReadyExecution.objects.using(alias).filter(job__backend_alias=backend_alias),
     field_name="queue_name",
   )
   claimed_counts = _counts_by_value(
-    ClaimedExecution.objects.using(alias).filter(job__backend_name=backend_alias),
+    ClaimedExecution.objects.using(alias).filter(job__backend_alias=backend_alias),
     field_name="job__queue_name",
   )
   scheduled_counts = _counts_by_value(
-    ScheduledExecution.objects.using(alias).filter(job__backend_name=backend_alias),
+    ScheduledExecution.objects.using(alias).filter(job__backend_alias=backend_alias),
     field_name="queue_name",
   )
   blocked_counts = _counts_by_value(
-    BlockedExecution.objects.using(alias).filter(job__backend_name=backend_alias),
+    BlockedExecution.objects.using(alias).filter(job__backend_alias=backend_alias),
     field_name="queue_name",
   )
   failed_counts = _counts_by_value(
-    FailedExecution.objects.using(alias).filter(job__backend_name=backend_alias),
+    FailedExecution.objects.using(alias).filter(job__backend_alias=backend_alias),
     field_name="job__queue_name",
   )
   finished_counts = _counts_by_value(
-    Job.objects.using(alias).filter(backend_name=backend_alias, finished_at__isnull=False),
+    Job.objects.using(alias).filter(backend_alias=backend_alias, finished_at__isnull=False),
     field_name="queue_name",
   )
-  paused_queues = set(Pause.objects.using(alias).values_list("queue_name", flat=True))
-  recurring_queues = set(RecurringTask.objects.using(alias).values_list("queue_name", flat=True))
+  paused_queues = set(
+    Pause.objects.using(alias)
+    .filter(backend_alias=backend_alias)
+    .values_list("queue_name", flat=True)
+  )
+  recurring_queues = set(
+    RecurringTask.objects.using(alias)
+    .filter(backend_alias=backend_alias)
+    .values_list("queue_name", flat=True)
+  )
 
   oldest_ready = {
     row["queue_name"]: row["oldest"]
     for row in ReadyExecution.objects.using(alias)
-    .filter(job__backend_name=backend_alias)
+    .filter(job__backend_alias=backend_alias)
     .values("queue_name")
-    .annotate(oldest=Min("job__created_at"))
+    .annotate(oldest=Min(Coalesce("latency_started_at", "created_at")))
   }
   oldest_scheduled = {
     row["queue_name"]: row["oldest"]
     for row in ScheduledExecution.objects.using(alias)
-    .filter(job__backend_name=backend_alias)
+    .filter(job__backend_alias=backend_alias)
     .values("queue_name")
     .annotate(oldest=Min("scheduled_at"))
   }
   oldest_blocked = {
     row["queue_name"]: row["oldest"]
     for row in BlockedExecution.objects.using(alias)
-    .filter(job__backend_name=backend_alias)
+    .filter(job__backend_alias=backend_alias)
     .values("queue_name")
     .annotate(oldest=Min("expires_at"))
   }
@@ -258,25 +247,39 @@ def queue_snapshot(
     failed_count = state_counts["failed"]
     finished_count = state_counts["finished"]
   if paused is None:
-    paused = Pause.objects.using(alias).filter(queue_name=queue_name).exists()
+    paused = (
+      Pause.objects.using(alias)
+      .filter(
+        backend_alias=backend_alias,
+        queue_name=queue_name,
+      )
+      .exists()
+    )
   if recurring is None:
-    recurring = RecurringTask.objects.using(alias).filter(queue_name=queue_name).exists()
+    recurring = (
+      RecurringTask.objects.using(alias)
+      .filter(
+        backend_alias=backend_alias,
+        queue_name=queue_name,
+      )
+      .exists()
+    )
   if oldest_ready_at is None:
     oldest_ready_at = (
       ReadyExecution.objects.using(alias)
-      .filter(job__backend_name=backend_alias, queue_name=queue_name)
-      .aggregate(oldest=Min("job__created_at"))["oldest"]
+      .filter(job__backend_alias=backend_alias, queue_name=queue_name)
+      .aggregate(oldest=Min(Coalesce("latency_started_at", "created_at")))["oldest"]
     )
   if oldest_scheduled_at is None:
     oldest_scheduled_at = (
       ScheduledExecution.objects.using(alias)
-      .filter(job__backend_name=backend_alias, queue_name=queue_name)
+      .filter(job__backend_alias=backend_alias, queue_name=queue_name)
       .aggregate(oldest=Min("scheduled_at"))["oldest"]
     )
   if oldest_blocked_at is None:
     oldest_blocked_at = (
       BlockedExecution.objects.using(alias)
-      .filter(job__backend_name=backend_alias, queue_name=queue_name)
+      .filter(job__backend_alias=backend_alias, queue_name=queue_name)
       .aggregate(oldest=Min("expires_at"))["oldest"]
     )
   if live_workers is None:
@@ -293,12 +296,6 @@ def queue_snapshot(
   if oldest_ready_at is not None and paused is False:
     latency_seconds = max((now - oldest_ready_at).total_seconds(), 0.0)
 
-  shared_sources = []
-  if paused:
-    shared_sources.append("pause")
-  if recurring:
-    shared_sources.append("recurring task")
-
   return {
     "name": queue_name,
     "ready_count": ready_count,
@@ -311,18 +308,6 @@ def queue_snapshot(
     "latency_seconds": latency_seconds,
     "oldest_scheduled_at": oldest_scheduled_at,
     "oldest_blocked_at": oldest_blocked_at,
-    "has_backend_jobs": any(
-      (
-        ready_count,
-        claimed_count,
-        scheduled_count,
-        blocked_count,
-        failed_count,
-        finished_count,
-      )
-    ),
-    "shared_sources": tuple(shared_sources),
-    "shared_source_labels": ", ".join(shared_sources),
     "live_worker_count": sum(
       1
       for worker in live_workers
@@ -335,7 +320,7 @@ def process_rows(*, backend_alias, now, process_cutoff, scope):
   alias = get_database_alias(backend_alias)
   queryset = Process.objects.using(alias).select_related("supervisor")
   if scope == "backend":
-    queryset = queryset.filter(metadata__backend_alias=backend_alias)
+    queryset = queryset.filter(backend_alias=backend_alias)
   elif scope != "database":
     raise ValueError(f"unknown process scope {scope!r}")
   processes = list(queryset.order_by("name"))
@@ -378,6 +363,7 @@ def process_row(process, *, now, process_cutoff):
   return {
     "id": process.id,
     "name": process.name,
+    "backend_alias": process.backend_alias,
     "kind": process.kind,
     "pid": process.pid,
     "hostname": process.hostname,
@@ -393,6 +379,7 @@ def recurring_rows_for_backend(*, backend_alias, now):
   alias = get_database_alias(backend_alias)
   last_runs = dict(
     RecurringExecution.objects.using(alias)
+    .filter(backend_alias=backend_alias)
     .values_list("task_key")
     .annotate(last_run_at=Max("run_at"))
   )
@@ -406,7 +393,9 @@ def recurring_rows_for_backend(*, backend_alias, now):
       "last_run_at": last_runs.get(task.key),
       "next_run_at": next_run_at(task.schedule, now),
     }
-    for task in RecurringTask.objects.using(alias).order_by("key")
+    for task in RecurringTask.objects.using(alias)
+    .filter(backend_alias=backend_alias)
+    .order_by("key")
   ]
 
 
@@ -431,7 +420,7 @@ def semaphore_rows_for_backend(*, backend_alias):
 def queue_state_counts(*, backend_alias, queue_name):
   alias = get_database_alias(backend_alias)
   base_queryset = Job.objects.using(alias).filter(
-    backend_name=backend_alias,
+    backend_alias=backend_alias,
     queue_name=queue_name,
   )
   return {
@@ -466,9 +455,7 @@ def queue_matches_selectors(queue_name, selectors):
 def _live_processes_for_backend(*, alias, backend_alias, kind, process_cutoff):
   return [
     process
-    for process in Process.objects.using(alias).filter(
-      kind=kind, metadata__backend_alias=backend_alias
-    )
+    for process in Process.objects.using(alias).filter(kind=kind, backend_alias=backend_alias)
     if process.last_heartbeat_at >= process_cutoff
   ]
 

@@ -146,10 +146,7 @@ class BaseRunner:
     return {}
 
   def runtime_metadata(self):
-    return {
-      "backend_alias": self.backend_alias,
-      **self.process_metadata(),
-    }
+    return self.process_metadata()
 
   def _begin_stop(self):
     if self._stopped:
@@ -177,6 +174,7 @@ class BaseRunner:
     with _process_write_context(alias):
       return sqlite_retry(
         lambda: Process.objects.using(alias).create(
+          backend_alias=self.backend_alias,
           kind=self.process_kind,
           pid=self.pid,
           hostname=self.hostname,

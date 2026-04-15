@@ -46,7 +46,7 @@ def make_job(task=echo, **overrides):
     queue_name=overrides.pop("queue_name", task.queue_name),
     priority=overrides.pop("priority", task.priority),
     payload=payload,
-    backend_name=overrides.pop("backend_name", task.backend),
+    backend_alias=overrides.pop("backend_alias", task.backend),
     scheduled_at=overrides.pop("scheduled_at", None),
     concurrency_key=overrides.pop("concurrency_key", None),
     finished_at=overrides.pop("finished_at", None),
@@ -57,6 +57,7 @@ def make_job(task=echo, **overrides):
 
 def make_process(**overrides):
   return Process.objects.create(
+    backend_alias=overrides.pop("backend_alias", "default"),
     kind=overrides.pop("kind", "Worker"),
     pid=overrides.pop("pid", 12345),
     hostname=overrides.pop("hostname", "localhost"),
@@ -362,17 +363,29 @@ def test_clear_failed_jobs_by_age_and_task_path():
 
 @pytest.mark.django_db
 def test_clear_recurring_executions_by_age_and_task_key():
-  old_execution = RecurringExecution.objects.create(task_key="nightly", run_at=timezone.now())
+  old_execution = RecurringExecution.objects.create(
+    backend_alias="default",
+    task_key="nightly",
+    run_at=timezone.now(),
+  )
   RecurringExecution.objects.filter(pk=old_execution.pk).update(
     run_at=timezone.now() - timedelta(minutes=10)
   )
 
-  other_execution = RecurringExecution.objects.create(task_key="hourly", run_at=timezone.now())
+  other_execution = RecurringExecution.objects.create(
+    backend_alias="default",
+    task_key="hourly",
+    run_at=timezone.now(),
+  )
   RecurringExecution.objects.filter(pk=other_execution.pk).update(
     run_at=timezone.now() - timedelta(minutes=10)
   )
 
-  recent_execution = RecurringExecution.objects.create(task_key="nightly", run_at=timezone.now())
+  recent_execution = RecurringExecution.objects.create(
+    backend_alias="default",
+    task_key="nightly",
+    run_at=timezone.now(),
+  )
   RecurringExecution.objects.filter(pk=recent_execution.pk).update(
     run_at=timezone.now() - timedelta(seconds=10)
   )

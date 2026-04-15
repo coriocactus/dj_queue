@@ -44,7 +44,7 @@ def _make_job():
       "args": [],
       "kwargs": {},
     },
-    backend_name="default",
+    backend_alias="default",
   )
 
 

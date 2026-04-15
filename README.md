@@ -382,6 +382,7 @@ separate recurring service.
 Recurring notes:
 
 - schedules are cron expressions
+- recurring task keys are scoped per backend alias
 - only dynamic tasks can be unscheduled at runtime; unscheduling a static task returns `0`
 - Django admin exposes the same unschedule operation on recurring-task list and detail views
 - multiple schedulers sharing the same recurring config dedupe firing in the database
@@ -415,6 +416,10 @@ With this configuration:
 - later jobs for the same key can block until capacity is released
 - `on_conflict = "discard"` turns the same pattern into singleton-style work
 
+Semaphore rows remain shared on the queue database. If you want per-backend
+isolation for a limit, express that in the `concurrency_key` itself rather than
+expecting one semaphore namespace per backend alias.
+
 ## Queue Operations
 
 `QueueInfo` exposes operational queue controls without bypassing the queue
@@ -437,6 +442,7 @@ orders.clear()
 Queue control notes:
 
 - pausing a queue stops future claims, not enqueueing or already-claimed work
+- pause rows are scoped per backend alias
 - `clear()` discards ready jobs only
 - pass `backend_alias=` when you want to target a non-default `TASKS` alias
 
@@ -822,9 +828,9 @@ Exported metric families:
 - `dj_queue_queue_live_workers{backend,queue}`
 - `dj_queue_runner_processes{backend,status}`
 - `dj_queue_runner_processes_by_kind{backend,kind,status}`
-- `dj_queue_recurring_tasks{queue_database}`
+- `dj_queue_recurring_tasks{backend}`
 - `dj_queue_semaphores{queue_database}`
-- `dj_queue_database_process_rows{queue_database}`
+- `dj_queue_process_rows{backend}`
 
 Datadog users can scrape the same endpoint via the OpenMetrics integration.
 

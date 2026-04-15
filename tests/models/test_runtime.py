@@ -7,6 +7,7 @@ from dj_queue.models import Pause, Process, Semaphore
 
 def make_process(**overrides):
   return Process.objects.create(
+    backend_alias=overrides.pop("backend_alias", "default"),
     kind=overrides.pop("kind", "Worker"),
     pid=overrides.pop("pid", 12345),
     hostname=overrides.pop("hostname", "localhost"),
@@ -26,7 +27,7 @@ def test_runtime_control_models_support_crud():
     limit=2,
     expires_at=timezone.now(),
   )
-  pause = Pause.objects.create(queue_name="emails")
+  pause = Pause.objects.create(backend_alias="default", queue_name="emails")
   process = make_process(metadata={"queues": ["default"], "threads": 3})
 
   semaphore.value = 0
@@ -52,10 +53,18 @@ def test_runtime_control_models_support_crud():
 
 @pytest.mark.django_db
 def test_pause_queue_name_unique():
-  Pause.objects.create(queue_name="emails")
+  Pause.objects.create(backend_alias="default", queue_name="emails")
 
   with pytest.raises(IntegrityError), transaction.atomic():
-    Pause.objects.create(queue_name="emails")
+    Pause.objects.create(backend_alias="default", queue_name="emails")
+
+
+@pytest.mark.django_db
+def test_pause_queue_name_is_unique_per_backend():
+  Pause.objects.create(backend_alias="default", queue_name="emails")
+  Pause.objects.create(backend_alias="secondary", queue_name="emails")
+
+  assert Pause.objects.count() == 2
 
 
 @pytest.mark.django_db

@@ -22,7 +22,7 @@ def make_job(**overrides):
     queue_name=overrides.pop("queue_name", "default"),
     priority=overrides.pop("priority", 0),
     payload=payload,
-    backend_name=overrides.pop("backend_name", "default"),
+    backend_alias=overrides.pop("backend_alias", "default"),
     scheduled_at=overrides.pop("scheduled_at", None),
     concurrency_key=overrides.pop("concurrency_key", None),
     finished_at=overrides.pop("finished_at", None),
@@ -51,21 +51,23 @@ def test_backend_snapshot_filters_workers_to_backend(settings):
     },
   }
   now = timezone.now()
-  make_ready_job(queue_name="alpha", backend_name="default")
+  make_ready_job(queue_name="alpha", backend_alias="default")
   Process.objects.create(
+    backend_alias="default",
     kind="Worker",
     pid=101,
     hostname="localhost",
     name="default-worker",
-    metadata={"backend_alias": "default", "queues": ["alpha"]},
+    metadata={"queues": ["alpha"]},
     last_heartbeat_at=now,
   )
   Process.objects.create(
+    backend_alias="critical",
     kind="Worker",
     pid=102,
     hostname="localhost",
     name="critical-worker",
-    metadata={"backend_alias": "critical", "queues": ["alpha"]},
+    metadata={"queues": ["alpha"]},
     last_heartbeat_at=now,
   )
 
@@ -77,14 +79,11 @@ def test_backend_snapshot_filters_workers_to_backend(settings):
     "by_kind": {"Worker": {"live": 1, "stale": 0}},
   }
   assert snapshot["queue_rows"][0]["live_worker_count"] == 1
-  assert [row["name"] for row in snapshot["runner_process_rows"]] == ["default-worker"]
-  assert [row["name"] for row in snapshot["process_rows"]] == [
-    "critical-worker",
-    "default-worker",
-  ]
+  assert [row["name"] for row in snapshot["process_rows"]] == ["default-worker"]
+  assert snapshot["process_rows"][0]["backend_alias"] == "default"
 
 
-def test_backend_snapshot_keeps_shared_control_plane_rows_visible(settings):
+def test_backend_snapshot_scopes_pause_and_recurring_rows_to_backend(settings):
   settings.TASKS = {
     "default": {
       "BACKEND": "dj_queue.backend.DjQueueBackend",
@@ -98,8 +97,9 @@ def test_backend_snapshot_keeps_shared_control_plane_rows_visible(settings):
     },
   }
   now = timezone.now()
-  Pause.objects.create(queue_name="shared")
+  Pause.objects.create(backend_alias="critical", queue_name="shared")
   RecurringTask.objects.create(
+    backend_alias="critical",
     key="nightly",
     task_path="tests.tasks.echo",
     payload={"args": [], "kwargs": {}},
@@ -118,7 +118,6 @@ def test_backend_snapshot_keeps_shared_control_plane_rows_visible(settings):
   snapshot = observability.backend_snapshot(backend_alias="critical", now=now)
 
   assert [row["name"] for row in snapshot["queue_rows"]] == ["shared"]
-  assert snapshot["queue_rows"][0]["has_backend_jobs"] is False
-  assert snapshot["queue_rows"][0]["shared_sources"] == ("pause", "recurring task")
+  assert snapshot["queue_rows"][0]["paused"] is True
   assert [row["key"] for row in snapshot["recurring_rows"]] == ["nightly"]
   assert [row["key"] for row in snapshot["semaphore_rows"]] == ["account:1"]

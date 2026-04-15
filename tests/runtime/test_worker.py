@@ -66,7 +66,7 @@ def make_ready_job(task=echo, **overrides):
     queue_name=overrides.pop("queue_name", task.queue_name),
     priority=overrides.pop("priority", task.priority),
     payload=payload,
-    backend_name=overrides.pop("backend_name", task.backend),
+    backend_alias=overrides.pop("backend_alias", task.backend),
     scheduled_at=overrides.pop("scheduled_at", None),
     concurrency_key=overrides.pop("concurrency_key", None),
     finished_at=overrides.pop("finished_at", None),
@@ -107,12 +107,12 @@ def test_worker_registers_process_with_metadata():
 
   process = worker.start()
 
+  assert process.backend_alias == "default"
   assert process.kind == "Worker"
   assert process.name == "worker-1"
   assert process.pid == 101
   assert process.hostname == "host"
   assert process.metadata == {
-    "backend_alias": "default",
     "queues": ["alpha", "beta*"],
     "threads": 2,
     "polling_interval": 0.25,

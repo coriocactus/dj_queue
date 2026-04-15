@@ -373,7 +373,13 @@ class JobRecurringTaskKeyListFilter(admin.SimpleListFilter):
 
   def lookups(self, request, model_admin):
     alias = model_admin._backend_database_alias(request)
-    return tuple(RecurringTask.objects.using(alias).order_by("key").values_list("key", "key"))
+    backend_alias = model_admin._backend_alias(request)
+    return tuple(
+      RecurringTask.objects.using(alias)
+      .filter(backend_alias=backend_alias)
+      .order_by("key")
+      .values_list("key", "key")
+    )
 
   def queryset(self, request, queryset):
     if not self.value():
@@ -427,8 +433,8 @@ class ProcessStatusListFilter(admin.SimpleListFilter):
 
 @admin.register(Job)
 class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
-  backend_filter_field = "backend_name"
-  ignored_filter_params = ("backend_name",)
+  backend_filter_field = "backend_alias"
+  ignored_filter_params = ("backend_alias",)
   list_display = (
     "id",
     "task_path",
@@ -455,7 +461,7 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     "queue_name",
     "priority",
     "payload",
-    "backend_name",
+    "backend_alias",
     "scheduled_at",
     "concurrency_key",
     "finished_at",
@@ -486,7 +492,7 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
 
   @admin.display(description="queue name", ordering="queue_name")
   def queue_name_link(self, obj):
-    query = {"backend": obj.backend_name}
+    query = {"backend": obj.backend_alias}
     if obj.status is not None:
       query["state"] = obj.status
     url = f"{reverse('admin:dj_queue_dashboard_queue', args=[obj.queue_name])}?{urlencode(query)}"
@@ -520,43 +526,43 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   def handle_change_action(self, request, obj, action):
     if action == "enqueue":
       try:
-        new_job = enqueue_job_again(obj.pk, backend_alias=obj.backend_name)
+        new_job = enqueue_job_again(obj.pk, backend_alias=obj.backend_alias)
       except (EnqueueError, ImportError, AttributeError) as exc:
         self.message_user(request, f"Could not enqueue job: {exc}", level=messages.ERROR)
-        return self._current_object_redirect(obj, backend_alias=obj.backend_name)
+        return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
 
       self.message_user(
         request,
         format_html(
           'Enqueued job <a href="{}">{}</a>.',
-          self._change_url(object_id=new_job.pk, backend_alias=new_job.backend_name),
+          self._change_url(object_id=new_job.pk, backend_alias=new_job.backend_alias),
           new_job.pk,
         ),
         level=messages.SUCCESS,
       )
-      return self._current_object_redirect(obj, backend_alias=obj.backend_name)
+      return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
 
     if obj.status != "failed":
       self.message_user(request, "This job is not failed", level=messages.ERROR)
-      return self._current_object_redirect(obj, backend_alias=obj.backend_name)
+      return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
 
     if action == "retry":
       obj.failed_execution.retry()
       self.message_user(request, "Retried failed job", level=messages.SUCCESS)
-      return self._current_object_redirect(obj, backend_alias=obj.backend_name)
+      return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
 
     if action == "discard":
       obj.failed_execution.discard()
       self.message_user(request, "Discarded failed job", level=messages.SUCCESS)
-      return HttpResponseRedirect(self._changelist_url(backend_alias=obj.backend_name))
+      return HttpResponseRedirect(self._changelist_url(backend_alias=obj.backend_alias))
 
-    return self._current_object_redirect(obj, backend_alias=obj.backend_name)
+    return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
 
 
 @admin.register(FailedExecution)
 class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
-  backend_filter_field = "job__backend_name"
-  ignored_filter_params = ("job__backend_name",)
+  backend_filter_field = "job__backend_alias"
+  ignored_filter_params = ("job__backend_alias",)
   list_display = ("job", "exception_class", "message", "display_created_at")
   list_filter = (
     ("job__queue_name", admin.AllValuesFieldListFilter),
@@ -596,7 +602,7 @@ class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     )
 
   def handle_change_action(self, request, obj, action):
-    backend_alias = obj.job.backend_name
+    backend_alias = obj.job.backend_alias
 
     if action == "retry":
       job_id = obj.job_id
@@ -617,6 +623,7 @@ class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
 class ProcessAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   list_display = (
     "name",
+    "backend_alias",
     "kind",
     "display_status",
     "pid",
@@ -626,6 +633,7 @@ class ProcessAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   )
   list_filter = (ProcessStatusListFilter, "kind", "hostname")
   readonly_fields = (
+    "backend_alias",
     "kind",
     "pid",
     "hostname",
@@ -634,7 +642,7 @@ class ProcessAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     "supervisor",
     "last_heartbeat_at",
   )
-  search_fields = ("name", "kind", "hostname")
+  search_fields = ("name", "backend_alias", "kind", "hostname")
 
   def get_queryset(self, request):
     queryset = super().get_queryset(request)
@@ -664,6 +672,7 @@ class ProcessAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
 
 @admin.register(RecurringTask)
 class RecurringTaskAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
+  backend_filter_field = "backend_alias"
   actions = ("unschedule_tasks",)
   list_display = ("key", "task_path", "schedule", "queue_name", "priority", "static")
   list_filter = ("queue_name", "static")
@@ -740,6 +749,7 @@ class RecurringTaskAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
 
 @admin.register(Pause)
 class PauseAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
+  backend_filter_field = "backend_alias"
   list_display = ("queue_name", "display_created_at")
   readonly_fields = ("queue_name", "created_at")
   search_fields = ("queue_name",)

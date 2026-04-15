@@ -39,7 +39,7 @@ def make_job(**overrides):
   task_path = overrides.pop("task_path", "tests.tasks.echo")
   queue_name = overrides.pop("queue_name", "default")
   priority = overrides.pop("priority", 0)
-  backend_name = overrides.pop("backend_name", "default")
+  backend_alias = overrides.pop("backend_alias", "default")
   scheduled_at = overrides.pop("scheduled_at", None)
   concurrency_key = overrides.pop("concurrency_key", None)
   finished_at = overrides.pop("finished_at", None)
@@ -51,7 +51,7 @@ def make_job(**overrides):
       queue_name=queue_name,
       priority=priority,
       payload=payload,
-      backend_name=backend_name,
+      backend_alias=backend_alias,
       scheduled_at=scheduled_at,
       concurrency_key=concurrency_key,
       finished_at=finished_at,
@@ -71,6 +71,7 @@ def make_process(**overrides):
 
   return retry_after_sqlite_lock(
     lambda: Process.objects.create(
+      backend_alias=overrides.pop("backend_alias", "default"),
       kind=kind,
       pid=pid,
       hostname=hostname,

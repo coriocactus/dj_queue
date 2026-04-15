@@ -530,7 +530,7 @@
               </select>
               <noscript><button type="submit" class="button">Switch</button></noscript>
             </form>
-            <p class="djq-backend-caption">Jobs come from the selected backend. Processes, pauses, recurring tasks, and semaphores come from that backend's queue database.</p>
+            <p class="djq-backend-caption">Jobs, processes, pauses, and recurring tasks are scoped to the selected backend. Semaphores remain shared on that backend's queue database.</p>
           </div>
 
           <dl class="djq-backend-facts">
@@ -571,7 +571,7 @@
 
     <section class="module djq-section" id="queue-summary">
       <div class="djq-section-banner"><h2>queues</h2></div>
-      <p class="djq-section-copy">Live queue pressure, pause state, and first-line controls for this backend.{% if shared_queue_section.total_count %} Shared pause or recurring-only queues are available in a separate section below.{% endif %}</p>
+      <p class="djq-section-copy">Live queue pressure, pause state, recurring ownership, and first-line controls for this backend.</p>
       {% if queue_section.rows %}
         <div class="djq-table-wrap">
           <table class="djq-table djq-table-queues" id="result_list">
@@ -614,53 +614,9 @@
 
     {% include "admin/dj_queue/_dashboard_section_table.html" with section_id="process-summary" title="processes" copy="Supervisor-first runtime topology so workers, dispatchers, and schedulers read as one grouped runtime." section=process_section table_class="djq-table djq-table-processes" rows_template="admin/dj_queue/_dashboard_process_rows.html" pagination_id="pagination-processes" pagination_label="Pagination processes" empty_text="No registered processes." %}
 
-    {% include "admin/dj_queue/_dashboard_section_table.html" with section_id="recurring-summary" title="recurring tasks" copy="Scheduled work defined for this queue database, with next-fire context for operators." section=recurring_section table_class="djq-table djq-table-recurring" rows_template="admin/dj_queue/_dashboard_recurring_rows.html" pagination_id="pagination-recurring" pagination_label="Pagination recurring tasks" empty_text="No recurring tasks configured." %}
+    {% include "admin/dj_queue/_dashboard_section_table.html" with section_id="recurring-summary" title="recurring tasks" copy="Scheduled work defined for this backend, with next-fire context for operators." section=recurring_section table_class="djq-table djq-table-recurring" rows_template="admin/dj_queue/_dashboard_recurring_rows.html" pagination_id="pagination-recurring" pagination_label="Pagination recurring tasks" empty_text="No recurring tasks configured." %}
 
     {% include "admin/dj_queue/_dashboard_section_table.html" with section_id="semaphore-summary" title="semaphores" copy="Concurrency state for hot keys, including waiters and expiry windows." section=semaphore_section table_class="djq-table djq-table-semaphores" rows_template="admin/dj_queue/_dashboard_semaphore_rows.html" pagination_id="pagination-semaphores" pagination_label="Pagination semaphores" empty_text="No active semaphores." %}
-
-    {% if shared_queue_section.total_count %}
-      <section class="module djq-section" id="shared-queue-summary">
-        <div class="djq-section-banner"><h2>shared queues</h2></div>
-        <p class="djq-section-copy">These queues have no jobs for backend <strong>{{ backend_alias }}</strong> and are shown separately because pause and recurring-task rows are shared on queue database <strong>{{ queue_database_alias }}</strong>.</p>
-        <div class="djq-table-wrap">
-          <table class="djq-table djq-table-shared-queues">
-            <colgroup>
-              <col class="djq-shared-col-name">
-              <col class="djq-shared-col-via">
-              <col class="djq-shared-col-paused">
-              <col class="djq-shared-col-controls">
-            </colgroup>
-            <thead>
-              <tr>
-                {% include "admin/dj_queue/_sortable_header_cells.html" with headers=shared_queue_section.headers num_sorted_fields=shared_queue_section.num_sorted_fields %}
-                <th scope="col" class="djq-col-controls"><div class="text">Controls</div></th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for queue in shared_queue_section.rows %}
-                <tr class="{% cycle 'row1' 'row2' %}">
-                  <th class="djq-col-name"><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=ready">{{ queue.name }}</a></th>
-                  <td>
-                    <div class="djq-reason-list">
-                      {% for source in queue.shared_sources %}
-                        <span class="djq-reason-pill">{{ source }}</span>
-                      {% endfor %}
-                    </div>
-                  </td>
-                  <td>{{ queue.paused|yesno:"yes,no" }}</td>
-                  <td class="djq-col-controls">
-                    {% include "admin/dj_queue/_queue_controls.html" with queue_name=queue.name backend_alias=backend_alias next_url=request.get_full_path paused=queue.paused show_clear=False pause_toggle_pause_class="button djq-button-pause" pause_toggle_resume_class="button djq-button-resume" clear_button_class="button" controls_class="djq-queue-controls" %}
-                  </td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        <div class="djq-table-footer">
-          {% include "admin/dj_queue/_paginator.html" with pagination_id="pagination-shared-queues" pagination_label="Pagination shared queues" pagination_required=shared_queue_section.pagination_required page_links=shared_queue_section.page_links result_count_text=shared_queue_section.result_count_text current_page_class="" link_role_button=True %}
-        </div>
-      </section>
-    {% endif %}
 
     <section class="module djq-section" id="raw-summary">
       <div class="djq-section-banner"><h2>inspect raw rows</h2></div>
@@ -681,7 +637,7 @@
         <div class="djq-raw-panel">
           <div class="djq-raw-group">
             <h3>runtime data</h3>
-            <p>Control-plane rows scoped by the selected backend's queue database alias.</p>
+            <p>Processes, pauses, and recurring rows are backend-scoped. Semaphores remain scoped by the selected backend's queue database alias.</p>
           </div>
           <div class="djq-raw-links">
             <a href="{% url 'admin:dj_queue_process_changelist' %}?backend={{ backend_alias }}">Processes</a>

@@ -433,7 +433,9 @@ def assert_seeded_process_heartbeat_middleware_refreshes_dashboard_rows():
   from django.test import RequestFactory
 
   stale_at = timezone.now() - timedelta(minutes=10)
-  Process.objects.filter(name__in=SEEDED_PROCESS_NAMES).update(last_heartbeat_at=stale_at)
+  Process.objects.filter(backend_alias="demo", name__in=SEEDED_PROCESS_NAMES).update(
+    last_heartbeat_at=stale_at
+  )
 
   request_started_at = timezone.now()
   middleware = SeededProcessHeartbeatMiddleware(lambda request: HttpResponse("ok"))
@@ -441,7 +443,7 @@ def assert_seeded_process_heartbeat_middleware_refreshes_dashboard_rows():
   assert response.status_code == 200
 
   refreshed = list(
-    Process.objects.filter(name__in=SEEDED_PROCESS_NAMES).values_list(
+    Process.objects.filter(backend_alias="demo", name__in=SEEDED_PROCESS_NAMES).values_list(
       "last_heartbeat_at", flat=True
     )
   )
@@ -452,9 +454,11 @@ def assert_seeded_process_heartbeat_middleware_refreshes_dashboard_rows():
 def assert_seed_demo_data_includes_demo_static_recurring_config():
   configured_keys = set(DEMO_STATIC_RECURRING)
   seeded_keys = set(
-    RecurringTask.objects.filter(static=True, key__in=configured_keys).values_list(
-      "key", flat=True
-    )
+    RecurringTask.objects.filter(
+      backend_alias="demo",
+      static=True,
+      key__in=configured_keys,
+    ).values_list("key", flat=True)
   )
 
   assert configured_keys
@@ -490,7 +494,7 @@ def make_job(**overrides):
     queue_name=overrides.pop("queue_name", "default"),
     priority=overrides.pop("priority", 0),
     payload=payload,
-    backend_name=overrides.pop("backend_name", "demo"),
+    backend_alias=overrides.pop("backend_alias", "demo"),
     scheduled_at=overrides.pop("scheduled_at", None),
     concurrency_key=overrides.pop("concurrency_key", None),
     finished_at=overrides.pop("finished_at", None),
@@ -501,6 +505,12 @@ def make_job(**overrides):
 
 def seed_demo_data():
   now = timezone.now()
+  critical_queue_names = set(settings.TASKS["critical"]["QUEUES"])
+
+  def backend_alias_for_queue(queue_name):
+    if queue_name in critical_queue_names:
+      return "critical"
+    return "demo"
 
   Job.objects.all().delete()
   Process.objects.filter(name__in=SEEDED_PROCESS_NAMES).delete()
@@ -509,13 +519,20 @@ def seed_demo_data():
   Pause.objects.all().delete()
   Semaphore.objects.all().delete()
 
-  Pause.objects.create(queue_name="paused-demo")
-  Pause.objects.create(queue_name="alpha-demo")
-  Pause.objects.create(queue_name="critical-paused")
-  Pause.objects.create(queue_name="bulk-paused")
-  Pause.objects.create(queue_name="backfill-import")
+  for queue_name in (
+    "paused-demo",
+    "alpha-demo",
+    "critical-paused",
+    "bulk-paused",
+    "backfill-import",
+  ):
+    Pause.objects.create(
+      backend_alias=backend_alias_for_queue(queue_name),
+      queue_name=queue_name,
+    )
 
   dashboard_supervisor = Process.objects.create(
+    backend_alias="demo",
     kind="Supervisor",
     pid=9101,
     hostname="dashboard.local",
@@ -524,6 +541,7 @@ def seed_demo_data():
     last_heartbeat_at=now,
   )
   Process.objects.create(
+    backend_alias="demo",
     kind="Dispatcher",
     pid=9102,
     hostname="dashboard.local",
@@ -533,6 +551,7 @@ def seed_demo_data():
     last_heartbeat_at=now,
   )
   Process.objects.create(
+    backend_alias="demo",
     kind="Scheduler",
     pid=9103,
     hostname="dashboard.local",
@@ -542,6 +561,7 @@ def seed_demo_data():
     last_heartbeat_at=now,
   )
   Process.objects.create(
+    backend_alias="demo",
     kind="Worker",
     pid=9104,
     hostname="dashboard.local",
@@ -576,8 +596,9 @@ def seed_demo_data():
     )
 
   recurring_specs = (
-    ("demo-nightly", "maintenance", "0 0 1 1 *", -5, "demo recurring task", False, 540),
+    ("demo", "demo-nightly", "maintenance", "0 0 1 1 *", -5, "demo recurring task", False, 540),
     (
+      "critical",
       "critical-audit",
       "critical-review",
       "*/15 * * * *",
@@ -587,6 +608,7 @@ def seed_demo_data():
       5,
     ),
     (
+      "demo",
       "refresh-dashboard-caches",
       "interactive",
       "*/10 * * * *",
@@ -595,8 +617,18 @@ def seed_demo_data():
       False,
       9,
     ),
-    ("fetch-billing-events", "reports", "*/20 * * * *", 4, "fetch billing events", False, 12),
     (
+      "demo",
+      "fetch-billing-events",
+      "reports",
+      "*/20 * * * *",
+      4,
+      "fetch billing events",
+      False,
+      12,
+    ),
+    (
+      "critical",
       "critical-sla-check",
       "critical-review",
       "*/5 * * * *",
@@ -605,15 +637,34 @@ def seed_demo_data():
       False,
       3,
     ),
-    ("expire-demo-tokens", "interactive", "45 * * * *", 1, "expire demo tokens", False, 22),
-    ("notify-stuck-jobs", "alerts", "*/30 * * * *", 6, "notify stuck jobs", False, 25),
+    (
+      "demo",
+      "expire-demo-tokens",
+      "interactive",
+      "45 * * * *",
+      1,
+      "expire demo tokens",
+      False,
+      22,
+    ),
+    ("demo", "notify-stuck-jobs", "alerts", "*/30 * * * *", 6, "notify stuck jobs", False, 25),
     *(
-      (key, queue_name, schedule, priority, description, True, minutes_ago)
+      ("demo", key, queue_name, schedule, priority, description, True, minutes_ago)
       for key, queue_name, schedule, priority, description, minutes_ago in DEMO_STATIC_RECURRING_SPECS
     ),
   )
-  for key, queue_name, schedule, priority, description, static, minutes_ago in recurring_specs:
+  for (
+    backend_alias,
+    key,
+    queue_name,
+    schedule,
+    priority,
+    description,
+    static,
+    minutes_ago,
+  ) in recurring_specs:
     RecurringTask.objects.update_or_create(
+      backend_alias=backend_alias,
       key=key,
       defaults={
         "task_path": "tests.tasks.echo",
@@ -625,7 +676,11 @@ def seed_demo_data():
         "static": static,
       },
     )
-    RecurringExecution.objects.create(task_key=key, run_at=now - timedelta(minutes=minutes_ago))
+    RecurringExecution.objects.create(
+      backend_alias=backend_alias,
+      task_key=key,
+      run_at=now - timedelta(minutes=minutes_ago),
+    )
 
   for index in range(3):
     ready_job = make_job(
@@ -734,10 +789,10 @@ def seed_demo_data():
       queue_name=ready_job.queue_name,
       priority=ready_job.priority,
     )
-    Pause.objects.create(queue_name=queue_name)
+    Pause.objects.create(backend_alias="demo", queue_name=queue_name)
 
   critical_ready = make_job(
-    backend_name="critical",
+    backend_alias="critical",
     queue_name="critical-paused",
     priority=15,
     args=["critical-ready"],
@@ -786,8 +841,8 @@ def seed_demo_data():
     ("failed-demo", "demo", "boom"),
     ("alerts", "critical", "smtp timeout"),
   )
-  for queue_name, backend_name, message in failed_specs:
-    failed_job = make_job(queue_name=queue_name, backend_name=backend_name, args=[message])
+  for queue_name, backend_alias, message in failed_specs:
+    failed_job = make_job(queue_name=queue_name, backend_alias=backend_alias, args=[message])
     FailedExecution.objects.create(
       job=failed_job,
       exception_class="builtins.ValueError",
@@ -811,7 +866,7 @@ def seed_demo_data():
   )
   make_job(
     task_path="tests.tasks.echo",
-    backend_name="critical",
+    backend_alias="critical",
     queue_name="critical-review",
     args=["finished-critical"],
     finished_at=now - timedelta(minutes=15),

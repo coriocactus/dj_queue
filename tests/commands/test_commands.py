@@ -19,7 +19,7 @@ def make_finished_job(**overrides):
     queue_name=overrides.pop("queue_name", "default"),
     priority=overrides.pop("priority", 0),
     payload=overrides.pop("payload", {"args": [], "kwargs": {}}),
-    backend_name=overrides.pop("backend_name", "default"),
+    backend_alias=overrides.pop("backend_alias", "default"),
     scheduled_at=overrides.pop("scheduled_at", None),
     concurrency_key=overrides.pop("concurrency_key", None),
     finished_at=finished_at,
@@ -30,6 +30,7 @@ def make_finished_job(**overrides):
 
 def make_process(**overrides):
   return Process.objects.create(
+    backend_alias=overrides.pop("backend_alias", "default"),
     kind=overrides.pop("kind", "Worker"),
     pid=overrides.pop("pid", 12345),
     hostname=overrides.pop("hostname", "localhost"),
@@ -230,14 +231,14 @@ def test_prune_command_can_delete_failed_and_recurring_rows(capsys):
     queue_name="default",
     priority=0,
     payload={"args": [], "kwargs": {}},
-    backend_name="default",
+    backend_alias="default",
   )
   recent_failed_job = Job.objects.create(
     task_path="tests.tasks.echo",
     queue_name="default",
     priority=0,
     payload={"args": [], "kwargs": {}},
-    backend_name="default",
+    backend_alias="default",
   )
   old_failed = FailedExecution.objects.create(
     job=old_failed_job,
@@ -259,10 +260,12 @@ def test_prune_command_can_delete_failed_and_recurring_rows(capsys):
   )
 
   old_recurring = RecurringExecution.objects.create(
+    backend_alias="default",
     task_key="nightly",
     run_at=timezone.now() - timedelta(days=3),
   )
   recent_recurring = RecurringExecution.objects.create(
+    backend_alias="default",
     task_key="nightly",
     run_at=timezone.now() - timedelta(hours=1),
   )
@@ -300,7 +303,7 @@ def test_prune_command_uses_backend_config_for_failed_and_recurring_windows(sett
     queue_name="default",
     priority=0,
     payload={"args": [], "kwargs": {}},
-    backend_name="default",
+    backend_alias="default",
   )
   old_failed = FailedExecution.objects.create(
     job=old_failed_job,
@@ -312,6 +315,7 @@ def test_prune_command_uses_backend_config_for_failed_and_recurring_windows(sett
     created_at=timezone.now() - timedelta(hours=2)
   )
   old_recurring = RecurringExecution.objects.create(
+    backend_alias="default",
     task_key="nightly",
     run_at=timezone.now() - timedelta(hours=2),
   )
@@ -326,7 +330,7 @@ def test_prune_command_uses_backend_config_for_failed_and_recurring_windows(sett
 
 def test_dj_queue_health_reports_live_and_dead_states():
   make_process(
-    metadata={"backend_alias": "default"},
+    backend_alias="default",
     last_heartbeat_at=timezone.now(),
   )
 
@@ -361,7 +365,7 @@ def test_health_command_stays_backend_scoped_on_shared_queue_db(settings):
     },
   }
   make_process(
-    metadata={"backend_alias": "secondary"},
+    backend_alias="secondary",
     last_heartbeat_at=timezone.now(),
   )
 

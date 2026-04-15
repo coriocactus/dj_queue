@@ -20,7 +20,7 @@ def make_job(**overrides):
     queue_name=overrides.pop("queue_name", "default"),
     priority=overrides.pop("priority", 0),
     payload=payload,
-    backend_name=overrides.pop("backend_name", "default"),
+    backend_alias=overrides.pop("backend_alias", "default"),
     scheduled_at=overrides.pop("scheduled_at", None),
     concurrency_key=overrides.pop("concurrency_key", None),
     finished_at=overrides.pop("finished_at", None),
@@ -32,13 +32,18 @@ def make_job(**overrides):
 @pytest.mark.django_db
 def test_recurring_execution_allows_null_job_during_reservation():
   task = RecurringTask.objects.create(
+    backend_alias="default",
     key="every-minute",
     task_path="tests.tasks.example",
     schedule="* * * * *",
   )
   run_at = timezone.now().replace(second=0, microsecond=0) + timedelta(minutes=1)
 
-  execution = RecurringExecution.objects.create(task_key=task.key, run_at=run_at)
+  execution = RecurringExecution.objects.create(
+    backend_alias="default",
+    task_key=task.key,
+    run_at=run_at,
+  )
 
   assert execution.job is None
 
@@ -52,6 +57,7 @@ def test_recurring_execution_allows_null_job_during_reservation():
 @pytest.mark.django_db
 def test_recurring_task_key_unique():
   RecurringTask.objects.create(
+    backend_alias="default",
     key="every-minute",
     task_path="tests.tasks.example",
     schedule="* * * * *",
@@ -59,6 +65,7 @@ def test_recurring_task_key_unique():
 
   with pytest.raises(ValidationError, match="Key"):
     RecurringTask.objects.create(
+      backend_alias="default",
       key="every-minute",
       task_path="tests.tasks.other",
       schedule="*/5 * * * *",
@@ -68,16 +75,25 @@ def test_recurring_task_key_unique():
 @pytest.mark.django_db
 def test_recurring_execution_task_key_run_at_unique():
   run_at = timezone.now().replace(second=0, microsecond=0) + timedelta(minutes=1)
-  RecurringExecution.objects.create(task_key="every-minute", run_at=run_at)
+  RecurringExecution.objects.create(
+    backend_alias="default",
+    task_key="every-minute",
+    run_at=run_at,
+  )
 
   with pytest.raises(IntegrityError), transaction.atomic():
-    RecurringExecution.objects.create(task_key="every-minute", run_at=run_at)
+    RecurringExecution.objects.create(
+      backend_alias="default",
+      task_key="every-minute",
+      run_at=run_at,
+    )
 
 
 @pytest.mark.django_db
 def test_recurring_task_schedule_validation():
   with pytest.raises(ValidationError, match="schedule"):
     RecurringTask.objects.create(
+      backend_alias="default",
       key="bad-cron",
       task_path="tests.tasks.example",
       schedule="tomorrow",

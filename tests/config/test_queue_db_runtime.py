@@ -51,7 +51,7 @@ def _make_ready_job(alias="queue", **overrides):
     queue_name=overrides.pop("queue_name", echo.queue_name),
     priority=overrides.pop("priority", echo.priority),
     payload=overrides.pop("payload", {"args": ["queued"], "kwargs": {}}),
-    backend_name=overrides.pop("backend_name", "default"),
+    backend_alias=overrides.pop("backend_alias", "default"),
     scheduled_at=overrides.pop("scheduled_at", None),
     concurrency_key=overrides.pop("concurrency_key", None),
     finished_at=overrides.pop("finished_at", None),
@@ -212,8 +212,8 @@ def test_claim_ready_jobs_stays_backend_scoped_on_shared_queue_db(
   with django_db_blocker.unblock():
     call_command("migrate", "dj_queue", database="queue", interactive=False, verbosity=0)
 
-    default_job = _make_ready_job(backend_name="default", priority=10)
-    secondary_job = _make_ready_job(backend_name="secondary", priority=20)
+    default_job = _make_ready_job(backend_alias="default", priority=10)
+    secondary_job = _make_ready_job(backend_alias="secondary", priority=20)
 
     claimed = claim_ready_jobs(limit=2, backend_alias="default")
 

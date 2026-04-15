@@ -123,6 +123,7 @@ OVERVIEW_SORTS = {
     "default": "status",
     "fields": {
       "name": {"label": "name", "key": "name", "default_desc": False, "css_class": "djq-col-name"},
+      "backend": {"label": "backend", "key": "backend_alias", "default_desc": False},
       "kind": {"label": "kind", "key": "kind", "default_desc": False},
       "status": {"label": "status", "key": "is_live", "default_desc": True},
       "heartbeat": {
@@ -286,7 +287,7 @@ def dashboard_context(*, backend_alias, query_params=None):
     query_params = {}
 
   snapshot = observability.backend_snapshot(backend_alias=backend_alias)
-  backend_queue_rows, shared_queue_rows = observability.split_queue_rows(snapshot["queue_rows"])
+  queue_rows = snapshot["queue_rows"]
   process_rows = snapshot["process_rows"]
   recurring_rows = [
     {
@@ -316,7 +317,7 @@ def dashboard_context(*, backend_alias, query_params=None):
     "queue_database_alias": snapshot["queue_database_alias"],
     "summary_cards": _summary_cards(
       backend_alias=backend_alias,
-      queue_rows=backend_queue_rows,
+      queue_rows=queue_rows,
       process_rows=process_rows,
       recurring_rows=recurring_rows,
       semaphore_rows=semaphore_rows,
@@ -329,21 +330,12 @@ def dashboard_context(*, backend_alias, query_params=None):
     ),
     "queue_section": _overview_section(
       section="queues",
-      rows=backend_queue_rows,
+      rows=queue_rows,
       page_param="queues_page",
       page_size=OVERVIEW_PAGE_SIZES["queues"],
       sort_param="queues_sort",
       query_params=query_params,
       anchor="queue-summary",
-    ),
-    "shared_queue_section": _overview_section(
-      section="shared_queues",
-      rows=shared_queue_rows,
-      page_param="shared_queues_page",
-      page_size=OVERVIEW_PAGE_SIZES["shared_queues"],
-      sort_param="shared_queues_sort",
-      query_params=query_params,
-      anchor="shared-queue-summary",
     ),
     "process_section": _overview_section(
       section="processes",
@@ -531,7 +523,7 @@ def apply_job_action(*, backend_alias, queue_name, state, action, job_ids):
     alias = get_database_alias(backend_alias)
     queryset = FailedExecution.objects.using(alias).filter(
       job_id__in=job_ids,
-      job__backend_name=backend_alias,
+      job__backend_alias=backend_alias,
       job__queue_name=queue_name,
     )
     retried = FailedExecution.retry_all(queryset.select_related("job"))
@@ -545,7 +537,7 @@ def apply_job_action(*, backend_alias, queue_name, state, action, job_ids):
       .select_related("job")
       .filter(
         job_id__in=job_ids,
-        job__backend_name=backend_alias,
+        job__backend_alias=backend_alias,
         job__queue_name=queue_name,
       )
     )
@@ -558,7 +550,7 @@ def apply_job_action(*, backend_alias, queue_name, state, action, job_ids):
     jobs = list(
       Job.objects.using(alias).filter(
         pk__in=job_ids,
-        backend_name=backend_alias,
+        backend_alias=backend_alias,
         queue_name=queue_name,
         finished_at__isnull=False,
       )
@@ -620,10 +612,6 @@ def _summary_cards(*, backend_alias, queue_rows, process_rows, recurring_rows, s
       "detail": f"{len(recurring_rows)} recurring and {len(semaphore_rows)} semaphores",
     },
   )
-
-
-def _split_queue_rows(queue_rows):
-  return observability.split_queue_rows(queue_rows)
 
 
 def _backend_facts(*, config, queue_database_alias, recurring_count, semaphore_count):
@@ -1204,7 +1192,7 @@ def _jobs_for_queue_state(*, backend_alias, queue_name, state):
   alias = get_database_alias(backend_alias)
   queryset = (
     Job.objects.using(alias)
-    .filter(backend_name=backend_alias, queue_name=queue_name)
+    .filter(backend_alias=backend_alias, queue_name=queue_name)
     .select_related(
       "ready_execution",
       "scheduled_execution",

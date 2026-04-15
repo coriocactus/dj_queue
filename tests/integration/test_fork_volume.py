@@ -166,7 +166,7 @@ def test_10k_tasks_fork_mode_no_duplicates(tmp_path, queue_test_settings):
       queue_name=record_once.queue_name,
       priority=record_once.priority,
       payload={"args": [str(output_dir), value], "kwargs": {}},
-      backend_name="default",
+      backend_alias="default",
       created_at=now,
       updated_at=now,
     )

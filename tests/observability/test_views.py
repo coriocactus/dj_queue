@@ -23,7 +23,7 @@ def make_job(**overrides):
     queue_name=overrides.pop("queue_name", "default"),
     priority=overrides.pop("priority", 0),
     payload=payload,
-    backend_name=overrides.pop("backend_name", "default"),
+    backend_alias=overrides.pop("backend_alias", "default"),
     scheduled_at=overrides.pop("scheduled_at", None),
     concurrency_key=overrides.pop("concurrency_key", None),
     finished_at=overrides.pop("finished_at", None),
@@ -62,9 +62,10 @@ def test_stats_endpoint_returns_all_backend_snapshots(client, settings):
     },
   }
   now = timezone.now()
-  make_ready_job(queue_name="alpha", backend_name="default")
-  Pause.objects.create(queue_name="shared")
+  make_ready_job(queue_name="alpha", backend_alias="default")
+  Pause.objects.create(backend_alias="critical", queue_name="shared")
   RecurringTask.objects.create(
+    backend_alias="critical",
     key="nightly",
     task_path="tests.tasks.echo",
     payload={"args": [], "kwargs": {}},
@@ -80,11 +81,12 @@ def test_stats_endpoint_returns_all_backend_snapshots(client, settings):
     expires_at=now,
   )
   Process.objects.create(
+    backend_alias="default",
     kind="Worker",
     pid=101,
     hostname="localhost",
     name="worker-1",
-    metadata={"backend_alias": "default", "queues": ["alpha"]},
+    metadata={"queues": ["alpha"]},
     last_heartbeat_at=now,
   )
 
@@ -111,13 +113,14 @@ def test_metrics_endpoint_renders_prometheus_text(client, settings):
     }
   }
   now = timezone.now()
-  make_ready_job(queue_name="alpha", backend_name="default")
+  make_ready_job(queue_name="alpha", backend_alias="default")
   Process.objects.create(
+    backend_alias="default",
     kind="Worker",
     pid=101,
     hostname="localhost",
     name="worker-1",
-    metadata={"backend_alias": "default", "queues": ["alpha"]},
+    metadata={"queues": ["alpha"]},
     last_heartbeat_at=now,
   )
 

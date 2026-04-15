@@ -34,7 +34,7 @@ def make_job(**overrides):
     queue_name=overrides.pop("queue_name", "default"),
     priority=overrides.pop("priority", 0),
     payload=payload,
-    backend_name=overrides.pop("backend_name", "default"),
+    backend_alias=overrides.pop("backend_alias", "default"),
     scheduled_at=overrides.pop("scheduled_at", None),
     concurrency_key=overrides.pop("concurrency_key", None),
     finished_at=overrides.pop("finished_at", None),
@@ -103,8 +103,9 @@ def admin_client(client):
 def test_dashboard_admin_renders(admin_client):
   now = timezone.now()
   make_ready_job(queue_name="alpha")
-  Pause.objects.create(queue_name="alpha")
+  Pause.objects.create(backend_alias="default", queue_name="alpha")
   Process.objects.create(
+    backend_alias="default",
     kind="Worker",
     pid=101,
     hostname="localhost",
@@ -113,6 +114,7 @@ def test_dashboard_admin_renders(admin_client):
     last_heartbeat_at=now,
   )
   RecurringTask.objects.create(
+    backend_alias="default",
     key="nightly",
     task_path="tests.tasks.echo",
     payload={"args": ["nightly"], "kwargs": {}},
@@ -178,8 +180,8 @@ def test_dashboard_backend_selection_changes_job_counts(admin_client, settings):
       "OPTIONS": {},
     },
   }
-  make_ready_job(queue_name="alpha", backend_name="default")
-  make_ready_job(queue_name="beta", backend_name="secondary")
+  make_ready_job(queue_name="alpha", backend_alias="default")
+  make_ready_job(queue_name="beta", backend_alias="secondary")
 
   default_response = admin_client.get(reverse("admin:dj_queue_dashboard_changelist"))
   secondary_response = admin_client.get(
@@ -196,7 +198,7 @@ def test_dashboard_backend_selection_changes_job_counts(admin_client, settings):
   assert "alpha" not in secondary_content
 
 
-def test_dashboard_context_splits_shared_queue_db_queues_from_backend_job_queues(settings):
+def test_dashboard_context_keeps_pause_and_recurring_rows_backend_scoped(settings):
   settings.TASKS = {
     "default": {
       "BACKEND": "dj_queue.backend.DjQueueBackend",
@@ -209,11 +211,12 @@ def test_dashboard_context_splits_shared_queue_db_queues_from_backend_job_queues
       "OPTIONS": {"database_alias": "default"},
     },
   }
-  make_failed_job(queue_name="alerts", backend_name="critical")
-  Pause.objects.create(queue_name="alerts")
-  make_ready_job(queue_name="alpha-demo", backend_name="default")
-  Pause.objects.create(queue_name="alpha-demo")
+  make_failed_job(queue_name="alerts", backend_alias="critical")
+  Pause.objects.create(backend_alias="critical", queue_name="alerts")
+  make_ready_job(queue_name="alpha-demo", backend_alias="default")
+  Pause.objects.create(backend_alias="default", queue_name="alpha-demo")
   RecurringTask.objects.create(
+    backend_alias="default",
     key="alpha-nightly",
     task_path="tests.tasks.echo",
     payload={"args": ["alpha-nightly"], "kwargs": {}},
@@ -226,18 +229,12 @@ def test_dashboard_context_splits_shared_queue_db_queues_from_backend_job_queues
   context = dashboard.dashboard_context(backend_alias="critical")
 
   assert [row["name"] for row in context["queue_section"]["rows"]] == ["alerts"]
-  assert [row["name"] for row in context["shared_queue_section"]["rows"]] == ["alpha-demo"]
-  assert context["shared_queue_section"]["rows"][0]["shared_sources"] == (
-    "pause",
-    "recurring task",
-  )
-  assert context["shared_queue_section"]["result_count_text"] == "1-1 of 1 shared queue"
   assert context["summary_cards"][0]["label"] == "queues"
   assert context["summary_cards"][0]["value"] == 1
   assert context["summary_cards"][0]["detail"] == "1 paused"
 
 
-def test_dashboard_renders_shared_queue_db_queue_section(admin_client, settings):
+def test_dashboard_does_not_render_shared_queue_section(admin_client, settings):
   settings.TASKS = {
     "default": {
       "BACKEND": "dj_queue.backend.DjQueueBackend",
@@ -250,10 +247,11 @@ def test_dashboard_renders_shared_queue_db_queue_section(admin_client, settings)
       "OPTIONS": {"database_alias": "default"},
     },
   }
-  make_failed_job(queue_name="alerts", backend_name="critical")
-  Pause.objects.create(queue_name="alerts")
-  Pause.objects.create(queue_name="alpha-demo")
+  make_failed_job(queue_name="alerts", backend_alias="critical")
+  Pause.objects.create(backend_alias="critical", queue_name="alerts")
+  Pause.objects.create(backend_alias="default", queue_name="alpha-demo")
   RecurringTask.objects.create(
+    backend_alias="default",
     key="alpha-nightly",
     task_path="tests.tasks.echo",
     payload={"args": ["alpha-nightly"], "kwargs": {}},
@@ -270,96 +268,11 @@ def test_dashboard_renders_shared_queue_db_queue_section(admin_client, settings)
 
   assert response.status_code == 200
   content = response.content.decode()
-  assert 'id="shared-queue-summary"' in content
-  assert "<h2>shared queues</h2>" in content
-  assert "1 shared queue" in content
-  assert "backend <strong>critical</strong>" in content
-  assert "queue database <strong>default</strong>" in content
-  assert "alpha-demo" in content
-  assert "pause" in content
-  assert "recurring task" in content
+  assert 'id="shared-queue-summary"' not in content
+  assert "<h2>shared queues</h2>" not in content
 
 
-def test_dashboard_shared_queue_section_paginates_at_five_rows(admin_client, settings):
-  settings.TASKS = {
-    "default": {
-      "BACKEND": "dj_queue.backend.DjQueueBackend",
-      "QUEUES": [],
-      "OPTIONS": {},
-    },
-    "critical": {
-      "BACKEND": "dj_queue.backend.DjQueueBackend",
-      "QUEUES": [],
-      "OPTIONS": {"database_alias": "default"},
-    },
-  }
-  for index in range(6):
-    Pause.objects.create(queue_name=f"shared-{index}")
-
-  response = admin_client.get(
-    reverse("admin:dj_queue_dashboard_changelist"),
-    {"backend": "critical"},
-  )
-
-  assert response.status_code == 200
-  content = response.content.decode()
-  assert "shared-0" in content
-  assert "shared-4" in content
-  assert "shared-5" not in content
-  assert "1-5 of 6 shared queues" in content
-  assert 'aria-labelledby="pagination-shared-queues"' in content
-  assert "shared_queues_page=2#shared-queue-summary" in content
-
-  second_page = admin_client.get(
-    reverse("admin:dj_queue_dashboard_changelist"),
-    {"backend": "critical", "shared_queues_page": 2},
-  )
-
-  assert second_page.status_code == 200
-  second_content = second_page.content.decode()
-  assert "shared-5" in second_content
-
-
-def test_dashboard_shared_queue_section_supports_sorting(admin_client, settings):
-  settings.TASKS = {
-    "default": {
-      "BACKEND": "dj_queue.backend.DjQueueBackend",
-      "QUEUES": [],
-      "OPTIONS": {},
-    },
-    "critical": {
-      "BACKEND": "dj_queue.backend.DjQueueBackend",
-      "QUEUES": [],
-      "OPTIONS": {"database_alias": "default"},
-    },
-  }
-  Pause.objects.create(queue_name="bravo")
-  Pause.objects.create(queue_name="alpha")
-  RecurringTask.objects.create(
-    key="zeta-nightly",
-    task_path="tests.tasks.echo",
-    payload={"args": ["zeta-nightly"], "kwargs": {}},
-    schedule="0 0 * * *",
-    queue_name="zeta",
-    priority=0,
-    static=False,
-  )
-
-  response = admin_client.get(
-    reverse("admin:dj_queue_dashboard_changelist"),
-    {"backend": "critical", "shared_queues_sort": "paused"},
-  )
-
-  assert response.status_code == 200
-  content = response.content.decode()
-  assert content.index("zeta") < content.index("alpha")
-  assert "column-name sortable" in content
-  assert "column-paused sortable sorted ascending" in content
-  assert "shared_queues_sort=name.paused" in content
-  assert "shared_queues_sort=-paused" in content
-
-
-def test_dashboard_backend_selector_shows_backend_name_only(admin_client, settings):
+def test_dashboard_backend_selector_shows_backend_alias_only(admin_client, settings):
   settings.TASKS = {
     "default": {
       "BACKEND": "dj_queue.backend.DjQueueBackend",
@@ -523,6 +436,7 @@ def test_dashboard_queue_section_supports_sorting(admin_client):
 
 def test_dashboard_recurring_section_supports_sorting(admin_client):
   RecurringTask.objects.create(
+    backend_alias="default",
     key="zeta",
     task_path="tests.tasks.echo",
     payload={"args": ["zeta"], "kwargs": {}},
@@ -532,6 +446,7 @@ def test_dashboard_recurring_section_supports_sorting(admin_client):
     static=False,
   )
   RecurringTask.objects.create(
+    backend_alias="default",
     key="alpha",
     task_path="tests.tasks.echo",
     payload={"args": ["alpha"], "kwargs": {}},
@@ -553,6 +468,7 @@ def test_dashboard_recurring_section_supports_sorting(admin_client):
 
 def test_dashboard_recurring_key_links_to_raw_jobs(admin_client):
   task = RecurringTask.objects.create(
+    backend_alias="default",
     key="nightly",
     task_path="tests.tasks.echo",
     payload={"args": [], "kwargs": {}},
@@ -562,7 +478,12 @@ def test_dashboard_recurring_key_links_to_raw_jobs(admin_client):
     static=False,
   )
   job = make_job(queue_name="default")
-  RecurringExecution.objects.create(job=job, task_key=task.key, run_at=timezone.now())
+  RecurringExecution.objects.create(
+    backend_alias="default",
+    job=job,
+    task_key=task.key,
+    run_at=timezone.now(),
+  )
 
   response = admin_client.get(reverse("admin:dj_queue_dashboard_changelist"))
 
@@ -577,6 +498,7 @@ def test_dashboard_recurring_key_links_to_raw_jobs(admin_client):
 def test_dashboard_recurring_timestamps_use_compact_format(admin_client):
   now = timezone.now().replace(microsecond=0)
   task = RecurringTask.objects.create(
+    backend_alias="default",
     key="nightly",
     task_path="tests.tasks.echo",
     payload={"args": [], "kwargs": {}},
@@ -585,7 +507,12 @@ def test_dashboard_recurring_timestamps_use_compact_format(admin_client):
     priority=0,
     static=False,
   )
-  RecurringExecution.objects.create(job=None, task_key=task.key, run_at=now)
+  RecurringExecution.objects.create(
+    backend_alias="default",
+    job=None,
+    task_key=task.key,
+    run_at=now,
+  )
 
   response = admin_client.get(reverse("admin:dj_queue_dashboard_changelist"))
 
@@ -673,7 +600,7 @@ def test_dashboard_queue_pause_resume_and_clear_actions(admin_client, settings):
       "OPTIONS": {},
     },
   }
-  job = make_ready_job(queue_name="alpha", backend_name="secondary")
+  job = make_ready_job(queue_name="alpha", backend_alias="secondary")
   url = reverse("admin:dj_queue_dashboard_queue_action", args=["alpha"])
 
   response = admin_client.post(url, {"backend": "secondary", "action": "pause"})
@@ -744,7 +671,7 @@ def test_dashboard_queue_bulk_actions(admin_client):
   assert cloned_job.task_path == finished_job.task_path
   assert cloned_job.priority == finished_job.priority
   assert cloned_job.payload == finished_job.payload
-  assert cloned_job.backend_name == finished_job.backend_name
+  assert cloned_job.backend_alias == finished_job.backend_alias
   assert ReadyExecution.objects.filter(job=cloned_job).exists() is True
 
   response = admin_client.post(
@@ -785,11 +712,12 @@ def test_dashboard_queue_bulk_actions_require_explicit_selection(admin_client):
 def test_dashboard_queue_view_uses_django_changelist_structure(admin_client):
   job = make_ready_job(queue_name="alpha")
   Process.objects.create(
+    backend_alias="default",
     kind="Worker",
     pid=201,
     hostname="localhost",
     name="worker-1",
-    metadata={"backend_alias": "default", "queues": ["alpha"]},
+    metadata={"queues": ["alpha"]},
     last_heartbeat_at=timezone.now(),
   )
 
@@ -874,7 +802,7 @@ def test_dashboard_queue_view_exposes_scheduled_and_finished_actions(admin_clien
 
 def test_dashboard_queue_controls_use_distinct_pause_resume_styles(admin_client):
   make_ready_job(queue_name="alpha")
-  Pause.objects.create(queue_name="paused")
+  Pause.objects.create(backend_alias="default", queue_name="paused")
 
   overview = admin_client.get(reverse("admin:dj_queue_dashboard_changelist"))
   paused_queue = admin_client.get(
@@ -894,7 +822,7 @@ def test_dashboard_queue_controls_use_distinct_pause_resume_styles(admin_client)
 def test_dashboard_paused_queue_hides_latency(admin_client):
   make_ready_job(queue_name="alpha")
   paused_job = make_ready_job(queue_name="paused")
-  Pause.objects.create(queue_name="paused")
+  Pause.objects.create(backend_alias="default", queue_name="paused")
 
   rows = dashboard.dashboard_context(backend_alias="default")["queue_section"]["rows"]
   alpha_row = next(row for row in rows if row["name"] == "alpha")
@@ -912,6 +840,29 @@ def test_dashboard_paused_queue_hides_latency(admin_client):
   assert f">{paused_job.queue_name}</a>" in content
 
 
+def test_dashboard_resumed_queue_latency_excludes_paused_time(admin_client):
+  job = make_ready_job(queue_name="paused")
+  ReadyExecution.objects.filter(job=job).update(
+    created_at=timezone.now() - timedelta(seconds=40),
+    latency_started_at=timezone.now() - timedelta(seconds=40),
+  )
+  Pause.objects.create(backend_alias="default", queue_name="paused")
+  Pause.objects.filter(backend_alias="default", queue_name="paused").update(
+    created_at=timezone.now() - timedelta(seconds=30)
+  )
+
+  dashboard.apply_queue_action(backend_alias="default", queue_name="paused", action="resume")
+
+  queue_row = dashboard.queue_page_context(
+    backend_alias="default",
+    queue_name="paused",
+    state="ready",
+    page_number=1,
+  )["queue_latency_seconds"]
+  assert queue_row is not None
+  assert queue_row < 15.0
+
+
 def test_dashboard_queue_view_title_includes_dj_queue(admin_client):
   response = admin_client.get(
     reverse("admin:dj_queue_dashboard_queue", args=["alpha"]),
@@ -927,7 +878,7 @@ def test_dashboard_queue_view_title_includes_dj_queue(admin_client):
 def test_dashboard_queue_view_raw_links_are_queue_scoped(admin_client):
   make_ready_job(queue_name="alpha")
   make_failed_job(queue_name="alpha")
-  Pause.objects.create(queue_name="alpha")
+  Pause.objects.create(backend_alias="default", queue_name="alpha")
 
   response = admin_client.get(
     reverse("admin:dj_queue_dashboard_queue", args=["alpha"]),
@@ -965,7 +916,7 @@ def test_dashboard_queue_view_hides_missing_raw_links(admin_client):
 
 
 def test_dashboard_queue_view_zero_results_has_no_fake_page_number(admin_client):
-  Pause.objects.create(queue_name="alpha")
+  Pause.objects.create(backend_alias="default", queue_name="alpha")
 
   response = admin_client.get(
     reverse("admin:dj_queue_dashboard_queue", args=["alpha"]),
@@ -1337,6 +1288,7 @@ def test_dashboard_sort_all_sections(admin_client):
   now = timezone.now()
   make_ready_job(queue_name="alpha")
   Process.objects.create(
+    backend_alias="default",
     kind="Worker",
     pid=1,
     hostname="localhost",
@@ -1345,6 +1297,7 @@ def test_dashboard_sort_all_sections(admin_client):
     last_heartbeat_at=now,
   )
   RecurringTask.objects.create(
+    backend_alias="default",
     key="nightly",
     task_path="tests.tasks.echo",
     payload={"args": [], "kwargs": {}},

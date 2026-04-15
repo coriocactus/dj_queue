@@ -97,7 +97,7 @@ def test_10k_tasks_async_mode_no_duplicates(queue_test_settings):
       queue_name=echo.queue_name,
       priority=echo.priority,
       payload={"args": [value], "kwargs": {}},
-      backend_name="default",
+      backend_alias="default",
       created_at=now,
       updated_at=now,
     )

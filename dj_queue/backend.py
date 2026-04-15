@@ -83,7 +83,7 @@ def _task_result_from_job(job):
       priority=job.priority,
       queue_name=job.queue_name,
       run_after=job.scheduled_at,
-      backend=job.backend_name,
+      backend=job.backend_alias,
     )
 
   status = TaskResultStatus.READY
@@ -122,7 +122,7 @@ def _task_result_from_job(job):
     last_attempted_at=last_attempted_at,
     args=job.payload.get("args", []),
     kwargs=job.payload.get("kwargs", {}),
-    backend=job.backend_name,
+    backend=job.backend_alias,
     errors=errors,
     worker_ids=worker_ids,
   )
@@ -137,7 +137,7 @@ def _task_result_from_enqueued_job(job, task, dispatched_as):
       priority=job.priority,
       queue_name=job.queue_name,
       run_after=job.scheduled_at,
-      backend=job.backend_name,
+      backend=job.backend_alias,
     )
 
   status = TaskResultStatus.SUCCESSFUL if dispatched_as == "discarded" else TaskResultStatus.READY
@@ -153,7 +153,7 @@ def _task_result_from_enqueued_job(job, task, dispatched_as):
     last_attempted_at=None,
     args=job.payload.get("args", []),
     kwargs=job.payload.get("kwargs", {}),
-    backend=job.backend_name,
+    backend=job.backend_alias,
     errors=[],
     worker_ids=[],
   )

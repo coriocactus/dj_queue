@@ -37,7 +37,7 @@ def make_job(**overrides):
     queue_name=overrides.pop("queue_name", "default"),
     priority=overrides.pop("priority", 0),
     payload=payload,
-    backend_name=overrides.pop("backend_name", "default"),
+    backend_alias=overrides.pop("backend_alias", "default"),
     scheduled_at=overrides.pop("scheduled_at", None),
     concurrency_key=overrides.pop("concurrency_key", None),
     finished_at=overrides.pop("finished_at", None),
@@ -48,6 +48,7 @@ def make_job(**overrides):
 
 def make_process(**overrides):
   return Process.objects.create(
+    backend_alias=overrides.pop("backend_alias", "default"),
     kind=overrides.pop("kind", "Worker"),
     pid=overrides.pop("pid", 12345),
     hostname=overrides.pop("hostname", "localhost"),

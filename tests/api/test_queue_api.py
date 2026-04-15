@@ -30,7 +30,7 @@ def make_job(**overrides):
     queue_name=overrides.pop("queue_name", "default"),
     priority=overrides.pop("priority", 0),
     payload=payload,
-    backend_name=overrides.pop("backend_name", "default"),
+    backend_alias=overrides.pop("backend_alias", "default"),
     scheduled_at=overrides.pop("scheduled_at", None),
     concurrency_key=overrides.pop("concurrency_key", None),
     finished_at=overrides.pop("finished_at", None),
@@ -41,6 +41,7 @@ def make_job(**overrides):
 
 def make_process(**overrides):
   return Process.objects.create(
+    backend_alias=overrides.pop("backend_alias", "default"),
     kind=overrides.pop("kind", "Worker"),
     pid=overrides.pop("pid", 12345),
     hostname=overrides.pop("hostname", "localhost"),
@@ -89,8 +90,8 @@ def test_queue_info_stays_backend_scoped_on_shared_queue_db(settings):
       "OPTIONS": {"database_alias": "default"},
     },
   }
-  make_ready_job(queue_name="emails", backend_name="default")
-  make_ready_job(queue_name="emails", backend_name="secondary")
+  make_ready_job(queue_name="emails", backend_alias="default")
+  make_ready_job(queue_name="emails", backend_alias="secondary")
 
   assert QueueInfo("emails", backend_alias="default").size == 1
   assert QueueInfo("emails", backend_alias="secondary").size == 1
@@ -99,22 +100,33 @@ def test_queue_info_stays_backend_scoped_on_shared_queue_db(settings):
 def test_queue_info_latency():
   old_job = make_ready_job(queue_name="emails")
   ReadyExecution.objects.filter(job=old_job).update(
-    created_at=timezone.now() - timedelta(seconds=5)
+    latency_started_at=timezone.now() - timedelta(seconds=5)
   )
 
   assert QueueInfo("emails").latency >= 5.0
 
 
 def test_queue_info_pause_and_resume():
+  job = make_ready_job(queue_name="emails")
+  before_pause = timezone.now() - timedelta(seconds=5)
+  ReadyExecution.objects.filter(job=job).update(
+    created_at=before_pause,
+    latency_started_at=before_pause,
+  )
   queue = QueueInfo("emails")
 
   queue.pause()
   assert queue.paused is True
   assert Pause.objects.filter(queue_name="emails").exists() is True
 
+  Pause.objects.filter(queue_name="emails").update(
+    created_at=timezone.now() - timedelta(seconds=30)
+  )
+
   queue.resume()
   assert queue.paused is False
   assert Pause.objects.filter(queue_name="emails").exists() is False
+  assert QueueInfo("emails").latency < 10.0
 
 
 def test_queue_info_clear():

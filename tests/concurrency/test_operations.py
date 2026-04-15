@@ -44,7 +44,7 @@ def make_job(task=echo, **overrides):
     queue_name=overrides.pop("queue_name", task.queue_name),
     priority=overrides.pop("priority", task.priority),
     payload=payload,
-    backend_name=overrides.pop("backend_name", task.backend),
+    backend_alias=overrides.pop("backend_alias", task.backend),
     scheduled_at=overrides.pop("scheduled_at", None),
     concurrency_key=overrides.pop("concurrency_key", None),
     finished_at=overrides.pop("finished_at", None),
@@ -214,7 +214,7 @@ def test_discarding_ready_job_releases_waiter():
 
 @pytest.mark.django_db
 def test_queue_pause_blocks_claiming_not_enqueue():
-  Pause.objects.create(queue_name="other")
+  Pause.objects.create(backend_alias="default", queue_name="other")
   other_queue.enqueue("paused")
 
   claimed_jobs = claim_ready_jobs(limit=1, queues=("other",))
@@ -225,7 +225,7 @@ def test_queue_pause_blocks_claiming_not_enqueue():
 
 @pytest.mark.django_db
 def test_queue_resume_restores_claiming():
-  pause = Pause.objects.create(queue_name="other")
+  pause = Pause.objects.create(backend_alias="default", queue_name="other")
   result = other_queue.enqueue("paused")
 
   assert claim_ready_jobs(limit=1, queues=("other",)) == []

@@ -85,6 +85,31 @@ django.setup()
 
 from django.core.management import call_command  # noqa: E402
 
+
+def _reset_example_database():
+  connection = connections["default"]
+  table_names = connection.introspection.table_names()
+  if not table_names:
+    return
+
+  quote_name = connection.ops.quote_name
+  with connection.cursor() as cursor:
+    if DB_BACKEND in MYSQL_FAMILY:
+      cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
+    elif DB_BACKEND == "sqlite":
+      cursor.execute("PRAGMA foreign_keys = OFF")
+
+    for table_name in table_names:
+      suffix = " CASCADE" if DB_BACKEND == "postgres" else ""
+      cursor.execute(f"DROP TABLE IF EXISTS {quote_name(table_name)}{suffix}")
+
+    if DB_BACKEND in MYSQL_FAMILY:
+      cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
+    elif DB_BACKEND == "sqlite":
+      cursor.execute("PRAGMA foreign_keys = ON")
+
+
+_reset_example_database()
 call_command("migrate", "--run-syncdb", verbosity=0)
 
 # clear any leftover state so each example starts clean

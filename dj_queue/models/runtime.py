@@ -18,6 +18,7 @@ class Semaphore(models.Model):
 
 
 class Process(models.Model):
+  backend_alias = models.CharField(max_length=64, default="default")
   kind = models.CharField(max_length=32)
   pid = models.IntegerField()
   hostname = models.CharField(max_length=255)
@@ -42,17 +43,26 @@ class Process(models.Model):
       )
     ]
     indexes = [
+      models.Index(fields=["backend_alias"]),
       models.Index(fields=["name", "supervisor"]),
       models.Index(fields=["last_heartbeat_at"]),
     ]
 
 
 class Pause(models.Model):
-  queue_name = models.CharField(max_length=64, unique=True)
+  backend_alias = models.CharField(max_length=64, default="default")
+  queue_name = models.CharField(max_length=64)
   created_at = models.DateTimeField(auto_now_add=True)
 
   class Meta:
     db_table = "dj_queue_pauses"
+    constraints = [
+      models.UniqueConstraint(
+        fields=["backend_alias", "queue_name"],
+        name="dj_queue_pauses_backend_alias_queue_name_unique",
+      )
+    ]
+    indexes = [models.Index(fields=["backend_alias", "queue_name"])]
 
 
 class Dashboard(models.Model):

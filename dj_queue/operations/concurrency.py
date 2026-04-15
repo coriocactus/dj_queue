@@ -7,7 +7,7 @@ from django.utils.module_loading import import_string
 from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias, locked_queryset
 from dj_queue.log import log_event
-from dj_queue.models import BlockedExecution, ReadyExecution, Semaphore
+from dj_queue.models import BlockedExecution, Pause, ReadyExecution, Semaphore
 from dj_queue.runtime import notify as runtime_notify
 
 
@@ -75,6 +75,7 @@ def unblock_next_blocked_job(
   use_skip_locked=True,
 ):
   alias = get_database_alias(backend_alias)
+  now = timezone.now()
 
   with transaction.atomic(using=alias):
     queryset = (
@@ -99,10 +100,12 @@ def unblock_next_blocked_job(
     queue_name = blocked.queue_name
     priority = blocked.priority
     blocked.delete(using=alias)
+    _lock_active_pauses(alias, backend_alias, {queue_name})
     ReadyExecution.objects.using(alias).create(
       job=job,
       queue_name=queue_name,
       priority=priority,
+      latency_started_at=now,
     )
 
   log_event(
@@ -160,10 +163,12 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
         queue_name = blocked.queue_name
         priority = blocked.priority
         blocked.delete(using=alias)
+        _lock_active_pauses(alias, backend_alias, {queue_name})
         ReadyExecution.objects.using(alias).create(
           job=job,
           queue_name=queue_name,
           priority=priority,
+          latency_started_at=now,
         )
         promoted_jobs.append(job)
       else:
@@ -174,3 +179,17 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
     log_event("job.unblocked", job_id=str(job.id), concurrency_key=job.concurrency_key)
     runtime_notify.notify_ready_queues((job.queue_name,), backend_alias=backend_alias)
   return promoted_jobs
+
+
+def _lock_active_pauses(alias, backend_alias, queue_names):
+  active_queue_names = tuple(queue_name for queue_name in queue_names if queue_name)
+  if not active_queue_names:
+    return None
+
+  list(
+    Pause.objects.using(alias)
+    .select_for_update()
+    .filter(backend_alias=backend_alias, queue_name__in=active_queue_names)
+    .values_list("queue_name", flat=True)
+  )
+  return None

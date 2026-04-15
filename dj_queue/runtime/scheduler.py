@@ -106,7 +106,9 @@ class Scheduler(BaseRunner):
 
   def _fire_due_tasks(self, now):
     alias = get_database_alias(self.backend_alias)
-    queryset = RecurringTask.objects.using(alias).order_by("key")
+    queryset = (
+      RecurringTask.objects.using(alias).filter(backend_alias=self.backend_alias).order_by("key")
+    )
     if not self.config.scheduler.dynamic_tasks_enabled:
       queryset = queryset.filter(static=True)
 

@@ -68,7 +68,14 @@ def test_static_recurring_task_cannot_be_unscheduled_via_dynamic_api():
   deleted = unschedule_recurring_task("static-task")
 
   assert deleted == 0
-  assert RecurringTask.objects.filter(key="static-task", static=True).exists() is True
+  assert (
+    RecurringTask.objects.filter(
+      backend_alias="default",
+      key="static-task",
+      static=True,
+    ).exists()
+    is True
+  )
 
 
 def test_recurring_reservation_without_job_backfill_does_not_double_fire(monkeypatch):
@@ -84,9 +91,14 @@ def test_recurring_reservation_without_job_backfill_does_not_double_fire(monkeyp
     )
   )
   scheduler.sync_static_tasks()
-  recurring_task = RecurringTask.objects.get(key="static-task")
+  recurring_task = RecurringTask.objects.get(backend_alias="default", key="static-task")
   run_at = _latest_run_at(recurring_task.schedule, now)
-  RecurringExecution.objects.create(task_key=recurring_task.key, run_at=run_at, job=None)
+  RecurringExecution.objects.create(
+    backend_alias="default",
+    task_key=recurring_task.key,
+    run_at=run_at,
+    job=None,
+  )
 
   monkeypatch.setattr(
     "dj_queue.operations.recurring.enqueue_job",
@@ -97,7 +109,14 @@ def test_recurring_reservation_without_job_backfill_does_not_double_fire(monkeyp
 
   assert fired_jobs == []
   assert Job.objects.count() == 0
-  assert RecurringExecution.objects.filter(task_key="static-task", run_at=run_at).count() == 1
+  assert (
+    RecurringExecution.objects.filter(
+      backend_alias="default",
+      task_key="static-task",
+      run_at=run_at,
+    ).count()
+    == 1
+  )
 
 
 def test_listen_notify_ignored_on_non_postgres_backends(settings):

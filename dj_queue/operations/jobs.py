@@ -46,7 +46,7 @@ def enqueue_job_with_dispatch(task, args, kwargs, *, backend_alias="default"):
       queue_name=task.queue_name,
       priority=task.priority,
       payload=payload,
-      backend_name=backend_alias,
+      backend_alias=backend_alias,
       scheduled_at=task.run_after,
       concurrency_key=concurrency_key,
     )
@@ -82,7 +82,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
           queue_name=task.queue_name,
           priority=task.priority,
           payload=payload,
-          backend_name=backend_alias,
+          backend_alias=backend_alias,
           scheduled_at=task.run_after,
           concurrency_key=concurrency_key,
           created_at=created_at,
@@ -100,6 +100,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
     with transaction.atomic(using=alias):
       jobs = [entry["job"] for entry in prepared]
       _bulk_create(alias, Job, jobs)
+      _lock_active_pauses(alias, backend_alias, {job.queue_name for job in jobs})
       _bulk_create(
         alias,
         ReadyExecution,
@@ -109,6 +110,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
             queue_name=job.queue_name,
             priority=job.priority,
             created_at=job.created_at,
+            latency_started_at=job.created_at,
           )
           for job in jobs
         ],
@@ -160,6 +162,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
             queue_name=job.queue_name,
             priority=job.priority,
             created_at=job.created_at,
+            latency_started_at=job.created_at,
           )
         )
         ready_queue_names.append(job.queue_name)
@@ -171,6 +174,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
         ready_queue_names.append(job.queue_name)
       entry["dispatched_as"] = dispatched_as
 
+    _lock_active_pauses(alias, backend_alias, {row.queue_name for row in ready_rows})
     _bulk_create(alias, ReadyExecution, ready_rows)
     _bulk_create(alias, ScheduledExecution, scheduled_rows)
 
@@ -208,13 +212,17 @@ def claim_ready_jobs(
   if use_skip_locked is None:
     use_skip_locked = load_backend_config(backend_alias).use_skip_locked
 
-  paused_queue_names = list(Pause.objects.using(alias).values_list("queue_name", flat=True))
+  paused_queue_names = list(
+    Pause.objects.using(alias)
+    .filter(backend_alias=backend_alias)
+    .values_list("queue_name", flat=True)
+  )
 
   with transaction.atomic(using=alias):
     queryset = (
       ReadyExecution.objects.using(alias)
       .select_related("job")
-      .filter(job__backend_name=backend_alias)
+      .filter(job__backend_alias=backend_alias)
     )
     if paused_queue_names:
       queryset = queryset.exclude(queue_name__in=paused_queue_names)
@@ -262,10 +270,10 @@ def execute_claimed_job(job_id, *, backend_alias="default"):
       job.id,
       exc,
       traceback_text=traceback.format_exc(),
-      backend_alias=job.backend_name,
+      backend_alias=job.backend_alias,
     )
 
-  return complete_claimed_job(job.id, return_value, backend_alias=job.backend_name)
+  return complete_claimed_job(job.id, return_value, backend_alias=job.backend_alias)
 
 
 def complete_claimed_job(job_id, return_value, *, backend_alias="default"):
@@ -275,7 +283,7 @@ def complete_claimed_job(job_id, return_value, *, backend_alias="default"):
     claimed = ClaimedExecution.objects.using(alias).select_related("job").get(job_id=job_id)
     job = claimed.job
     now = timezone.now()
-    config = load_backend_config(job.backend_name)
+    config = load_backend_config(job.backend_alias)
 
     if config.preserve_finished_jobs:
       job.finished_at = now
@@ -370,11 +378,11 @@ def enqueue_job_again(job_id, *, backend_alias="default"):
       priority=source_job.priority,
       queue_name=source_job.queue_name,
       run_after=source_job.scheduled_at,
-      backend=source_job.backend_name,
+      backend=source_job.backend_alias,
     )
   args = list(source_job.payload.get("args", []))
   kwargs = dict(source_job.payload.get("kwargs", {}))
-  job, _ = enqueue_job_with_dispatch(task, args, kwargs, backend_alias=source_job.backend_name)
+  job, _ = enqueue_job_with_dispatch(task, args, kwargs, backend_alias=source_job.backend_alias)
   return job
 
 
@@ -398,7 +406,7 @@ def discard_ready_jobs(*, job_ids=None, batch_size=500, backend_alias="default")
     queryset = (
       ReadyExecution.objects.using(alias)
       .select_related("job")
-      .filter(job__backend_name=backend_alias)
+      .filter(job__backend_alias=backend_alias)
       .order_by("id")
     )
     if job_ids is not None:
@@ -426,7 +434,7 @@ def discard_scheduled_jobs(*, job_ids=None, batch_size=500, backend_alias="defau
     queryset = (
       ScheduledExecution.objects.using(alias)
       .select_related("job")
-      .filter(job__backend_name=backend_alias)
+      .filter(job__backend_alias=backend_alias)
       .order_by("id")
     )
     if job_ids is not None:
@@ -454,7 +462,7 @@ def discard_blocked_jobs(*, job_ids=None, batch_size=500, backend_alias="default
     queryset = (
       BlockedExecution.objects.using(alias)
       .select_related("job")
-      .filter(job__backend_name=backend_alias)
+      .filter(job__backend_alias=backend_alias)
       .order_by("id")
     )
     if job_ids is not None:
@@ -475,7 +483,7 @@ def discard_blocked_jobs(*, job_ids=None, batch_size=500, backend_alias="default
 
 def _dispatch_existing_job(job):
   task = import_string(job.task_path)
-  return _dispatch_job(job, task=task, backend_alias=job.backend_name)
+  return _dispatch_job(job, task=task, backend_alias=job.backend_alias)
 
 
 def _dispatch_job(job, *, task, backend_alias, now=None):
@@ -493,10 +501,12 @@ def _dispatch_job(job, *, task, backend_alias, now=None):
     return "scheduled"
 
   if not job.concurrency_key:
+    _lock_active_pauses(alias, backend_alias, {job.queue_name})
     ReadyExecution.objects.using(alias).create(
       job=job,
       queue_name=job.queue_name,
       priority=job.priority,
+      latency_started_at=now,
     )
     return "ready"
 
@@ -507,10 +517,12 @@ def _dispatch_job(job, *, task, backend_alias, now=None):
     duration_seconds=duration_seconds,
     backend_alias=backend_alias,
   ):
+    _lock_active_pauses(alias, backend_alias, {job.queue_name})
     ReadyExecution.objects.using(alias).create(
       job=job,
       queue_name=job.queue_name,
       priority=job.priority,
+      latency_started_at=now,
     )
     return "ready"
 
@@ -535,18 +547,18 @@ def _release_concurrency_slot(job):
     return
 
   task = import_string(job.task_path)
-  limit, duration_seconds, _ = _concurrency_settings(task, backend_alias=job.backend_name)
+  limit, duration_seconds, _ = _concurrency_settings(task, backend_alias=job.backend_alias)
   semaphore_release(
     job.concurrency_key,
     duration_seconds=duration_seconds,
-    backend_alias=job.backend_name,
+    backend_alias=job.backend_alias,
   )
   unblock_next_blocked_job(
     job.concurrency_key,
     limit=limit,
     duration_seconds=duration_seconds,
-    backend_alias=job.backend_name,
-    use_skip_locked=load_backend_config(job.backend_name).use_skip_locked,
+    backend_alias=job.backend_alias,
+    use_skip_locked=load_backend_config(job.backend_alias).use_skip_locked,
   )
 
 
@@ -662,6 +674,20 @@ def _task_option(task, name, default=None):
   return getattr(task.func, name, default)
 
 
+def _lock_active_pauses(alias, backend_alias, queue_names):
+  active_queue_names = tuple(queue_name for queue_name in queue_names if queue_name)
+  if not active_queue_names:
+    return None
+
+  list(
+    Pause.objects.using(alias)
+    .select_for_update()
+    .filter(backend_alias=backend_alias, queue_name__in=active_queue_names)
+    .values_list("queue_name", flat=True)
+  )
+  return None
+
+
 def _bulk_create(alias, model, objects):
   if not objects:
     return None
@@ -693,7 +719,7 @@ def _task_result_for_claimed_job(task, claimed):
     last_attempted_at=claimed.created_at,
     args=claimed.job.payload.get("args", []),
     kwargs=claimed.job.payload.get("kwargs", {}),
-    backend=claimed.job.backend_name,
+    backend=claimed.job.backend_alias,
     errors=[],
     worker_ids=worker_ids,
   )
