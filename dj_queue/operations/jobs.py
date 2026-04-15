@@ -331,14 +331,14 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
   with transaction.atomic(using=alias):
     queryset = (
       ScheduledExecution.objects.using(alias)
-      .select_related("job")
       .filter(scheduled_at__lte=now)
       .order_by("scheduled_at", "-priority", "id")
     )
     scheduled_rows = list(locked_queryset(queryset, use_skip_locked=use_skip_locked)[:batch_size])
-    jobs = [row.job for row in scheduled_rows]
-    if not jobs:
+    if not scheduled_rows:
       return []
+
+    jobs = list(Job.objects.using(alias).filter(pk__in=[row.job_id for row in scheduled_rows]))
 
     ScheduledExecution.objects.using(alias).filter(
       pk__in=[row.pk for row in scheduled_rows]
