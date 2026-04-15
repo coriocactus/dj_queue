@@ -380,6 +380,37 @@ def test_job_change_view_shows_enqueue_retry_and_discard_actions_for_failed_jobs
   assert "Discard failed job" in content
 
 
+def test_job_change_view_shows_failed_execution_details(admin_client):
+  job, failed = make_failed_job(
+    task_path="tests.tasks.failing",
+  )
+  FailedExecution.objects.filter(job=job).update(
+    exception_class="builtins.TimeoutError",
+    message="provider timed out",
+    traceback='Traceback (most recent call last):\n  File "worker.py", line 1, in run\nTimeoutError: provider timed out',
+  )
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_job_change", args=[job.pk]),
+    {"backend": "default"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert "Failed execution:" in content
+  assert (
+    f"{reverse('admin:dj_queue_failedexecution_change', args=[failed.pk])}?backend=default"
+    in content
+  )
+  assert "Exception class:" in content
+  assert "builtins.TimeoutError" in content
+  assert "Message:" in content
+  assert "provider timed out" in content
+  assert "Traceback:" in content
+  assert "worker.py&quot;, line 1, in run" in content
+  assert content.index("Updated at:") < content.index("Failed execution:")
+
+
 def test_job_change_view_shows_enqueue_action_for_non_failed_jobs(admin_client):
   job = make_job()
 
@@ -394,6 +425,8 @@ def test_job_change_view_shows_enqueue_action_for_non_failed_jobs(admin_client):
   assert 'name="_djq_object_action" value="enqueue"' in content
   assert 'name="_djq_object_action" value="retry"' not in content
   assert 'name="_djq_object_action" value="discard"' not in content
+  assert "Exception class:" not in content
+  assert "Traceback:" not in content
 
 
 def test_process_change_view_hides_save_controls(admin_client):

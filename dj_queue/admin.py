@@ -468,8 +468,28 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     "return_value",
     "created_at",
     "updated_at",
+    "failed_execution_link",
+    "failed_exception_class",
+    "failed_message",
+    "failed_traceback",
   )
   search_fields = ("id", "task_path", "queue_name", "concurrency_key")
+
+  def get_readonly_fields(self, request, obj=None):
+    fields = super().get_readonly_fields(request, obj)
+    if obj is None or obj.status != "failed":
+      return tuple(
+        field_name
+        for field_name in fields
+        if field_name
+        not in {
+          "failed_execution_link",
+          "failed_exception_class",
+          "failed_message",
+          "failed_traceback",
+        }
+      )
+    return fields
 
   def get_queryset(self, request):
     queryset = super().get_queryset(request)
@@ -501,6 +521,40 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   @admin.display(description="created at", ordering="created_at")
   def display_created_at(self, obj):
     return _format_admin_datetime(obj.created_at)
+
+  @admin.display(description="failed execution")
+  def failed_execution_link(self, obj):
+    failed_execution = getattr(obj, "failed_execution", None)
+    if failed_execution is None:
+      return None
+    url = reverse("admin:dj_queue_failedexecution_change", args=[failed_execution.pk])
+    return format_html(
+      '<a href="{}?{}">FailedExecution object ({})</a>',
+      url,
+      urlencode({"backend": obj.backend_alias}),
+      failed_execution.pk,
+    )
+
+  @admin.display(description="exception class")
+  def failed_exception_class(self, obj):
+    failed_execution = getattr(obj, "failed_execution", None)
+    if failed_execution is None:
+      return None
+    return failed_execution.exception_class
+
+  @admin.display(description="message")
+  def failed_message(self, obj):
+    failed_execution = getattr(obj, "failed_execution", None)
+    if failed_execution is None:
+      return None
+    return failed_execution.message
+
+  @admin.display(description="traceback")
+  def failed_traceback(self, obj):
+    failed_execution = getattr(obj, "failed_execution", None)
+    if failed_execution is None:
+      return None
+    return format_html('<pre class="djq-traceback">{}</pre>', failed_execution.traceback)
 
   def get_change_actions(self, request, obj):
     if obj is None:
