@@ -231,11 +231,9 @@ def claim_ready_jobs(
     if not ready_rows:
       return []
 
-    jobs_by_id = {
-      job.id: job
-      for job in Job.objects.using(alias).filter(pk__in=[row.job_id for row in ready_rows])
-    }
-    jobs = [jobs_by_id[row.job_id] for row in ready_rows]
+    job_ids = [row.job_id for row in ready_rows]
+    jobs_by_id = {job.id: job for job in Job.objects.using(alias).filter(pk__in=job_ids)}
+    jobs = [jobs_by_id[job_id] for job_id in job_ids]
 
     ReadyExecution.objects.using(alias).filter(pk__in=[row.pk for row in ready_rows]).delete()
     _bulk_create(
@@ -339,11 +337,9 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
     if not scheduled_rows:
       return []
 
-    jobs_by_id = {
-      job.id: job
-      for job in Job.objects.using(alias).filter(pk__in=[row.job_id for row in scheduled_rows])
-    }
-    jobs = [jobs_by_id[row.job_id] for row in scheduled_rows]
+    job_ids = [row.job_id for row in scheduled_rows]
+    jobs_by_id = {job.id: job for job in Job.objects.using(alias).filter(pk__in=job_ids)}
+    jobs = [jobs_by_id[job_id] for job_id in job_ids]
 
     ScheduledExecution.objects.using(alias).filter(
       pk__in=[row.pk for row in scheduled_rows]
@@ -404,11 +400,9 @@ def discard_failed_jobs(*, job_ids=None, batch_size=500, backend_alias="default"
     if not failed_rows:
       return 0
 
-    jobs_by_id = {
-      job.id: job
-      for job in Job.objects.using(alias).filter(pk__in=[row.job_id for row in failed_rows])
-    }
-    jobs = [jobs_by_id[row.job_id] for row in failed_rows]
+    job_ids = [row.job_id for row in failed_rows]
+    jobs_by_id = {job.id: job for job in Job.objects.using(alias).filter(pk__in=job_ids)}
+    jobs = [jobs_by_id[job_id] for job_id in job_ids]
     Job.objects.using(alias).filter(pk__in=[row.job_id for row in failed_rows]).delete()
 
   for job in jobs:
@@ -436,11 +430,9 @@ def discard_ready_jobs(*, job_ids=None, batch_size=500, backend_alias="default")
     if not ready_rows:
       return 0
 
-    jobs_by_id = {
-      job.id: job
-      for job in Job.objects.using(alias).filter(pk__in=[row.job_id for row in ready_rows])
-    }
-    jobs = [jobs_by_id[row.job_id] for row in ready_rows]
+    job_ids = [row.job_id for row in ready_rows]
+    jobs_by_id = {job.id: job for job in Job.objects.using(alias).filter(pk__in=job_ids)}
+    jobs = [jobs_by_id[job_id] for job_id in job_ids]
     Job.objects.using(alias).filter(pk__in=[row.job_id for row in ready_rows]).delete()
 
   for job in jobs:
@@ -467,11 +459,9 @@ def discard_scheduled_jobs(*, job_ids=None, batch_size=500, backend_alias="defau
     if not scheduled_rows:
       return 0
 
-    jobs_by_id = {
-      job.id: job
-      for job in Job.objects.using(alias).filter(pk__in=[row.job_id for row in scheduled_rows])
-    }
-    jobs = [jobs_by_id[row.job_id] for row in scheduled_rows]
+    job_ids = [row.job_id for row in scheduled_rows]
+    jobs_by_id = {job.id: job for job in Job.objects.using(alias).filter(pk__in=job_ids)}
+    jobs = [jobs_by_id[job_id] for job_id in job_ids]
     Job.objects.using(alias).filter(pk__in=[row.job_id for row in scheduled_rows]).delete()
 
   for job in jobs:
@@ -496,11 +486,9 @@ def discard_blocked_jobs(*, job_ids=None, batch_size=500, backend_alias="default
     if not blocked_rows:
       return 0
 
-    jobs_by_id = {
-      job.id: job
-      for job in Job.objects.using(alias).filter(pk__in=[row.job_id for row in blocked_rows])
-    }
-    jobs = [jobs_by_id[row.job_id] for row in blocked_rows]
+    job_ids = [row.job_id for row in blocked_rows]
+    jobs_by_id = {job.id: job for job in Job.objects.using(alias).filter(pk__in=job_ids)}
+    jobs = [jobs_by_id[job_id] for job_id in job_ids]
     Job.objects.using(alias).filter(pk__in=[row.job_id for row in blocked_rows]).delete()
 
   for job in jobs:
