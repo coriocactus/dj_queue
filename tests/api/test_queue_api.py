@@ -117,15 +117,15 @@ def test_queue_info_pause_and_resume():
 
   queue.pause()
   assert queue.paused is True
-  assert Pause.objects.filter(queue_name="emails").exists() is True
+  assert Pause.objects.filter(backend_alias="default", queue_name="emails").exists() is True
 
-  Pause.objects.filter(queue_name="emails").update(
+  Pause.objects.filter(backend_alias="default", queue_name="emails").update(
     created_at=timezone.now() - timedelta(seconds=30)
   )
 
   queue.resume()
   assert queue.paused is False
-  assert Pause.objects.filter(queue_name="emails").exists() is False
+  assert Pause.objects.filter(backend_alias="default", queue_name="emails").exists() is False
   assert QueueInfo("emails").latency < 10.0
 
 
