@@ -135,13 +135,9 @@ def test_configured_backend_aliases_ignore_non_dj_queue_backends(settings):
       "QUEUES": [],
       "OPTIONS": {},
     },
-    "legacy": {
-      "QUEUES": [],
-      "OPTIONS": {},
-    },
   }
 
-  assert observability.configured_backend_aliases() == ("default", "legacy")
+  assert observability.configured_backend_aliases() == ("default",)
 
 
 def test_configured_backend_aliases_falls_back_to_implicit_default_when_tasks_empty(settings):

@@ -39,6 +39,7 @@ def test_missing_alias_is_rejected_when_tasks_is_non_empty(settings):
 def test_invalid_mode_is_rejected(settings):
   settings.TASKS = {
     "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {
         "mode": "threads",
       },
@@ -61,9 +62,21 @@ def test_non_dj_queue_backend_alias_is_rejected(settings):
     load_backend_config()
 
 
+def test_missing_backend_alias_is_rejected_when_tasks_is_non_empty(settings):
+  settings.TASKS = {
+    "default": {
+      "OPTIONS": {},
+    },
+  }
+
+  with pytest.raises(ImproperlyConfigured, match="not configured for DjQueueBackend"):
+    load_backend_config()
+
+
 def test_on_thread_error_path_is_validated(settings):
   settings.TASKS = {
     "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {
         "on_thread_error": "missing.module.callback",
       },
@@ -77,6 +90,7 @@ def test_on_thread_error_path_is_validated(settings):
 def test_scheduler_omitted_when_no_scheduler_work_exists(settings):
   settings.TASKS = {
     "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {
         "preserve_finished_jobs": False,
         "clear_finished_jobs_after": None,
@@ -95,6 +109,7 @@ def test_scheduler_omitted_when_no_scheduler_work_exists(settings):
 def test_failed_or_recurring_cleanup_keeps_scheduler_enabled(settings):
   settings.TASKS = {
     "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {
         "preserve_finished_jobs": False,
         "clear_finished_jobs_after": None,
@@ -113,6 +128,7 @@ def test_failed_or_recurring_cleanup_keeps_scheduler_enabled(settings):
 def test_config_precedence_cli_over_env_over_yaml_over_settings(settings, tmp_path):
   settings.TASKS = {
     "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {
         "mode": "fork",
         "listen_notify": False,
@@ -154,12 +170,14 @@ def test_config_precedence_cli_over_env_over_yaml_over_settings(settings, tmp_pa
 def test_multi_backend_yaml_selects_requested_alias(settings, tmp_path):
   settings.TASKS = {
     "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {
         "mode": "fork",
         "database_alias": "default",
       },
     },
     "critical": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {
         "mode": "fork",
         "database_alias": "default",
@@ -203,6 +221,7 @@ def test_multi_backend_yaml_selects_requested_alias(settings, tmp_path):
 def test_multi_backend_yaml_missing_alias_falls_back_to_tasks(settings, tmp_path):
   settings.TASKS = {
     "secondary": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {
         "mode": "async",
         "database_alias": "queue_secondary",
@@ -235,6 +254,7 @@ def test_multi_backend_yaml_missing_alias_falls_back_to_tasks(settings, tmp_path
 def test_multi_backend_yaml_rejects_non_mapping_backends(settings, tmp_path):
   settings.TASKS = {
     "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {},
     }
   }
@@ -252,6 +272,7 @@ def test_multi_backend_yaml_rejects_non_mapping_backends(settings, tmp_path):
 def test_multi_backend_yaml_rejects_non_mapping_backend_entry(settings, tmp_path):
   settings.TASKS = {
     "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {},
     }
   }
@@ -277,6 +298,7 @@ def test_multi_backend_yaml_rejects_non_mapping_backend_entry(settings, tmp_path
 def test_multi_backend_yaml_rejects_mixed_shapes(settings, tmp_path):
   settings.TASKS = {
     "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {},
     }
   }
@@ -304,6 +326,7 @@ def test_multi_backend_yaml_rejects_mixed_shapes(settings, tmp_path):
 def test_workers_single_mapping_is_normalized_to_one_item_list(settings):
   settings.TASKS = {
     "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {
         "workers": {
           "queues": ["default", "email*"],
@@ -330,6 +353,7 @@ def test_workers_single_mapping_is_normalized_to_one_item_list(settings):
 def test_dispatchers_single_mapping_is_normalized_to_one_item_list(settings):
   settings.TASKS = {
     "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {
         "dispatchers": {
           "batch_size": 250,
@@ -356,6 +380,7 @@ def test_dispatchers_single_mapping_is_normalized_to_one_item_list(settings):
 def test_workers_single_mapping_still_normalizes_async_processes_to_one(settings):
   settings.TASKS = {
     "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {
         "mode": "async",
         "workers": {
@@ -396,6 +421,7 @@ def test_workers_single_mapping_still_normalizes_async_processes_to_one(settings
 def test_boolean_environment_values_parse_truthy_and_falsy_forms(settings, value, skip_recurring):
   settings.TASKS = {
     "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {
         "preserve_finished_jobs": True,
         "clear_finished_jobs_after": 10,
@@ -411,6 +437,7 @@ def test_boolean_environment_values_parse_truthy_and_falsy_forms(settings, value
 def test_load_backend_config_caches_repeated_inputs(settings, monkeypatch):
   settings.TASKS = {
     "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {
         "mode": "fork",
       },
@@ -434,6 +461,7 @@ def test_load_backend_config_caches_repeated_inputs(settings, monkeypatch):
 def test_load_backend_config_cache_invalidates_when_settings_change(settings):
   settings.TASKS = {
     "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {
         "database_alias": "queue_a",
       },
@@ -444,6 +472,7 @@ def test_load_backend_config_cache_invalidates_when_settings_change(settings):
 
   settings.TASKS = {
     "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {
         "database_alias": "queue_b",
       },

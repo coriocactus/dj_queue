@@ -291,7 +291,7 @@ def ensure_dj_queue_backend_alias(
 
 def is_dj_queue_backend_alias(backend_block: Mapping[str, Any]) -> bool:
   backend_path = backend_block.get("BACKEND")
-  return backend_path in (None, DJ_QUEUE_BACKEND_PATH)
+  return backend_path == DJ_QUEUE_BACKEND_PATH
 
 
 def _resolved_options(
