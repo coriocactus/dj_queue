@@ -2,6 +2,7 @@ from datetime import datetime
 from uuid import uuid4
 
 import pytest
+from django.db.models.query import QuerySet
 from django.utils import timezone
 
 from dj_queue.api import unschedule_recurring_task
@@ -117,6 +118,43 @@ def test_recurring_reservation_without_job_backfill_does_not_double_fire(monkeyp
     ).count()
     == 1
   )
+
+
+def test_recurring_reservation_does_not_insert_when_already_reserved(monkeypatch):
+  now = fixed_now()
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      recurring={
+        "static-task": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "* * * * *",
+        }
+      }
+    )
+  )
+  scheduler.sync_static_tasks()
+  recurring_task = RecurringTask.objects.get(backend_alias="default", key="static-task")
+  run_at = _latest_run_at(recurring_task.schedule, now)
+  RecurringExecution.objects.create(
+    backend_alias="default",
+    task_key=recurring_task.key,
+    run_at=run_at,
+    job=None,
+  )
+
+  original_create = QuerySet.create
+
+  def reject_duplicate_insert(queryset, *args, **kwargs):
+    if queryset.model is RecurringExecution:
+      raise AssertionError("existing recurring execution should be read, not inserted")
+    return original_create(queryset, *args, **kwargs)
+
+  monkeypatch.setattr(QuerySet, "create", reject_duplicate_insert)
+
+  fired_jobs = scheduler.poll_once(now=now)
+
+  assert fired_jobs == []
+  assert Job.objects.count() == 0
 
 
 def test_listen_notify_ignored_on_non_postgres_backends(settings):

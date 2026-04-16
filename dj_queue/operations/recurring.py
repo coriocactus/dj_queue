@@ -1,4 +1,4 @@
-from django.db import IntegrityError, transaction
+from django.db import transaction
 from django.utils.module_loading import import_string
 
 from dj_queue.db import get_database_alias
@@ -62,13 +62,12 @@ def fire_recurring_task(recurring_task, run_at, *, backend_alias="default"):
   alias = get_database_alias(backend_alias)
 
   with transaction.atomic(using=alias):
-    try:
-      execution = RecurringExecution.objects.using(alias).create(
-        backend_alias=backend_alias,
-        task_key=recurring_task.key,
-        run_at=run_at,
-      )
-    except IntegrityError:
+    execution, created = RecurringExecution.objects.using(alias).get_or_create(
+      backend_alias=backend_alias,
+      task_key=recurring_task.key,
+      run_at=run_at,
+    )
+    if not created:
       # treat an existing reservation row as authoritative even if its job backfill
       # has not happened yet, so duplicate scheduler ticks never enqueue twice
       return None

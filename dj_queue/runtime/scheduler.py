@@ -21,6 +21,10 @@ class Scheduler(BaseRunner):
   process_kind = "Scheduler"
   hook_prefix = "scheduler"
 
+  @property
+  def polling_interval(self):
+    return self.config.scheduler.polling_interval
+
   def __init__(
     self,
     config,

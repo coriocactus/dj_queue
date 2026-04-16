@@ -82,6 +82,21 @@ def test_scheduler_only_starts_when_it_has_work():
   assert scheduler is None
 
 
+def test_scheduler_uses_configured_polling_interval():
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      recurring={
+        "static-task": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "* * * * *",
+        }
+      }
+    )
+  )
+
+  assert scheduler.polling_interval == 5
+
+
 def test_scheduler_persists_static_tasks():
   scheduler = build_scheduler(
     tasks_settings=scheduler_tasks_settings(
