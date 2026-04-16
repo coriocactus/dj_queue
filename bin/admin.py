@@ -506,6 +506,7 @@ def make_job(**overrides):
 def seed_demo_data():
   now = timezone.now()
   critical_queue_names = set(settings.TASKS["critical"]["QUEUES"])
+  seeded_backends = {"demo", "critical"}
 
   def backend_alias_for_queue(queue_name):
     if queue_name in critical_queue_names:
@@ -513,7 +514,7 @@ def seed_demo_data():
     return "demo"
 
   Job.objects.all().delete()
-  Process.objects.filter(name__in=SEEDED_PROCESS_NAMES).delete()
+  Process.objects.filter(backend_alias__in=seeded_backends).delete()
   RecurringExecution.objects.all().delete()
   RecurringTask.objects.all().delete()
   Pause.objects.all().delete()
