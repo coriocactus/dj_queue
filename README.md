@@ -521,6 +521,41 @@ except EnqueueError as exc:
 Task execution errors are different: they become failed jobs and stay
 inspectable in the queue database.
 
+## Lifecycle Hooks
+
+Register hooks before starting the runtime, typically during Django startup.
+Each callback receives the live supervisor or runner instance.
+
+```python
+from dj_queue.hooks import on_start, on_worker_start, register_hook
+
+@on_start
+def supervisor_started(process):
+  print(process.name)
+
+@on_worker_start
+def worker_started(process):
+  print(process.metadata)
+
+@register_hook("scheduler.exit")
+def scheduler_exited(process):
+  print(process.name)
+```
+
+Available hook helpers:
+
+- supervisor: `on_start`, `on_stop`, `on_exit`
+- worker: `on_worker_start`, `on_worker_stop`, `on_worker_exit`
+- dispatcher: `on_dispatcher_start`, `on_dispatcher_stop`, `on_dispatcher_exit`
+- scheduler: `on_scheduler_start`, `on_scheduler_stop`, `on_scheduler_exit`
+- generic events: `register_hook("worker.start")`, `register_hook("dispatcher.stop")`, and so on
+
+Hook notes:
+
+- hooks fire in registration order
+- hook failures do not block later hooks
+- hook failures are isolated and routed through `on_thread_error`
+
 ## Multi-Database Setup
 
 `dj_queue` can keep queue tables on a dedicated database alias.
@@ -615,6 +650,21 @@ Both embedded integrations use `AsyncSupervisor(standalone=False)` and leave
 signal handling to the host server.
 
 ## Configuration
+
+### Queues, backends, and databases
+
+`dj_queue` has three separate routing concepts. Keep them distinct:
+
+- `queue_name`: what kind of work this job is. Use it to route lanes inside one backend, such as `email`, `webhooks`, or `search-index`.
+- `backend_alias`: which logical queue system owns the work. Use it when you want separate runtime config, recurring tasks, pause and process visibility, retention, or admin scoping.
+- `database_alias`: where that backend's queue tables and runtime activity live. Use it when you want a dedicated database connection path or stronger storage isolation.
+
+Common setup choices:
+
+- one backend, one database: simplest and usually enough
+- one backend, separate queue database: good when you want dedicated queue connections
+- multiple backends, same database: good for logical and operational separation without another database
+- multiple backends, multiple databases: use when you need stronger isolation and accept more migration and deployment complexity
 
 ### Deployment topology
 
@@ -764,41 +814,6 @@ Environment overrides currently supported by `dj_queue` itself:
 - `DJ_QUEUE_MODE`
 - `DJ_QUEUE_SKIP_RECURRING`
 
-## Lifecycle Hooks
-
-Register hooks before starting the runtime, typically during Django startup.
-Each callback receives the live supervisor or runner instance.
-
-```python
-from dj_queue.hooks import on_start, on_worker_start, register_hook
-
-@on_start
-def supervisor_started(process):
-  print(process.name)
-
-@on_worker_start
-def worker_started(process):
-  print(process.metadata)
-
-@register_hook("scheduler.exit")
-def scheduler_exited(process):
-  print(process.name)
-```
-
-Available hook helpers:
-
-- supervisor: `on_start`, `on_stop`, `on_exit`
-- worker: `on_worker_start`, `on_worker_stop`, `on_worker_exit`
-- dispatcher: `on_dispatcher_start`, `on_dispatcher_stop`, `on_dispatcher_exit`
-- scheduler: `on_scheduler_start`, `on_scheduler_stop`, `on_scheduler_exit`
-- generic events: `register_hook("worker.start")`, `register_hook("dispatcher.stop")`, and so on
-
-Hook notes:
-
-- hooks fire in registration order
-- hook failures do not block later hooks
-- hook failures are isolated and routed through `on_thread_error`
-
 ### Runtime infrastructure errors
 
 Set `on_thread_error` to a dotted callable path when you want custom handling
@@ -824,7 +839,7 @@ become failed jobs instead.
 ## Monitoring
 
 Queue statistics are available in JSON via `/dj_queue/stats.json` and in
-Prometheus text format via `/dj_queue/metrics`. 
+Prometheus text format via `/dj_queue/metrics`.
 
 Include `dj_queue.urls` to expose them:
 
