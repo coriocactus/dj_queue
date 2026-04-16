@@ -148,6 +148,27 @@ def test_job_admin_queue_name_links_to_matching_queue_state(admin_client):
   )
 
 
+def test_job_change_view_shows_status_and_queue_link_for_job_state(admin_client):
+  job = make_job(queue_name="alpha")
+  ReadyExecution.objects.create(job=job, queue_name=job.queue_name, priority=job.priority)
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_job_change", args=[job.pk]),
+    {"backend": "default"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert content.count("Queue name:") == 1
+  assert 'name="queue_name"' not in content
+  assert "Status:" in content
+  assert ">ready<" in content
+  assert (
+    f"{reverse('admin:dj_queue_dashboard_queue', args=['alpha'])}?backend=default&amp;state=ready"
+    in content
+  )
+
+
 def test_job_admin_recurring_task_filter(admin_client):
   task = RecurringTask.objects.create(
     backend_alias="default",

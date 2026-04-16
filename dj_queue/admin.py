@@ -458,8 +458,9 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   )
   readonly_fields = (
     "task_path",
-    "queue_name",
+    "queue_name_link",
     "priority",
+    "display_status",
     "payload",
     "backend_alias",
     "scheduled_at",
@@ -474,6 +475,9 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     "failed_traceback",
   )
   search_fields = ("id", "task_path", "queue_name", "concurrency_key")
+
+  def get_fields(self, request, obj=None):
+    return self.get_readonly_fields(request, obj)
 
   def get_readonly_fields(self, request, obj=None):
     fields = super().get_readonly_fields(request, obj)
