@@ -66,11 +66,7 @@ class QueueInfo:
 
       resumed_at = timezone.now()
       paused_at = pause.created_at
-      ready_rows = list(
-        ReadyExecution.objects.using(alias)
-        .filter(queue_name=self.queue_name)
-        .only("id", "created_at", "latency_started_at")
-      )
+      ready_rows = list(self._ready_queryset().only("id", "created_at", "latency_started_at"))
       for ready_row in ready_rows:
         started_at = ready_row.latency_started_at or ready_row.created_at
         overlap_started_at = max(started_at, paused_at)

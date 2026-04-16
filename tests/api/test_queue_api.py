@@ -129,6 +129,45 @@ def test_queue_info_pause_and_resume():
   assert QueueInfo("emails").latency < 10.0
 
 
+def test_queue_info_resume_stays_backend_scoped_on_shared_queue_db(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {"database_alias": "default"},
+    },
+    "secondary": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {"database_alias": "default"},
+    },
+  }
+  default_job = make_ready_job(queue_name="emails", backend_alias="default")
+  secondary_job = make_ready_job(queue_name="emails", backend_alias="secondary")
+  before_pause = timezone.now() - timedelta(seconds=5)
+  ReadyExecution.objects.filter(job__in=[default_job, secondary_job]).update(
+    created_at=before_pause,
+    latency_started_at=before_pause,
+  )
+  queue = QueueInfo("emails", backend_alias="default")
+
+  queue.pause()
+  Pause.objects.filter(backend_alias="default", queue_name="emails").update(
+    created_at=timezone.now() - timedelta(seconds=30)
+  )
+
+  default_before = ReadyExecution.objects.get(job=default_job).latency_started_at
+  secondary_before = ReadyExecution.objects.get(job=secondary_job).latency_started_at
+
+  queue.resume()
+
+  default_after = ReadyExecution.objects.get(job=default_job).latency_started_at
+  secondary_after = ReadyExecution.objects.get(job=secondary_job).latency_started_at
+
+  assert default_after > default_before
+  assert secondary_after == secondary_before
+
+
 def test_queue_info_clear():
   first = make_ready_job(queue_name="emails")
   second = make_ready_job(queue_name="emails")
