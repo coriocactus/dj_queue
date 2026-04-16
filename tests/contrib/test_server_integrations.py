@@ -130,6 +130,57 @@ def test_asgi_lifespan_startup_and_shutdown_wrap_supervisor(monkeypatch):
   ]
 
 
+def test_asgi_lifespan_prunes_stale_process_rows(monkeypatch):
+  events = []
+
+  class StubSupervisor:
+    polling_interval = 0.01
+
+    def start(self):
+      events.append("start")
+
+    def poll_once(self):
+      events.append("poll")
+
+    def stop(self):
+      events.append("stop")
+
+  monkeypatch.setattr(
+    "dj_queue.contrib.asgi.build_supervisor",
+    lambda backend_alias="default": StubSupervisor(),
+  )
+
+  from dj_queue.contrib.asgi import DjQueueLifespan
+
+  app = DjQueueLifespan(lambda scope, receive, send: None)
+  sent_messages = []
+  messages = iter(
+    [
+      {"type": "lifespan.startup"},
+      {"type": "lifespan.shutdown"},
+    ]
+  )
+
+  async def receive():
+    message = next(messages)
+    if message["type"] == "lifespan.shutdown":
+      await asyncio.sleep(0.05)
+    return message
+
+  async def send(message):
+    sent_messages.append(message)
+
+  asyncio.run(app({"type": "lifespan"}, receive, send))
+
+  assert events[0] == "start"
+  assert "poll" in events[1:-1]
+  assert events[-1] == "stop"
+  assert sent_messages == [
+    {"type": "lifespan.startup.complete"},
+    {"type": "lifespan.shutdown.complete"},
+  ]
+
+
 def test_embedded_server_executes_jobs_end_to_end(
   tmp_path, django_db_blocker, queue_test_settings
 ):
