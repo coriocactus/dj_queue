@@ -108,9 +108,6 @@ Start the `dj_queue` runtime in one terminal:
 python manage.py dj_queue
 ```
 
-If you use multiple `TASKS` aliases, `python manage.py dj_queue --backend alias`
-only works for aliases configured for `DjQueueBackend`.
-
 Then enqueue work from another terminal or from your application code:
 
 ```python
@@ -247,6 +244,7 @@ Useful command variants:
 ```bash
 python manage.py dj_queue
 python manage.py dj_queue --mode async
+python manage.py dj_queue --backend <alias>
 python manage.py dj_queue --only-work
 python manage.py dj_queue --only-dispatch
 python manage.py dj_queue --skip-recurring
@@ -256,6 +254,7 @@ Notes:
 
 - `fork` is the default standalone mode
 - `async` is also supported as a standalone mode and runs supervised actors in threads inside one process
+- `--backend` targets a non-default backend alias
 - `--only-work` starts workers without dispatchers or scheduler
 - `--only-dispatch` starts dispatchers without workers or scheduler
 - `--skip-recurring` starts without the scheduler
@@ -284,8 +283,7 @@ across queues. Prefer one primary scheduling mechanism per worker when you can.
 
 ### Signals and recovery
 
-In standalone mode, both `fork` and `async` `python manage.py dj_queue`
-supervisors own runtime signal handling:
+In standalone mode, both `fork` and `async` `python manage.py dj_queue` supervisors own runtime signal handling:
 
 - `SIGTERM` and `SIGINT` request graceful shutdown
 - `SIGQUIT` takes the immediate hard-exit path
@@ -461,8 +459,7 @@ python manage.py dj_queue_prune --task-path myapp.tasks.cleanup
 python manage.py dj_queue_prune --task-key nightly_cleanup
 ```
 
-The runtime, health, and prune commands all accept `--backend` to target a
-non-default backend alias.
+The health and prune commands both accept `--backend` to target a non-default backend alias.
 
 For `dj_queue_prune`, `--task-path` filters finished and failed job cleanup by
 task import path, while `--task-key` filters recurring execution cleanup by
@@ -630,8 +627,7 @@ In that setup:
 
 - jobs with `backend="default"` are `dj_queue`'s responsibility
 - jobs with `backend="external"` are the other backend's responsibility
-- `dj_queue` admin, dashboard, `/dj_queue/stats.json`, `/dj_queue/metrics`, and
-  `manage.py dj_queue --backend ...` only operate on `dj_queue` aliases
+- `dj_queue` admin, dashboard, `/dj_queue/stats.json`, `/dj_queue/metrics`, and `manage.py dj_queue --backend ...` only operate on `dj_queue` aliases
 
 Notes:
 
