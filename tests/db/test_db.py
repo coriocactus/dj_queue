@@ -66,7 +66,12 @@ def test_queue_helpers_use_configured_database_alias(settings, monkeypatch):
     def __init__(self, alias):
       self.alias = alias
 
-  settings.TASKS = {"default": {"OPTIONS": {"database_alias": "queue"}}}
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {"database_alias": "queue"},
+    }
+  }
   monkeypatch.setattr("dj_queue.db.connections", {"queue": FakeConnection("queue")})
 
   assert get_database_alias() == "queue"
