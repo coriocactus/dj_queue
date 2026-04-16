@@ -126,7 +126,28 @@ def test_queue_info_pause_and_resume():
   queue.resume()
   assert queue.paused is False
   assert Pause.objects.filter(backend_alias="default", queue_name="emails").exists() is False
-  assert QueueInfo("emails").latency < 10.0
+  latency = QueueInfo("emails").latency
+  assert 0.0 <= latency < 10.0
+
+
+def test_queue_info_resume_preserves_pre_pause_active_wait_time():
+  job = make_ready_job(queue_name="emails")
+  before_pause = timezone.now() - timedelta(seconds=40)
+  ReadyExecution.objects.filter(job=job).update(
+    created_at=before_pause,
+    latency_started_at=before_pause,
+  )
+  queue = QueueInfo("emails")
+
+  queue.pause()
+  Pause.objects.filter(backend_alias="default", queue_name="emails").update(
+    created_at=timezone.now() - timedelta(seconds=30)
+  )
+
+  queue.resume()
+
+  latency = QueueInfo("emails").latency
+  assert 5.0 <= latency <= 20.0
 
 
 def test_queue_info_resume_stays_backend_scoped_on_shared_queue_db(settings):
