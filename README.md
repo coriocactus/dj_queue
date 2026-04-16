@@ -252,7 +252,7 @@ python manage.py dj_queue --only-dispatch
 python manage.py dj_queue --skip-recurring
 ```
 
-Mode and topology notes:
+Notes:
 
 - `fork` is the default standalone mode
 - `async` is also supported as a standalone mode and runs supervised actors in threads inside one process
@@ -442,7 +442,7 @@ orders.resume()
 orders.clear()
 ```
 
-Queue control notes:
+Notes:
 
 - pausing a queue stops future claims, not enqueueing or already-claimed work
 - pause rows are scoped per backend alias
@@ -559,7 +559,7 @@ Available hook helpers:
 - scheduler: `on_scheduler_start`, `on_scheduler_stop`, `on_scheduler_exit`
 - generic events: `register_hook("worker.start")`, `register_hook("dispatcher.stop")`, and so on
 
-Hook notes:
+Notes:
 
 - hooks fire in registration order
 - hook failures do not block later hooks
@@ -567,9 +567,7 @@ Hook notes:
 
 ## Multi-Database Setup
 
-`dj_queue` can keep queue tables on a dedicated database alias.
-
-Example configuration:
+`dj_queue` can keep queue tables on a dedicated database alias:
 
 ```python
 DATABASES = {
@@ -609,10 +607,7 @@ database.
 
 ## Backend Coexistence
 
-Projects can mix `dj_queue` with other Django task backends in the same
-`TASKS` mapping.
-
-Example:
+Projects can mix `dj_queue` with other Django task backends in the same `TASKS` mapping:
 
 ```python
 TASKS = {
@@ -638,14 +633,10 @@ In that setup:
 - `dj_queue` admin, dashboard, `/dj_queue/stats.json`, `/dj_queue/metrics`, and
   `manage.py dj_queue --backend ...` only operate on `dj_queue` aliases
 
-Backward-compatibility note:
+Notes:
 
-- if a `TASKS[alias]` block omits `BACKEND`, `dj_queue` still treats it as a
-  `DjQueueBackend` alias
-- if `TASKS` is empty or unset, `dj_queue` still exposes one implicit
-  `default` alias using built-in defaults
-- once `TASKS` is non-empty, `dj_queue` does not invent missing aliases from
-  defaults
+- if `TASKS` is empty or unset, `dj_queue` still exposes one implicit `default` alias using built-in defaults
+- if `TASKS` is non-empty, `dj_queue` only manages aliases whose `BACKEND` is explicitly `"dj_queue.backend.DjQueueBackend"`
 
 ## Postgres Queue Health
 
