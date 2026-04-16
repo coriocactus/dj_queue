@@ -77,6 +77,12 @@ TASKS = {
 The router is optional when using the default database, but harmless to include
 and required for [multi-database setups](#multi-database-setup).
 
+`dj_queue` can coexist with other Django task backends in the same `TASKS`
+setting. It only manages aliases whose `BACKEND` is
+`"dj_queue.backend.DjQueueBackend"`. If a `TASKS` alias points at some other
+backend, `dj_queue` ignores that alias for runtime commands, admin/dashboard
+selection, and observability.
+
 Run migrations:
 
 ```bash
@@ -101,6 +107,9 @@ Start the `dj_queue` runtime in one terminal:
 ```bash
 python manage.py dj_queue
 ```
+
+If you use multiple `TASKS` aliases, `python manage.py dj_queue --backend alias`
+only works for aliases configured for `DjQueueBackend`.
 
 Then enqueue work from another terminal or from your application code:
 
@@ -598,6 +607,46 @@ python manage.py migrate dj_queue --database queue
 With this setup, `dj_queue`'s ORM queries and raw SQL helpers stay on the queue
 database.
 
+## Backend Coexistence
+
+Projects can mix `dj_queue` with other Django task backends in the same
+`TASKS` mapping.
+
+Example:
+
+```python
+TASKS = {
+  "default": {
+    "BACKEND": "dj_queue.backend.DjQueueBackend",
+    "QUEUES": [],
+    "OPTIONS": {
+      "database_alias": "queue",
+    },
+  },
+  "external": {
+    "BACKEND": "some_other_backend.Backend",
+    "QUEUES": [],
+    "OPTIONS": {},
+  },
+}
+```
+
+In that setup:
+
+- jobs with `backend="default"` are `dj_queue`'s responsibility
+- jobs with `backend="external"` are the other backend's responsibility
+- `dj_queue` admin, dashboard, `/dj_queue/stats.json`, `/dj_queue/metrics`, and
+  `manage.py dj_queue --backend ...` only operate on `dj_queue` aliases
+
+Backward-compatibility note:
+
+- if a `TASKS[alias]` block omits `BACKEND`, `dj_queue` still treats it as a
+  `DjQueueBackend` alias
+- if `TASKS` is empty or unset, `dj_queue` still exposes one implicit
+  `default` alias using built-in defaults
+- once `TASKS` is non-empty, `dj_queue` does not invent missing aliases from
+  defaults
+
 ## Postgres Queue Health
 
 Operational and configuration guidance for scaling with `dj_queue` in
@@ -840,6 +889,9 @@ become failed jobs instead.
 
 Queue statistics are available in JSON via `/dj_queue/stats.json` and in
 Prometheus text format via `/dj_queue/metrics`.
+
+These observability endpoints only report `dj_queue`-managed backend aliases and
+ignore aliases configured for some other task backend.
 
 Include `dj_queue.urls` to expose them:
 
