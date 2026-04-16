@@ -1,4 +1,6 @@
+from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import BaseCommand
+from django.core.management.base import CommandError
 
 from dj_queue.config import load_backend_config
 from dj_queue.runtime.supervisor import AsyncSupervisor, ForkSupervisor
@@ -32,8 +34,11 @@ class Command(BaseCommand):
       "only_dispatch": options["only_dispatch"],
       "skip_recurring": options["skip_recurring"],
     }
-    supervisor = build_supervisor(
-      backend_alias=options["backend"],
-      cli_overrides=cli_overrides,
-    )
+    try:
+      supervisor = build_supervisor(
+        backend_alias=options["backend"],
+        cli_overrides=cli_overrides,
+      )
+    except ImproperlyConfigured as exc:
+      raise CommandError(str(exc)) from exc
     supervisor.run()

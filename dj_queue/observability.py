@@ -9,6 +9,7 @@ from django.db.models import Count, Max, Min
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
+from dj_queue.config import configured_backend_aliases as configured_dj_queue_backend_aliases
 from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias
 from dj_queue.models import (
@@ -33,11 +34,7 @@ class BackendChoice:
 
 
 def configured_backend_aliases():
-  tasks = getattr(settings, "TASKS", {})
-  aliases = tuple(tasks)
-  if aliases:
-    return aliases
-  return ("default",)
+  return configured_dj_queue_backend_aliases(getattr(settings, "TASKS", {}))
 
 
 def backend_choices():

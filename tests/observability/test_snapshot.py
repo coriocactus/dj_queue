@@ -121,3 +121,30 @@ def test_backend_snapshot_scopes_pause_and_recurring_rows_to_backend(settings):
   assert snapshot["queue_rows"][0]["paused"] is True
   assert [row["key"] for row in snapshot["recurring_rows"]] == ["nightly"]
   assert [row["key"] for row in snapshot["semaphore_rows"]] == ["account:1"]
+
+
+def test_configured_backend_aliases_ignore_non_dj_queue_backends(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+    "other": {
+      "BACKEND": "other.backend.Backend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+    "legacy": {
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+  }
+
+  assert observability.configured_backend_aliases() == ("default", "legacy")
+
+
+def test_configured_backend_aliases_falls_back_to_implicit_default_when_tasks_empty(settings):
+  settings.TASKS = {}
+
+  assert observability.configured_backend_aliases() == ("default",)

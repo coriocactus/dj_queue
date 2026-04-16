@@ -2,6 +2,7 @@ from datetime import timedelta
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.http import Http404
 from django.urls import reverse
 from django.utils import timezone
 
@@ -1394,3 +1395,39 @@ def test_dashboard_links_to_raw_admin_tables(admin_client, settings):
   assert ">Pauses</a>" in content
   assert f'href="{reverse("admin:dj_queue_semaphore_changelist")}?backend=secondary"' in content
   assert ">Semaphores</a>" in content
+
+
+def test_dashboard_backend_aliases_ignore_non_dj_queue_backends(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+    "other": {
+      "BACKEND": "other.backend.Backend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+  }
+
+  assert dashboard.configured_backend_aliases() == ("default",)
+  assert dashboard.resolve_backend_alias(None) == "default"
+
+
+def test_dashboard_rejects_non_dj_queue_backend_alias(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+    "other": {
+      "BACKEND": "other.backend.Backend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+  }
+
+  with pytest.raises(Http404, match="unknown dj_queue backend"):
+    dashboard.resolve_backend_alias("other")

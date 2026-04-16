@@ -104,6 +104,41 @@ def test_stats_endpoint_returns_all_backend_snapshots(client, settings):
   assert critical["semaphores"][0]["key"] == "account:1"
 
 
+def test_stats_endpoint_ignores_non_dj_queue_backends(client, settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {"database_alias": "default"},
+    },
+    "other": {
+      "BACKEND": "other.backend.Backend",
+      "QUEUES": [],
+      "OPTIONS": {"database_alias": "default"},
+    },
+  }
+
+  response = client.get(reverse("dj_queue:stats"))
+
+  assert response.status_code == 200
+  assert [backend["backend_alias"] for backend in response.json()["backends"]] == ["default"]
+
+
+def test_stats_endpoint_returns_no_backends_when_none_belong_to_dj_queue(client, settings):
+  settings.TASKS = {
+    "other": {
+      "BACKEND": "other.backend.Backend",
+      "QUEUES": [],
+      "OPTIONS": {"database_alias": "default"},
+    }
+  }
+
+  response = client.get(reverse("dj_queue:stats"))
+
+  assert response.status_code == 200
+  assert response.json()["backends"] == []
+
+
 def test_metrics_endpoint_renders_prometheus_text(client, settings):
   settings.TASKS = {
     "default": {

@@ -3,6 +3,7 @@ from io import StringIO
 
 import pytest
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.utils import timezone
 
 from dj_queue.config import load_backend_config
@@ -229,6 +230,19 @@ def test_dj_queue_command_uses_selected_backend_yaml_overlay(monkeypatch, settin
   assert config.backend_alias == "secondary"
   assert config.mode == "fork"
   assert config.database_alias == "queue_secondary"
+
+
+def test_dj_queue_command_rejects_other_backend_alias(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "other.backend.Backend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    }
+  }
+
+  with pytest.raises(CommandError, match="not configured for DjQueueBackend"):
+    call_command("dj_queue")
 
 
 def test_dj_queue_prune_command_deletes_old_finished_jobs(capsys):

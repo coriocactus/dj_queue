@@ -54,6 +54,8 @@ DEFAULT_OPTIONS = {
   "on_thread_error": None,
 }
 
+DJ_QUEUE_BACKEND_PATH = "dj_queue.backend.DjQueueBackend"
+
 TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
 FALSY_ENV_VALUES = {"0", "false", "no", "off"}
 CONFIG_ENV_KEYS = ("DJ_QUEUE_CONFIG", "DJ_QUEUE_MODE", "DJ_QUEUE_SKIP_RECURRING")
@@ -163,6 +165,7 @@ def _load_backend_config_cached(
   cli_overrides = json.loads(cli_overrides_key)
   env = json.loads(env_key)
   tasks_settings = json.loads(tasks_settings_key)
+  ensure_dj_queue_backend_alias(tasks_settings, backend_alias)
   backend_block = _backend_block(tasks_settings, backend_alias)
   resolved_options = _resolved_options(backend_alias, backend_block, cli_overrides, env)
 
@@ -241,10 +244,54 @@ def _backend_block(
   if resolved_tasks_settings is None:
     resolved_tasks_settings = getattr(settings, "TASKS", {})
 
-  backend_block = resolved_tasks_settings.get(backend_alias, {})
+  if not resolved_tasks_settings:
+    if backend_alias == "default":
+      return {}
+    raise ImproperlyConfigured(f"dj_queue backend alias {backend_alias!r} is not configured")
+
+  if backend_alias not in resolved_tasks_settings:
+    raise ImproperlyConfigured(f"dj_queue backend alias {backend_alias!r} is not configured")
+
+  backend_block = resolved_tasks_settings[backend_alias]
   if not isinstance(backend_block, Mapping):
     raise ImproperlyConfigured(f"TASKS[{backend_alias!r}] must be a mapping")
   return backend_block
+
+
+def configured_backend_aliases(
+  tasks_settings: Mapping[str, Any] | None = None,
+) -> tuple[str, ...]:
+  resolved_tasks_settings = tasks_settings
+  if resolved_tasks_settings is None:
+    resolved_tasks_settings = getattr(settings, "TASKS", {})
+
+  if not resolved_tasks_settings:
+    return ("default",)
+
+  aliases = []
+  for alias, backend_block in resolved_tasks_settings.items():
+    if not isinstance(backend_block, Mapping):
+      raise ImproperlyConfigured(f"TASKS[{alias!r}] must be a mapping")
+    if is_dj_queue_backend_alias(backend_block):
+      aliases.append(alias)
+  return tuple(aliases)
+
+
+def ensure_dj_queue_backend_alias(
+  tasks_settings: Mapping[str, Any] | None,
+  backend_alias: str,
+) -> None:
+  aliases = configured_backend_aliases(tasks_settings)
+  if backend_alias in aliases:
+    return
+  raise ImproperlyConfigured(
+    f"dj_queue backend alias {backend_alias!r} is not configured for DjQueueBackend"
+  )
+
+
+def is_dj_queue_backend_alias(backend_block: Mapping[str, Any]) -> bool:
+  backend_path = backend_block.get("BACKEND")
+  return backend_path in (None, DJ_QUEUE_BACKEND_PATH)
 
 
 def _resolved_options(

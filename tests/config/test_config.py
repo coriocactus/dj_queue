@@ -24,6 +24,18 @@ def test_config_defaults_resolve(settings):
   assert json.dumps(config.as_dict())
 
 
+def test_missing_alias_is_rejected_when_tasks_is_non_empty(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {},
+    }
+  }
+
+  with pytest.raises(ImproperlyConfigured, match="is not configured"):
+    load_backend_config("missing")
+
+
 def test_invalid_mode_is_rejected(settings):
   settings.TASKS = {
     "default": {
@@ -34,6 +46,18 @@ def test_invalid_mode_is_rejected(settings):
   }
 
   with pytest.raises(ImproperlyConfigured, match="mode"):
+    load_backend_config()
+
+
+def test_non_dj_queue_backend_alias_is_rejected(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "other.backend.Backend",
+      "OPTIONS": {},
+    },
+  }
+
+  with pytest.raises(ImproperlyConfigured, match="not configured for DjQueueBackend"):
     load_backend_config()
 
 
