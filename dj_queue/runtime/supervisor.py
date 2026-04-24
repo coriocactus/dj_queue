@@ -2,6 +2,7 @@ import os
 import signal
 import socket
 import threading
+import time
 
 from django.utils import timezone
 from datetime import timedelta
@@ -48,6 +49,7 @@ class Supervisor(BaseRunner):
     )
     self.standalone = standalone
     self.pidfile = None
+    self._last_housekeeping_at = None
 
   @classmethod
   def from_backend_config(
@@ -84,7 +86,10 @@ class Supervisor(BaseRunner):
     return process
 
   def poll_once(self):
-    pruned_processes = self.prune_stale_process_rows()
+    pruned_processes = []
+    if self._housekeeping_due():
+      pruned_processes = self.prune_stale_process_rows()
+      self._last_housekeeping_at = time.monotonic()
     for process in pruned_processes:
       log_event(
         "process.pruned",
@@ -93,6 +98,18 @@ class Supervisor(BaseRunner):
         pid=process.pid,
       )
     return pruned_processes
+
+  @property
+  def housekeeping_interval(self):
+    heartbeat_interval = self.config.process_heartbeat_interval
+    if heartbeat_interval > 0:
+      return max(min(self.config.process_alive_threshold, max(heartbeat_interval, 1)), 1)
+    return max(min(self.config.process_alive_threshold, 60), 1)
+
+  def _housekeeping_due(self):
+    if self._last_housekeeping_at is None:
+      return True
+    return (time.monotonic() - self._last_housekeeping_at) >= self.housekeeping_interval
 
   def process_metadata(self):
     return {

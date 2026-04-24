@@ -65,14 +65,22 @@ def wait_until(predicate, timeout=1):
 
 
 def test_gunicorn_post_fork_starts_one_embedded_supervisor(monkeypatch):
-  started = []
+  events = []
 
   class StubSupervisor:
+    polling_interval = 0.01
+
     def __init__(self, backend_alias):
       self.backend_alias = backend_alias
 
     def start(self):
-      started.append(self.backend_alias)
+      events.append(("start", self.backend_alias))
+
+    def poll_once(self):
+      events.append(("poll", self.backend_alias))
+
+    def stop(self):
+      events.append(("stop", self.backend_alias))
 
   monkeypatch.setattr(
     "dj_queue.contrib.gunicorn.build_supervisor",
@@ -86,10 +94,17 @@ def test_gunicorn_post_fork_starts_one_embedded_supervisor(monkeypatch):
 
   gunicorn.post_fork(object(), worker_one)
   gunicorn.post_fork(object(), worker_two)
+  wait_until(lambda: any(event[0] == "poll" for event in events), timeout=1)
 
-  assert started == ["default"]
   assert isinstance(worker_one._dj_queue_supervisor, StubSupervisor)
   assert hasattr(worker_two, "_dj_queue_supervisor") is False
+
+  gunicorn.worker_exit(object(), worker_one)
+
+  assert events[0] == ("start", "default")
+  assert any(event[0] == "poll" for event in events)
+  assert events[-1] == ("stop", "default")
+  assert worker_one._dj_queue_supervisor is None
 
 
 def test_asgi_lifespan_startup_and_shutdown_wrap_supervisor(monkeypatch):

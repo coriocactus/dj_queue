@@ -222,6 +222,62 @@ def test_prune_stale_process_rows_fails_their_claimed_jobs():
   supervisor.stop()
 
 
+def test_supervisor_housekeeping_interval_tracks_heartbeat_when_enabled():
+  supervisor = make_supervisor()
+
+  assert supervisor.housekeeping_interval == 60
+
+
+def test_supervisor_housekeeping_interval_falls_back_when_heartbeat_disabled(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {
+        "process_heartbeat_interval": 0,
+        "process_alive_threshold": 300,
+      },
+    }
+  }
+  supervisor = Supervisor(
+    load_backend_config(),
+    name=f"supervisor-{uuid4()}",
+    pid=54321,
+    hostname="localhost",
+    heartbeat_interval=0.01,
+  )
+
+  assert supervisor.housekeeping_interval == 60
+
+
+def test_supervisor_poll_once_skips_prune_until_housekeeping_interval(monkeypatch):
+  supervisor = make_supervisor()
+  supervisor._last_housekeeping_at = 100
+  calls = []
+
+  monkeypatch.setattr(Supervisor, "housekeeping_interval", property(lambda self: 60))
+  monkeypatch.setattr("dj_queue.runtime.supervisor.time.monotonic", lambda: 120)
+  monkeypatch.setattr(supervisor, "prune_stale_process_rows", lambda now=None: calls.append(now) or [])
+
+  assert supervisor.poll_once() == []
+  assert calls == []
+
+
+def test_supervisor_poll_once_prunes_when_housekeeping_interval_elapsed(monkeypatch):
+  supervisor = make_supervisor()
+  supervisor._last_housekeeping_at = 100
+  stale_process = make_process(name="stale-worker")
+
+  monkeypatch.setattr(Supervisor, "housekeeping_interval", property(lambda self: 60))
+  monkeypatch.setattr("dj_queue.runtime.supervisor.time.monotonic", lambda: 160)
+  monkeypatch.setattr(supervisor, "prune_stale_process_rows", lambda now=None: [stale_process])
+
+  pruned = supervisor.poll_once()
+
+  assert pruned == [stale_process]
+  assert supervisor._last_housekeeping_at == 160
+
+
 @pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 def test_async_supervisor_starts_configured_runners_in_one_pid():
   supervisor = build_async_supervisor(
@@ -521,6 +577,20 @@ def test_dead_child_fails_claimed_jobs_and_replaces_runner():
   )
   assert supervisor.children[90002]["kind"] == "worker"
   assert Process.objects.filter(pk=child_process.pk).exists() is False
+
+
+def test_fork_supervisor_poll_once_checks_children_without_pruning_every_tick(monkeypatch):
+  supervisor = build_fork_supervisor(
+    tasks_settings=async_tasks_settings(recurring={}),
+    launcher=lambda spec: 91000,
+  )
+  calls = []
+
+  monkeypatch.setattr(Supervisor, "poll_once", lambda self: calls.append("prune") or [])
+  monkeypatch.setattr(supervisor, "check_children", lambda: calls.append("children") or 91001)
+
+  assert supervisor.poll_once() == 91001
+  assert calls == ["prune", "children"]
 
 
 def test_repeated_sigterm_is_idempotent():
