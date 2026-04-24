@@ -15,6 +15,8 @@ from dj_queue.models import (
   Job,
   Pause,
   ReadyExecution,
+  RecurringExecution,
+  RecurringTask,
   Semaphore,
 )
 from dj_queue.operations.concurrency import (
@@ -23,6 +25,7 @@ from dj_queue.operations.concurrency import (
   semaphore_acquire,
   semaphore_release,
 )
+from dj_queue.operations.recurring import fire_recurring_task
 from dj_queue.operations.jobs import (
   claim_ready_jobs,
   complete_claimed_job,
@@ -95,6 +98,74 @@ def test_concurrent_acquire_allows_exactly_limit_successes():
   assert results.count(True) == limit
   assert results.count(False) == attempts - limit
   assert Semaphore.objects.get(key="account:concurrent").value == 0
+
+
+@pytest.mark.skipif(
+  os.environ.get("DB_BACKEND", "sqlite") == "sqlite",
+  reason="requires a shared test database across threads",
+)
+@pytest.mark.django_db(transaction=True)
+def test_concurrent_first_acquire_creates_one_semaphore_row():
+  attempts = 2
+  barrier = threading.Barrier(attempts)
+
+  def acquire_once():
+    try:
+      barrier.wait()
+      return semaphore_acquire("account:first", limit=1, duration_seconds=60)
+    finally:
+      connections.close_all()
+
+  with ThreadPoolExecutor(max_workers=attempts) as executor:
+    results = list(executor.map(lambda _: acquire_once(), range(attempts)))
+
+  assert results.count(True) == 1
+  assert results.count(False) == 1
+  assert Semaphore.objects.filter(key="account:first").count() == 1
+  assert Semaphore.objects.get(key="account:first").value == 0
+
+
+@pytest.mark.skipif(
+  os.environ.get("DB_BACKEND", "sqlite") == "sqlite",
+  reason="requires a shared test database across threads",
+)
+@pytest.mark.django_db(transaction=True)
+def test_concurrent_recurring_fire_creates_one_reservation_and_job():
+  attempts = 2
+  barrier = threading.Barrier(attempts)
+  recurring_task = RecurringTask.objects.create(
+    backend_alias="default",
+    key="every-minute",
+    task_path=echo.module_path,
+    payload={"args": ["hello"], "kwargs": {}},
+    schedule="* * * * *",
+    queue_name=echo.queue_name,
+    priority=echo.priority,
+  )
+  run_at = timezone.now().replace(second=0, microsecond=0) + timedelta(minutes=1)
+
+  def fire_once():
+    try:
+      barrier.wait()
+      execution = fire_recurring_task(recurring_task, run_at)
+      return execution is not None
+    finally:
+      connections.close_all()
+
+  with ThreadPoolExecutor(max_workers=attempts) as executor:
+    results = list(executor.map(lambda _: fire_once(), range(attempts)))
+
+  assert results.count(True) == 1
+  assert results.count(False) == 1
+  assert (
+    RecurringExecution.objects.filter(
+      backend_alias="default",
+      task_key=recurring_task.key,
+      run_at=run_at,
+    ).count()
+    == 1
+  )
+  assert Job.objects.count() == 1
 
 
 @pytest.mark.django_db

@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from django.db import IntegrityError, transaction
+from django.db import transaction
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
@@ -8,6 +8,7 @@ from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias, locked_queryset
 from dj_queue.log import log_event
 from dj_queue.models import BlockedExecution, Job, Pause, ReadyExecution, Semaphore
+from dj_queue.operations._insert import create_ignore_conflicts
 from dj_queue.runtime import notify as runtime_notify
 
 
@@ -21,34 +22,28 @@ def semaphore_acquire(
   alias = get_database_alias(backend_alias)
   expires_at = timezone.now() + timedelta(seconds=duration_seconds)
 
-  for attempt in range(2):
-    try:
-      with transaction.atomic(using=alias):
-        semaphore = Semaphore.objects.using(alias).select_for_update().filter(key=key).first()
-        if semaphore is None:
-          Semaphore.objects.using(alias).create(
-            key=key,
-            value=limit - 1,
-            limit=limit,
-            expires_at=expires_at,
-          )
-          return True
-
-        if semaphore.value <= 0:
-          return False
-
-        semaphore.value -= 1
-        semaphore.expires_at = expires_at
-        semaphore.save(using=alias, update_fields=["value", "expires_at", "updated_at"])
+  with transaction.atomic(using=alias):
+    semaphore = Semaphore.objects.using(alias).select_for_update().filter(key=key).first()
+    if semaphore is None:
+      if create_ignore_conflicts(
+        Semaphore,
+        using=alias,
+        key=key,
+        value=limit - 1,
+        limit=limit,
+        expires_at=expires_at,
+      ):
         return True
-    except IntegrityError:
-      # two workers can both miss the row, then race to create the unique key
-      # retry once so the loser can load the row created by the winner
-      if attempt == 0:
-        continue
-      continue
 
-  return False
+      semaphore = Semaphore.objects.using(alias).select_for_update().get(key=key)
+
+    if semaphore.value <= 0:
+      return False
+
+    semaphore.value -= 1
+    semaphore.expires_at = expires_at
+    semaphore.save(using=alias, update_fields=["value", "expires_at", "updated_at"])
+    return True
 
 
 def semaphore_release(key, *, duration_seconds, backend_alias="default"):

@@ -3,6 +3,7 @@ from django.utils.module_loading import import_string
 
 from dj_queue.db import get_database_alias
 from dj_queue.models import RecurringExecution, RecurringTask
+from dj_queue.operations._insert import create_ignore_conflicts
 from dj_queue.operations.jobs import enqueue_job
 
 
@@ -62,7 +63,9 @@ def fire_recurring_task(recurring_task, run_at, *, backend_alias="default"):
   alias = get_database_alias(backend_alias)
 
   with transaction.atomic(using=alias):
-    execution, created = RecurringExecution.objects.using(alias).get_or_create(
+    created = create_ignore_conflicts(
+      RecurringExecution,
+      using=alias,
       backend_alias=backend_alias,
       task_key=recurring_task.key,
       run_at=run_at,
@@ -71,6 +74,12 @@ def fire_recurring_task(recurring_task, run_at, *, backend_alias="default"):
       # treat an existing reservation row as authoritative even if its job backfill
       # has not happened yet, so duplicate scheduler ticks never enqueue twice
       return None
+
+    execution = RecurringExecution.objects.using(alias).get(
+      backend_alias=backend_alias,
+      task_key=recurring_task.key,
+      run_at=run_at,
+    )
 
     task = import_string(recurring_task.task_path).using(
       queue_name=recurring_task.queue_name,
