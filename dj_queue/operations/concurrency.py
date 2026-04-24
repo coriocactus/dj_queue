@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from django.db import transaction
+from django.db.models import F
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
@@ -20,30 +21,32 @@ def semaphore_acquire(
   backend_alias="default",
 ):
   alias = get_database_alias(backend_alias)
-  expires_at = timezone.now() + timedelta(seconds=duration_seconds)
+  now = timezone.now()
+  expires_at = now + timedelta(seconds=duration_seconds)
 
   with transaction.atomic(using=alias):
-    semaphore = Semaphore.objects.using(alias).select_for_update().filter(key=key).first()
-    if semaphore is None:
-      if create_ignore_conflicts(
-        Semaphore,
-        using=alias,
-        key=key,
-        value=limit - 1,
-        limit=limit,
+    if create_ignore_conflicts(
+      Semaphore,
+      using=alias,
+      key=key,
+      value=limit - 1,
+      limit=limit,
+      expires_at=expires_at,
+    ):
+      return True
+
+  # mysql-family backends can deadlock if a skipped insert and row lock happen in one tx
+  with transaction.atomic(using=alias):
+    updated = (
+      Semaphore.objects.using(alias)
+      .filter(key=key, value__gt=0)
+      .update(
+        value=F("value") - 1,
         expires_at=expires_at,
-      ):
-        return True
-
-      semaphore = Semaphore.objects.using(alias).select_for_update().get(key=key)
-
-    if semaphore.value <= 0:
-      return False
-
-    semaphore.value -= 1
-    semaphore.expires_at = expires_at
-    semaphore.save(using=alias, update_fields=["value", "expires_at", "updated_at"])
-    return True
+        updated_at=now,
+      )
+    )
+  return updated > 0
 
 
 def semaphore_release(key, *, duration_seconds, backend_alias="default"):

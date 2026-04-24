@@ -138,11 +138,12 @@ def test_kill_worker_mid_execution_recovery(tmp_path, queue_test_settings):
     first_pid = next(iter(supervisor.children))
     first_child = children_by_pid[first_pid]
 
-    wait_until(lambda: (control_dir / "started").exists())
+    wait_until(lambda: (control_dir / "started").exists(), timeout=5)
     wait_until(
       lambda: (
         ClaimedExecution.objects.filter(job_id=job.id, process__pid=first_pid).exists() is True
-      )
+      ),
+      timeout=5,
     )
 
     first_child.terminate()
