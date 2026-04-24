@@ -257,7 +257,9 @@ def test_supervisor_poll_once_skips_prune_until_housekeeping_interval(monkeypatc
 
   monkeypatch.setattr(Supervisor, "housekeeping_interval", property(lambda self: 60))
   monkeypatch.setattr("dj_queue.runtime.supervisor.time.monotonic", lambda: 120)
-  monkeypatch.setattr(supervisor, "prune_stale_process_rows", lambda now=None: calls.append(now) or [])
+  monkeypatch.setattr(
+    supervisor, "prune_stale_process_rows", lambda now=None: calls.append(now) or []
+  )
 
   assert supervisor.poll_once() == []
   assert calls == []

@@ -552,9 +552,7 @@ def _positive_float(value: Any, setting_name: str) -> float:
     ) from exc
 
   if not math.isfinite(number) or number <= 0:
-    raise ImproperlyConfigured(
-      f"dj_queue {setting_name} must be a positive number, got {value!r}"
-    )
+    raise ImproperlyConfigured(f"dj_queue {setting_name} must be a positive number, got {value!r}")
   return number
 
 
