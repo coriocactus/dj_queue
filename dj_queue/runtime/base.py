@@ -1,4 +1,5 @@
 from contextlib import contextmanager, nullcontext
+import math
 import threading
 import time
 
@@ -24,6 +25,7 @@ def app_executor():
 
 
 _sqlite_process_write_lock = threading.Lock()
+_safe_polling_interval = 1.0
 
 
 def _process_write_context(alias):
@@ -82,7 +84,18 @@ class BaseRunner:
 
   @property
   def polling_interval(self):
-    return getattr(self.config, "polling_interval", 0)
+    return self._normalized_polling_interval(getattr(self.config, "polling_interval", None))
+
+  @staticmethod
+  def _normalized_polling_interval(value):
+    try:
+      polling_interval = float(value)
+    except (TypeError, ValueError):
+      return _safe_polling_interval
+
+    if not math.isfinite(polling_interval) or polling_interval <= 0:
+      return _safe_polling_interval
+    return polling_interval
 
   def start(self):
     if self.process is None:

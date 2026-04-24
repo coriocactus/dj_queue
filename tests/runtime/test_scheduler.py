@@ -1,5 +1,6 @@
 import time
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -95,6 +96,31 @@ def test_scheduler_uses_configured_polling_interval():
   )
 
   assert scheduler.polling_interval == 5
+
+
+@pytest.mark.parametrize("polling_interval", (None, 0, -1, "fast"))
+def test_scheduler_uses_safe_polling_interval_when_config_is_missing_or_invalid(polling_interval):
+  if polling_interval is None:
+    scheduler_config = SimpleNamespace()
+  else:
+    scheduler_config = SimpleNamespace(polling_interval=polling_interval)
+
+  scheduler = Scheduler(
+    SimpleNamespace(
+      scheduler=scheduler_config,
+      recurring={},
+      preserve_finished_jobs=False,
+      clear_finished_jobs_after=None,
+      clear_failed_jobs_after=None,
+      clear_recurring_executions_after=None,
+    ),
+    backend_alias="default",
+    name=f"scheduler-{uuid4()}",
+    pid=34567,
+    hostname="localhost",
+  )
+
+  assert scheduler.polling_interval == 1.0
 
 
 def test_scheduler_persists_static_tasks():

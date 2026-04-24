@@ -377,6 +377,51 @@ def test_dispatchers_single_mapping_is_normalized_to_one_item_list(settings):
   )
 
 
+@pytest.mark.parametrize(
+  ("options", "setting_name"),
+  (
+    ({"workers": {"polling_interval": 0}}, r"workers\[0\]\.polling_interval"),
+    ({"workers": {"polling_interval": -0.1}}, r"workers\[0\]\.polling_interval"),
+    ({"workers": {"polling_interval": "fast"}}, r"workers\[0\]\.polling_interval"),
+    ({"dispatchers": {"polling_interval": 0}}, r"dispatchers\[0\]\.polling_interval"),
+    ({"dispatchers": {"polling_interval": -1}}, r"dispatchers\[0\]\.polling_interval"),
+    ({"dispatchers": {"polling_interval": "fast"}}, r"dispatchers\[0\]\.polling_interval"),
+    ({"scheduler": {"polling_interval": 0}}, r"scheduler\.polling_interval"),
+    ({"scheduler": {"polling_interval": -5}}, r"scheduler\.polling_interval"),
+    ({"scheduler": {"polling_interval": "fast"}}, r"scheduler\.polling_interval"),
+  ),
+)
+def test_runner_polling_interval_must_be_positive_number(settings, options, setting_name):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": options,
+    }
+  }
+
+  with pytest.raises(ImproperlyConfigured, match=setting_name):
+    load_backend_config()
+
+
+def test_missing_runner_polling_interval_uses_positive_defaults(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {
+        "workers": {"queues": "default"},
+        "dispatchers": {"batch_size": 250},
+        "scheduler": {"dynamic_tasks_enabled": False},
+      },
+    }
+  }
+
+  config = load_backend_config()
+
+  assert config.workers[0].polling_interval == 0.1
+  assert config.dispatchers[0].polling_interval == 1
+  assert config.scheduler.polling_interval == 5
+
+
 def test_workers_single_mapping_still_normalizes_async_processes_to_one(settings):
   settings.TASKS = {
     "default": {

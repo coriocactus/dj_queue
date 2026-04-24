@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import warnings
 from collections.abc import Mapping, Sequence
@@ -393,7 +394,7 @@ def _build_worker_configs(raw_workers: Any, mode: str) -> tuple[WorkerConfig, ..
     raw_workers = [raw_workers]
 
   workers: list[WorkerConfig] = []
-  for raw_worker in raw_workers or []:
+  for index, raw_worker in enumerate(raw_workers or []):
     if not isinstance(raw_worker, Mapping):
       raise ImproperlyConfigured("worker entries must be mappings")
 
@@ -401,8 +402,9 @@ def _build_worker_configs(raw_workers: Any, mode: str) -> tuple[WorkerConfig, ..
       queues=_as_queue_selectors(raw_worker.get("queues", DEFAULT_WORKER["queues"])),
       threads=int(raw_worker.get("threads", DEFAULT_WORKER["threads"])),
       processes=int(raw_worker.get("processes", DEFAULT_WORKER["processes"])),
-      polling_interval=float(
-        raw_worker.get("polling_interval", DEFAULT_WORKER["polling_interval"])
+      polling_interval=_positive_float(
+        raw_worker.get("polling_interval", DEFAULT_WORKER["polling_interval"]),
+        f"workers[{index}].polling_interval",
       ),
     )
 
@@ -423,15 +425,16 @@ def _build_dispatcher_configs(raw_dispatchers: Any) -> tuple[DispatcherConfig, .
     raw_dispatchers = [raw_dispatchers]
 
   dispatchers: list[DispatcherConfig] = []
-  for raw_dispatcher in raw_dispatchers or []:
+  for index, raw_dispatcher in enumerate(raw_dispatchers or []):
     if not isinstance(raw_dispatcher, Mapping):
       raise ImproperlyConfigured("dispatcher entries must be mappings")
 
     dispatchers.append(
       DispatcherConfig(
         batch_size=int(raw_dispatcher.get("batch_size", DEFAULT_DISPATCHER["batch_size"])),
-        polling_interval=float(
-          raw_dispatcher.get("polling_interval", DEFAULT_DISPATCHER["polling_interval"])
+        polling_interval=_positive_float(
+          raw_dispatcher.get("polling_interval", DEFAULT_DISPATCHER["polling_interval"]),
+          f"dispatchers[{index}].polling_interval",
         ),
         concurrency_maintenance=bool(
           raw_dispatcher.get(
@@ -463,8 +466,9 @@ def _build_scheduler_config(raw_scheduler: Any) -> SchedulerConfig:
         DEFAULT_SCHEDULER["dynamic_tasks_enabled"],
       )
     ),
-    polling_interval=float(
-      raw_scheduler.get("polling_interval", DEFAULT_SCHEDULER["polling_interval"])
+    polling_interval=_positive_float(
+      raw_scheduler.get("polling_interval", DEFAULT_SCHEDULER["polling_interval"]),
+      "scheduler.polling_interval",
     ),
   )
 
@@ -537,6 +541,21 @@ def _optional_int(value: Any) -> int | None:
   if value is None:
     return None
   return int(value)
+
+
+def _positive_float(value: Any, setting_name: str) -> float:
+  try:
+    number = float(value)
+  except (TypeError, ValueError) as exc:
+    raise ImproperlyConfigured(
+      f"dj_queue {setting_name} must be a positive number, got {value!r}"
+    ) from exc
+
+  if not math.isfinite(number) or number <= 0:
+    raise ImproperlyConfigured(
+      f"dj_queue {setting_name} must be a positive number, got {value!r}"
+    )
+  return number
 
 
 def _cache_key(value: Any) -> str:

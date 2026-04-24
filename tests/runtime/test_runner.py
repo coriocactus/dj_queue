@@ -33,6 +33,11 @@ class DummyRunner(BaseRunner):
     return {"polling_interval": self.config.polling_interval}
 
 
+class FallbackRunner(BaseRunner):
+  def poll_once(self):
+    return None
+
+
 def wait_until(predicate, timeout=1):
   deadline = time.monotonic() + timeout
   while time.monotonic() < deadline:
@@ -104,3 +109,21 @@ def test_runner_registers_backend_alias_on_process():
     "polling_interval": runner.config.polling_interval,
   }
   runner.stop()
+
+
+@pytest.mark.parametrize("polling_interval", (None, 0, -1, "fast"))
+def test_runner_uses_safe_polling_interval_when_config_is_missing_or_invalid(polling_interval):
+  if polling_interval is None:
+    config = SimpleNamespace()
+  else:
+    config = SimpleNamespace(polling_interval=polling_interval)
+
+  runner = FallbackRunner(
+    config,
+    name=f"fallback-runner-{uuid4()}",
+    pid=12345,
+    hostname="localhost",
+    heartbeat_interval=0.01,
+  )
+
+  assert runner.polling_interval == 1.0

@@ -23,7 +23,8 @@ class Scheduler(BaseRunner):
 
   @property
   def polling_interval(self):
-    return self.config.scheduler.polling_interval
+    scheduler = getattr(self.config, "scheduler", None)
+    return self._normalized_polling_interval(getattr(scheduler, "polling_interval", None))
 
   def __init__(
     self,
