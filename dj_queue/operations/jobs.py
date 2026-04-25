@@ -351,6 +351,39 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
     return jobs
 
 
+def dispatch_scheduled_job_now(job_id, *, backend_alias="default"):
+  alias = get_database_alias(backend_alias)
+  config = load_backend_config(backend_alias)
+
+  with transaction.atomic(using=alias):
+    scheduled = locked_queryset(
+      ScheduledExecution.objects.using(alias)
+      .select_related("job")
+      .filter(job_id=job_id, job__backend_alias=backend_alias),
+      use_skip_locked=config.use_skip_locked,
+    ).first()
+    if scheduled is None:
+      raise EnqueueError("job is not scheduled")
+
+    job = scheduled.job
+    scheduled.delete(using=alias)
+    job.scheduled_at = None
+    job.save(using=alias, update_fields=["scheduled_at", "updated_at"])
+    dispatched_as = _dispatch_existing_job(job)
+
+  if dispatched_as == "ready":
+    runtime_notify.notify_ready_queues((job.queue_name,), backend_alias=backend_alias)
+
+  log_event(
+    "job.dispatched_now",
+    job_id=str(job.id),
+    queue_name=job.queue_name,
+    priority=job.priority,
+    dispatched_as=dispatched_as,
+  )
+  return job, dispatched_as
+
+
 def retry_failed_job(job_id, *, backend_alias="default"):
   alias = get_database_alias(backend_alias)
 
@@ -370,15 +403,19 @@ def retry_failed_job(job_id, *, backend_alias="default"):
   return job
 
 
-def enqueue_job_again(job_id, *, backend_alias="default"):
+_KEEP_RUN_AFTER = object()
+
+
+def enqueue_job_again(job_id, *, backend_alias="default", run_after=_KEEP_RUN_AFTER):
   alias = get_database_alias(backend_alias)
   source_job = Job.objects.using(alias).get(pk=job_id)
   task = import_string(source_job.task_path)
+  source_run_after = source_job.scheduled_at if run_after is _KEEP_RUN_AFTER else run_after
   if hasattr(task, "using"):
     task = task.using(
       priority=source_job.priority,
       queue_name=source_job.queue_name,
-      run_after=source_job.scheduled_at,
+      run_after=source_run_after,
       backend=source_job.backend_alias,
     )
   args = list(source_job.payload.get("args", []))

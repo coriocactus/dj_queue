@@ -28,7 +28,7 @@ from dj_queue.models import (
   RecurringTask,
   Semaphore,
 )
-from dj_queue.operations.jobs import enqueue_job_again
+from dj_queue.operations.jobs import dispatch_scheduled_job_now, enqueue_job_again
 
 
 class DjQueueFirstAdminSite(admin.AdminSite):
@@ -563,6 +563,16 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   def get_change_actions(self, request, obj):
     if obj is None:
       return ()
+    if obj.status == "scheduled":
+      return (
+        {"name": "run_now", "label": "Run now", "css_class": "djq-object-action-retry"},
+        {
+          "name": "enqueue_copy_now",
+          "label": "Enqueue copy now",
+          "css_class": "djq-object-action-retry",
+        },
+      )
+
     actions = [{"name": "enqueue", "label": "Enqueue job", "css_class": "djq-object-action-retry"}]
     if obj.status == "failed":
       actions.extend(
@@ -582,6 +592,39 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     return tuple(actions)
 
   def handle_change_action(self, request, obj, action):
+    if action == "run_now":
+      try:
+        _job, dispatched_as = dispatch_scheduled_job_now(obj.pk, backend_alias=obj.backend_alias)
+      except (EnqueueError, ImportError, AttributeError) as exc:
+        self.message_user(request, f"Could not dispatch job now: {exc}", level=messages.ERROR)
+        return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
+
+      message = "Dispatched scheduled job for immediate execution"
+      if dispatched_as == "blocked":
+        message = "Dispatched scheduled job immediately and it is now blocked"
+      if dispatched_as == "discarded":
+        message = "Dispatched scheduled job immediately and it was discarded"
+      self.message_user(request, message, level=messages.SUCCESS)
+      return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
+
+    if action == "enqueue_copy_now":
+      try:
+        new_job = enqueue_job_again(obj.pk, backend_alias=obj.backend_alias, run_after=None)
+      except (EnqueueError, ImportError, AttributeError) as exc:
+        self.message_user(request, f"Could not enqueue job: {exc}", level=messages.ERROR)
+        return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
+
+      self.message_user(
+        request,
+        format_html(
+          'Enqueued immediate copy <a href="{}">{}</a>.',
+          self._change_url(object_id=new_job.pk, backend_alias=new_job.backend_alias),
+          new_job.pk,
+        ),
+        level=messages.SUCCESS,
+      )
+      return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
+
     if action == "enqueue":
       try:
         new_job = enqueue_job_again(obj.pk, backend_alias=obj.backend_alias)

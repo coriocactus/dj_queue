@@ -15,6 +15,7 @@ from dj_queue.models import (
   ReadyExecution,
   RecurringExecution,
   RecurringTask,
+  ScheduledExecution,
   Semaphore,
 )
 
@@ -60,6 +61,18 @@ def make_failed_job(**overrides):
     traceback="traceback",
   )
   return job, failed
+
+
+def make_scheduled_job(**overrides):
+  scheduled_at = overrides.pop("scheduled_at", timezone.now() + timedelta(minutes=5))
+  job = make_job(scheduled_at=scheduled_at, **overrides)
+  ScheduledExecution.objects.create(
+    job=job,
+    queue_name=job.queue_name,
+    priority=job.priority,
+    scheduled_at=scheduled_at,
+  )
+  return job
 
 
 def make_process(**overrides):
@@ -450,6 +463,24 @@ def test_job_change_view_shows_enqueue_action_for_non_failed_jobs(admin_client):
   assert "Traceback:" not in content
 
 
+def test_job_change_view_shows_run_now_and_enqueue_copy_now_for_scheduled_jobs(admin_client):
+  job = make_scheduled_job()
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_job_change", args=[job.pk]),
+    {"backend": "default"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert_readonly_change_view_chrome(content, has_submit_row=True)
+  assert 'name="_djq_object_action" value="run_now"' in content
+  assert 'name="_djq_object_action" value="enqueue_copy_now"' in content
+  assert 'name="_djq_object_action" value="enqueue"' not in content
+  assert "Run now" in content
+  assert "Enqueue copy now" in content
+
+
 def test_process_change_view_hides_save_controls(admin_client):
   process = make_process(last_heartbeat_at=timezone.now())
 
@@ -539,6 +570,55 @@ def test_job_change_view_enqueue_action(admin_client):
   assert len(messages) == 1
   assert messages[0].message == format_html(
     'Enqueued job <a href="{}">{}</a>.',
+    f"{reverse('admin:dj_queue_job_change', args=[new_job.pk])}?backend=default",
+    new_job.pk,
+  )
+
+
+def test_job_change_view_run_now_action_for_scheduled_job(admin_client):
+  job = make_scheduled_job(queue_name="alpha", priority=7, args=["run-now"])
+
+  response = admin_client.post(
+    f"{reverse('admin:dj_queue_job_change', args=[job.pk])}?backend=default",
+    {"_djq_object_action": "run_now"},
+    follow=True,
+  )
+
+  assert response.status_code == 200
+  job.refresh_from_db()
+  assert job.scheduled_at is None
+  assert ScheduledExecution.objects.filter(job=job).exists() is False
+  assert ReadyExecution.objects.filter(job=job).exists() is True
+  messages = list(response.context["messages"])
+  assert len(messages) == 1
+  assert messages[0].message == "Dispatched scheduled job for immediate execution"
+
+
+def test_job_change_view_enqueue_copy_now_action_for_scheduled_job(admin_client):
+  job = make_scheduled_job(queue_name="alpha", priority=7, args=["copy-now"])
+
+  response = admin_client.post(
+    f"{reverse('admin:dj_queue_job_change', args=[job.pk])}?backend=default",
+    {"_djq_object_action": "enqueue_copy_now"},
+    follow=True,
+  )
+
+  assert response.status_code == 200
+  job.refresh_from_db()
+  assert ScheduledExecution.objects.filter(job=job).exists() is True
+
+  new_job = Job.objects.exclude(pk=job.pk).get()
+  assert new_job.task_path == job.task_path
+  assert new_job.queue_name == job.queue_name
+  assert new_job.priority == job.priority
+  assert new_job.payload == job.payload
+  assert new_job.backend_alias == job.backend_alias
+  assert new_job.scheduled_at is None
+  assert ReadyExecution.objects.filter(job=new_job).exists() is True
+  messages = list(response.context["messages"])
+  assert len(messages) == 1
+  assert messages[0].message == format_html(
+    'Enqueued immediate copy <a href="{}">{}</a>.',
     f"{reverse('admin:dj_queue_job_change', args=[new_job.pk])}?backend=default",
     new_job.pk,
   )
