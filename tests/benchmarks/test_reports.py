@@ -40,15 +40,34 @@ def test_render_markdown_report_includes_environment_and_metrics():
 
 def test_render_markdown_report_uses_recorded_run_metadata():
   markdown = render_markdown(
-    [benchmark_row(metadata={"run": benchmark_run_metadata()})],
+    [
+      benchmark_row(
+        metadata={
+          "benchmark": {
+            "worker_count": 2,
+            "worker_threads": 4,
+            "preserve_finished_jobs": False,
+          },
+          "run": benchmark_run_metadata(
+            worker_count=2,
+            worker_threads=4,
+            preserve_finished_jobs=False,
+          ),
+        }
+      )
+    ],
     input_path="benchmark-results/postgres-all.jsonl",
     output_path="docs/benchmarks/postgres-all.md",
   )
 
+  assert "- benchmark worker count: `2`" in markdown
+  assert "- benchmark worker threads: `4`" in markdown
+  assert "- preserve finished jobs: `False`" in markdown
   assert "docker compose up postgres -d" in markdown
   assert (
     "bin/benchmark.py all --backend postgres --sizes 1000,10000 --warmups 1 "
-    "--runs 3 --output benchmark-results/postgres-all.jsonl"
+    "--runs 3 --output benchmark-results/postgres-all.jsonl --worker-count 2 "
+    "--worker-threads 4 --no-preserve-finished-jobs"
   ) in markdown
   assert (
     "bin/benchmark.py report benchmark-results/postgres-all.jsonl "
@@ -102,8 +121,8 @@ def benchmark_row(*, metadata=None):
   }
 
 
-def benchmark_run_metadata():
-  return {
+def benchmark_run_metadata(**overrides):
+  metadata = {
     "command": "all",
     "scenario": None,
     "sizes": [1000, 10000],
@@ -114,3 +133,5 @@ def benchmark_run_metadata():
     "migrate": True,
     "reset_db": True,
   }
+  metadata.update(overrides)
+  return metadata

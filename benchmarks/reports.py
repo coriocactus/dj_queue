@@ -28,6 +28,7 @@ def read_jsonl(input_path):
 def render_markdown(rows, *, input_path=None, output_path=None, run_command=None):
   metadata = rows[0]["metadata"]
   database = metadata["database"]
+  benchmark = metadata.get("benchmark")
   backend_label = {"postgres": "PostgreSQL"}.get(metadata["backend"], metadata["backend"])
   lines = [
     f"# dj_queue {backend_label} Benchmark Report",
@@ -47,10 +48,16 @@ def render_markdown(rows, *, input_path=None, output_path=None, run_command=None
     f"- platform: `{metadata['platform']}`",
     f"- machine: `{metadata['machine']}`",
     f"- revision: `{metadata['git_revision']}`",
-    "",
-    "## Results",
-    "",
   ]
+  if benchmark:
+    lines.extend(
+      [
+        f"- benchmark worker count: `{benchmark['worker_count']}`",
+        f"- benchmark worker threads: `{benchmark['worker_threads']}`",
+        f"- preserve finished jobs: `{benchmark['preserve_finished_jobs']}`",
+      ]
+    )
+  lines.extend(["", "## Results", ""])
 
   grouped = defaultdict(list)
   for row in rows:
@@ -115,6 +122,14 @@ def command_from_metadata(metadata):
       run["output"],
     ]
   )
+  if run.get("worker_count") is not None:
+    parts.extend(["--worker-count", run["worker_count"]])
+  if run.get("worker_threads") is not None:
+    parts.extend(["--worker-threads", run["worker_threads"]])
+  if run.get("preserve_finished_jobs") is False:
+    parts.append("--no-preserve-finished-jobs")
+  elif run.get("preserve_finished_jobs") is True:
+    parts.append("--preserve-finished-jobs")
   if not run.get("create_db", True):
     parts.append("--no-create-db")
   if not run.get("migrate", True):

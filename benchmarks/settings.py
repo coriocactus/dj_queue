@@ -13,6 +13,28 @@ STATIC_URL = "/static/"
 BENCHMARK_BACKEND = os.environ.get("BENCHMARK_BACKEND", "sqlite")
 MYSQL_FAMILY = {"mysql", "mariadb"}
 
+
+def _positive_int_env(name, default):
+  value = os.environ.get(name)
+  if value in (None, ""):
+    return default
+  number = int(value)
+  if number <= 0:
+    raise ValueError(f"{name} must be a positive integer")
+  return number
+
+
+def _bool_env(name, default):
+  value = os.environ.get(name)
+  if value in (None, ""):
+    return default
+  if value.lower() in {"1", "true", "yes", "on"}:
+    return True
+  if value.lower() in {"0", "false", "no", "off"}:
+    return False
+  raise ValueError(f"{name} must be a boolean value")
+
+
 if BENCHMARK_BACKEND in MYSQL_FAMILY:
   pymysql = importlib.import_module("pymysql")
   pymysql.version_info = (2, 2, 1, "final", 0)
@@ -55,8 +77,11 @@ _DATABASES = {
 }
 
 DATABASES = {"default": _DATABASES[BENCHMARK_BACKEND]}
-WORKER_COUNT = 1 if BENCHMARK_BACKEND == "sqlite" else 4
-WORKER_THREADS = 1 if BENCHMARK_BACKEND == "sqlite" else 8
+DEFAULT_WORKER_COUNT = 1 if BENCHMARK_BACKEND == "sqlite" else 4
+DEFAULT_WORKER_THREADS = 1 if BENCHMARK_BACKEND == "sqlite" else 8
+WORKER_COUNT = _positive_int_env("BENCHMARK_WORKER_COUNT", DEFAULT_WORKER_COUNT)
+WORKER_THREADS = _positive_int_env("BENCHMARK_WORKER_THREADS", DEFAULT_WORKER_THREADS)
+PRESERVE_FINISHED_JOBS = _bool_env("BENCHMARK_PRESERVE_FINISHED_JOBS", True)
 INSTALLED_APPS = [
   "django.contrib.contenttypes",
   "dj_queue",
@@ -81,7 +106,7 @@ TASKS = {
       "process_heartbeat_interval": 0,
       "process_alive_threshold": 60,
       "shutdown_timeout": 60,
-      "preserve_finished_jobs": True,
+      "preserve_finished_jobs": PRESERVE_FINISHED_JOBS,
       "clear_finished_jobs_after": None,
       "clear_failed_jobs_after": None,
       "clear_recurring_executions_after": None,

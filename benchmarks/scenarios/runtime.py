@@ -4,6 +4,7 @@ from django.utils import timezone
 
 from benchmarks.harness import Timer, throughput
 from benchmarks.tasks import limited, noop
+from dj_queue.config import load_backend_config
 from dj_queue.models import BlockedExecution, ClaimedExecution, Job, ReadyExecution
 from dj_queue.operations.jobs import claim_ready_jobs, complete_claimed_job
 from dj_queue.runtime.supervisor import AsyncSupervisor
@@ -38,31 +39,39 @@ def worker_drain(size):
     batch_size=1000,
   )
 
+  preserve_finished_jobs = load_backend_config("default").preserve_finished_jobs
   supervisor = AsyncSupervisor.from_backend_config(backend_alias="default", standalone=False)
   supervisor.start()
   runner_count = len(supervisor.runners)
   try:
     with Timer() as timer:
-      _wait_for_drain(size, timeout=max(30, size / 25))
+      _wait_for_drain(
+        size, preserve_finished_jobs=preserve_finished_jobs, timeout=max(30, size / 25)
+      )
   finally:
     supervisor.stop()
 
   finished_count = Job.objects.filter(finished_at__isnull=False).count()
+  job_count = Job.objects.count()
+  completed_count = finished_count if preserve_finished_jobs else size - job_count
   ready_count = ReadyExecution.objects.count()
   claimed_count = ClaimedExecution.objects.count()
-  if finished_count != size or ready_count or claimed_count:
+  if completed_count != size or ready_count or claimed_count:
     raise AssertionError(
-      f"expected all jobs drained, got finished={finished_count} "
+      f"expected all jobs drained, got completed={completed_count} "
       f"ready={ready_count} claimed={claimed_count}"
     )
 
   return {
     "duration_seconds": timer.duration,
     "jobs_per_second": throughput(size, timer.duration),
+    "completed_count": completed_count,
     "finished_count": finished_count,
+    "job_count": job_count,
     "ready_count": ready_count,
     "claimed_count": claimed_count,
     "runner_count": runner_count,
+    "preserve_finished_jobs": preserve_finished_jobs,
   }
 
 
@@ -102,11 +111,14 @@ def concurrency_contention(size):
   }
 
 
-def _wait_for_drain(size, *, timeout):
+def _wait_for_drain(size, *, preserve_finished_jobs, timeout):
   deadline = time.monotonic() + timeout
   while time.monotonic() < deadline:
+    finished = Job.objects.filter(finished_at__isnull=False).count()
+    job_count = Job.objects.count()
+    completed = finished if preserve_finished_jobs else size - job_count
     if (
-      Job.objects.filter(finished_at__isnull=False).count() == size
+      completed == size
       and ReadyExecution.objects.count() == 0
       and ClaimedExecution.objects.count() == 0
     ):

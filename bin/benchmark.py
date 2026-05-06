@@ -52,6 +52,14 @@ def add_run_options(parser, *, default_sizes):
   parser.add_argument("--runs", type=int, default=1, help="Measured repetitions per size.")
   parser.add_argument("--warmups", type=int, default=0, help="Unrecorded warmups per size.")
   parser.add_argument("--output", help="JSONL output path.")
+  parser.add_argument("--worker-count", type=int, help="Override benchmark worker count.")
+  parser.add_argument("--worker-threads", type=int, help="Override threads per benchmark worker.")
+  parser.add_argument(
+    "--preserve-finished-jobs",
+    action=argparse.BooleanOptionalAction,
+    default=None,
+    help="Override whether worker benchmarks preserve finished job rows.",
+  )
   parser.add_argument(
     "--create-db",
     action=argparse.BooleanOptionalAction,
@@ -87,6 +95,7 @@ def main(argv):
 
 
 def run_benchmarks(args):
+  validate_run_options(args)
   configure_environment(args)
   if args.create_db:
     ensure_database_exists(args.backend)
@@ -99,8 +108,6 @@ def run_benchmarks(args):
     args, all_names=tuple(SCENARIOS), quick_names=QUICK_SCENARIOS
   )
   sizes = parse_sizes(args.sizes, default=DEFAULT_QUICK_SIZES)
-  if args.runs <= 0 or args.warmups < 0:
-    raise ValueError("runs must be positive and warmups cannot be negative")
 
   output_path = args.output or default_output_path(args.backend)
   from benchmarks.harness import ResultWriter
@@ -133,6 +140,21 @@ def configure_environment(args):
   os.environ["BENCHMARK_BACKEND"] = args.backend
   if args.database_name:
     os.environ["BENCHMARK_DB_NAME"] = args.database_name
+  if args.worker_count is not None:
+    os.environ["BENCHMARK_WORKER_COUNT"] = str(args.worker_count)
+  if args.worker_threads is not None:
+    os.environ["BENCHMARK_WORKER_THREADS"] = str(args.worker_threads)
+  if args.preserve_finished_jobs is not None:
+    os.environ["BENCHMARK_PRESERVE_FINISHED_JOBS"] = str(int(args.preserve_finished_jobs))
+
+
+def validate_run_options(args):
+  if args.runs <= 0 or args.warmups < 0:
+    raise ValueError("runs must be positive and warmups cannot be negative")
+  if args.worker_count is not None and args.worker_count <= 0:
+    raise ValueError("worker-count must be positive")
+  if args.worker_threads is not None and args.worker_threads <= 0:
+    raise ValueError("worker-threads must be positive")
 
 
 def run_metadata(args, *, sizes, output_path):
@@ -146,6 +168,9 @@ def run_metadata(args, *, sizes, output_path):
     "create_db": args.create_db,
     "migrate": args.migrate,
     "reset_db": args.reset_db,
+    "worker_count": args.worker_count,
+    "worker_threads": args.worker_threads,
+    "preserve_finished_jobs": args.preserve_finished_jobs,
   }
 
 

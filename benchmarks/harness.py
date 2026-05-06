@@ -10,6 +10,7 @@ from pathlib import Path
 from time import perf_counter
 
 import django
+from django.conf import settings
 from django.core.management import call_command
 from django.db import connection, connections
 
@@ -157,6 +158,7 @@ def environment_metadata(*, backend):
   return {
     "backend": backend,
     "database": database_info(),
+    "benchmark": benchmark_settings_info(),
     "python": sys.version.split()[0],
     "django": django.get_version(),
     "dj_queue": package_version("dj-queue"),
@@ -164,6 +166,17 @@ def environment_metadata(*, backend):
     "processor": platform.processor(),
     "machine": platform.machine(),
     "git_revision": revision(),
+  }
+
+
+def benchmark_settings_info():
+  options = settings.TASKS["default"]["OPTIONS"]
+  workers = options["workers"]
+  worker_threads = sorted({worker["threads"] for worker in workers})
+  return {
+    "worker_count": len(workers),
+    "worker_threads": worker_threads[0] if len(worker_threads) == 1 else worker_threads,
+    "preserve_finished_jobs": options["preserve_finished_jobs"],
   }
 
 
