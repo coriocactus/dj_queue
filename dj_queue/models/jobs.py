@@ -65,6 +65,7 @@ class Job(models.Model):
       models.Index(fields=["queue_name", "finished_at"]),
       models.Index(fields=["scheduled_at", "finished_at"]),
       models.Index(fields=["finished_at"]),
+      models.Index(fields=["backend_alias", "finished_at", "id"]),
     ]
 
   @property
@@ -125,6 +126,8 @@ class ReadyExecution(models.Model):
     indexes = [
       models.Index(fields=["priority", "id"]),
       models.Index(fields=["queue_name", "priority", "id"]),
+      models.Index(fields=["-priority", "id"]),
+      models.Index(fields=["queue_name", "-priority", "id"]),
     ]
 
   @classmethod
@@ -151,7 +154,10 @@ class ScheduledExecution(models.Model):
 
   class Meta:
     db_table = "dj_queue_scheduled_executions"
-    indexes = [models.Index(fields=["scheduled_at", "priority", "id"])]
+    indexes = [
+      models.Index(fields=["scheduled_at", "priority", "id"]),
+      models.Index(fields=["scheduled_at", "-priority", "id"]),
+    ]
 
 
 class ClaimedExecution(models.Model):
@@ -195,6 +201,8 @@ class BlockedExecution(models.Model):
     indexes = [
       models.Index(fields=["concurrency_key", "priority", "id"]),
       models.Index(fields=["expires_at", "concurrency_key"]),
+      models.Index(fields=["concurrency_key", "-priority", "id"]),
+      models.Index(fields=["expires_at", "-priority", "id"]),
     ]
 
   @classmethod
@@ -221,6 +229,7 @@ class FailedExecution(models.Model):
 
   class Meta:
     db_table = "dj_queue_failed_executions"
+    indexes = [models.Index(fields=["created_at", "job"])]
 
   def retry(self):
     return _retry_failed_job(self.job_id, backend_alias=self.job.backend_alias)

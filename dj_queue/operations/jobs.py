@@ -219,7 +219,11 @@ def claim_ready_jobs(
   )
 
   with transaction.atomic(using=alias):
-    queryset = ReadyExecution.objects.using(alias).filter(job__backend_alias=backend_alias)
+    queryset = (
+      ReadyExecution.objects.using(alias)
+      .select_related("job")
+      .filter(job__backend_alias=backend_alias)
+    )
     if paused_queue_names:
       queryset = queryset.exclude(queue_name__in=paused_queue_names)
     ready_rows = _select_ready_rows(
@@ -231,9 +235,7 @@ def claim_ready_jobs(
     if not ready_rows:
       return []
 
-    job_ids = [row.job_id for row in ready_rows]
-    jobs_by_id = {job.id: job for job in Job.objects.using(alias).filter(pk__in=job_ids)}
-    jobs = [jobs_by_id[job_id] for job_id in job_ids]
+    jobs = [row.job for row in ready_rows]
 
     ReadyExecution.objects.using(alias).filter(pk__in=[row.pk for row in ready_rows]).delete()
     _bulk_create(
@@ -342,6 +344,7 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
   with transaction.atomic(using=alias):
     queryset = (
       ScheduledExecution.objects.using(alias)
+      .select_related("job")
       .filter(job__backend_alias=backend_alias, scheduled_at__lte=now)
       .order_by("scheduled_at", "-priority", "id")
     )
@@ -349,9 +352,7 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
     if not scheduled_rows:
       return []
 
-    job_ids = [row.job_id for row in scheduled_rows]
-    jobs_by_id = {job.id: job for job in Job.objects.using(alias).filter(pk__in=job_ids)}
-    jobs = [jobs_by_id[job_id] for job_id in job_ids]
+    jobs = [row.job for row in scheduled_rows]
 
     ScheduledExecution.objects.using(alias).filter(
       pk__in=[row.pk for row in scheduled_rows]

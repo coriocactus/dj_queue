@@ -8,7 +8,7 @@ from django.utils.module_loading import import_string
 from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias, locked_queryset
 from dj_queue.log import log_event
-from dj_queue.models import BlockedExecution, Job, Pause, ReadyExecution, Semaphore
+from dj_queue.models import BlockedExecution, Pause, ReadyExecution, Semaphore
 from dj_queue.operations._insert import create_ignore_conflicts
 from dj_queue.runtime import notify as runtime_notify
 
@@ -78,6 +78,7 @@ def unblock_next_blocked_job(
   with transaction.atomic(using=alias):
     queryset = (
       BlockedExecution.objects.using(alias)
+      .select_related("job")
       .filter(concurrency_key=key, job__backend_alias=backend_alias)
       .order_by("-priority", "id")
     )
@@ -93,7 +94,7 @@ def unblock_next_blocked_job(
     ):
       return None
 
-    job = Job.objects.using(alias).get(pk=blocked.job_id, backend_alias=backend_alias)
+    job = blocked.job
     queue_name = blocked.queue_name
     priority = blocked.priority
     blocked.delete(using=alias)
@@ -136,6 +137,7 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
   with transaction.atomic(using=alias):
     queryset = (
       BlockedExecution.objects.using(alias)
+      .select_related("job")
       .filter(job__backend_alias=backend_alias, expires_at__lte=now)
       .order_by("expires_at", "-priority", "id")
     )
@@ -143,16 +145,8 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
     if not blocked_rows:
       return []
 
-    jobs_by_id = {
-      job.id: job
-      for job in Job.objects.using(alias).filter(
-        backend_alias=backend_alias,
-        pk__in=[b.job_id for b in blocked_rows],
-      )
-    }
-
     for blocked in blocked_rows:
-      job = jobs_by_id[blocked.job_id]
+      job = blocked.job
       limit, duration_seconds = task_settings.get(job.task_path, (None, None))
       if limit is None:
         task = import_string(job.task_path)

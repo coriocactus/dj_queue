@@ -57,4 +57,7 @@ class RecurringExecution(models.Model):
         name="dj_queue_recur_exec_backend_run_at_unique",
       )
     ]
-    indexes = [models.Index(fields=["backend_alias", "task_key", "run_at"])]
+    indexes = [
+      models.Index(fields=["backend_alias", "task_key", "run_at"]),
+      models.Index(fields=["backend_alias", "run_at", "id"]),
+    ]
