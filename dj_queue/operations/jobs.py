@@ -342,6 +342,7 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
   if use_skip_locked is None:
     use_skip_locked = load_backend_config(backend_alias).use_skip_locked
   now = timezone.now()
+  ready_queue_names = []
 
   with transaction.atomic(using=alias):
     queryset = (
@@ -359,11 +360,39 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
     ScheduledExecution.objects.using(alias).filter(
       pk__in=[row.pk for row in scheduled_rows]
     ).delete()
+
+    direct_jobs = [job for job in jobs if not job.concurrency_key]
+    if direct_jobs:
+      _lock_active_pauses(alias, backend_alias, {job.queue_name for job in direct_jobs})
+      _bulk_create(
+        alias,
+        ReadyExecution,
+        [
+          ReadyExecution(
+            job=job,
+            queue_name=job.queue_name,
+            priority=job.priority,
+            created_at=now,
+            latency_started_at=now,
+          )
+          for job in direct_jobs
+        ],
+      )
+      ready_queue_names.extend(job.queue_name for job in direct_jobs)
+
+    direct_job_ids = {job.pk for job in direct_jobs}
     for job in jobs:
+      if job.pk in direct_job_ids:
+        continue
       dispatched_as = _dispatch_existing_job(job)
       if dispatched_as == "ready":
-        runtime_notify.notify_ready_queues((job.queue_name,), backend_alias=backend_alias)
-    return jobs
+        ready_queue_names.append(job.queue_name)
+
+  if ready_queue_names:
+    runtime_notify.notify_ready_queues(
+      tuple(dict.fromkeys(ready_queue_names)), backend_alias=backend_alias
+    )
+  return jobs
 
 
 def dispatch_scheduled_job_now(job_id, *, backend_alias="default"):

@@ -516,6 +516,30 @@ def test_scheduled_promotion_stays_backend_scoped_on_shared_queue_db():
 
 
 @pytest.mark.django_db
+def test_scheduled_promotion_bulk_promotes_jobs_without_importing_tasks(monkeypatch):
+  due_at = timezone.now() - timedelta(seconds=1)
+  jobs = [make_job(task=echo, args=[index], scheduled_at=due_at) for index in range(3)]
+  for job in jobs:
+    ScheduledExecution.objects.create(
+      job=job,
+      queue_name=job.queue_name,
+      priority=job.priority,
+      scheduled_at=due_at,
+    )
+
+  def fail_import(_task_path):
+    raise AssertionError("simple scheduled promotion should not import tasks")
+
+  monkeypatch.setattr("dj_queue.operations.jobs.import_string", fail_import)
+
+  promoted = promote_scheduled_jobs(batch_size=10)
+
+  assert [job.pk for job in promoted] == [job.pk for job in jobs]
+  assert ReadyExecution.objects.count() == len(jobs)
+  assert ScheduledExecution.objects.exists() is False
+
+
+@pytest.mark.django_db
 def test_blocked_promotion_stays_backend_scoped_on_shared_queue_db():
   default_job = make_job(
     task=limited,
