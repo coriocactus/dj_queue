@@ -301,8 +301,11 @@ class AsyncSupervisor(Supervisor):
   def _fail_crashed_runner_jobs(self, runner):
     if runner.process is None:
       return
+    alias = get_database_alias(self.backend_alias)
     claimed_job_ids = list(
-      ClaimedExecution.objects.filter(process=runner.process).values_list("job_id", flat=True)
+      ClaimedExecution.objects.using(alias)
+      .filter(process=runner.process)
+      .values_list("job_id", flat=True)
     )
     with app_executor():
       for job_id in claimed_job_ids:

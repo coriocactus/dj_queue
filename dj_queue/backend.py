@@ -54,7 +54,7 @@ class DjQueueBackend(BaseTaskBackend):
           "blocked_execution",
           "failed_execution",
         )
-        .get(pk=result_id)
+        .get(pk=result_id, backend_alias=self.alias)
       )
     except Job.DoesNotExist as exc:
       raise TaskResultDoesNotExist(str(result_id)) from exc

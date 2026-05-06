@@ -250,7 +250,9 @@ def claim_ready_jobs(
 def execute_claimed_job(job_id, *, backend_alias="default"):
   alias = get_database_alias(backend_alias)
   claimed = (
-    ClaimedExecution.objects.using(alias).select_related("job", "process").get(job_id=job_id)
+    ClaimedExecution.objects.using(alias)
+    .select_related("job", "process")
+    .get(job_id=job_id, job__backend_alias=backend_alias)
   )
   job = claimed.job
 
@@ -279,7 +281,11 @@ def complete_claimed_job(job_id, return_value, *, backend_alias="default"):
   alias = get_database_alias(backend_alias)
 
   with transaction.atomic(using=alias):
-    claimed = ClaimedExecution.objects.using(alias).select_related("job").get(job_id=job_id)
+    claimed = (
+      ClaimedExecution.objects.using(alias)
+      .select_related("job")
+      .get(job_id=job_id, job__backend_alias=backend_alias)
+    )
     job = claimed.job
     now = timezone.now()
     config = load_backend_config(job.backend_alias)
@@ -301,7 +307,11 @@ def fail_claimed_job(job_id, error, *, traceback_text="", backend_alias="default
   alias = get_database_alias(backend_alias)
 
   with transaction.atomic(using=alias):
-    claimed = ClaimedExecution.objects.using(alias).select_related("job").get(job_id=job_id)
+    claimed = (
+      ClaimedExecution.objects.using(alias)
+      .select_related("job")
+      .get(job_id=job_id, job__backend_alias=backend_alias)
+    )
     job = claimed.job
     claimed.delete(using=alias)
     FailedExecution.objects.using(alias).create(
@@ -330,7 +340,7 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
   with transaction.atomic(using=alias):
     queryset = (
       ScheduledExecution.objects.using(alias)
-      .filter(scheduled_at__lte=now)
+      .filter(job__backend_alias=backend_alias, scheduled_at__lte=now)
       .order_by("scheduled_at", "-priority", "id")
     )
     scheduled_rows = list(locked_queryset(queryset, use_skip_locked=use_skip_locked)[:batch_size])
@@ -388,7 +398,11 @@ def retry_failed_job(job_id, *, backend_alias="default"):
   alias = get_database_alias(backend_alias)
 
   with transaction.atomic(using=alias):
-    failed = FailedExecution.objects.using(alias).select_related("job").get(job_id=job_id)
+    failed = (
+      FailedExecution.objects.using(alias)
+      .select_related("job")
+      .get(job_id=job_id, job__backend_alias=backend_alias)
+    )
     job = failed.job
     failed.delete(using=alias)
     job.return_value = None
@@ -408,7 +422,7 @@ _KEEP_RUN_AFTER = object()
 
 def enqueue_job_again(job_id, *, backend_alias="default", run_after=_KEEP_RUN_AFTER):
   alias = get_database_alias(backend_alias)
-  source_job = Job.objects.using(alias).get(pk=job_id)
+  source_job = Job.objects.using(alias).get(pk=job_id, backend_alias=backend_alias)
   task = import_string(source_job.task_path)
   source_run_after = source_job.scheduled_at if run_after is _KEEP_RUN_AFTER else run_after
   if hasattr(task, "using"):
@@ -502,7 +516,6 @@ def discard_scheduled_jobs(*, job_ids=None, batch_size=500, backend_alias="defau
     Job.objects.using(alias).filter(pk__in=[row.job_id for row in scheduled_rows]).delete()
 
   for job in jobs:
-    _release_concurrency_slot(job)
     log_event("job.discarded", job_id=str(job.id), reason="scheduled")
   return len(jobs)
 

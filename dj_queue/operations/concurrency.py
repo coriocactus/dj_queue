@@ -77,7 +77,9 @@ def unblock_next_blocked_job(
 
   with transaction.atomic(using=alias):
     queryset = (
-      BlockedExecution.objects.using(alias).filter(concurrency_key=key).order_by("-priority", "id")
+      BlockedExecution.objects.using(alias)
+      .filter(concurrency_key=key, job__backend_alias=backend_alias)
+      .order_by("-priority", "id")
     )
     blocked = locked_queryset(queryset, use_skip_locked=use_skip_locked).first()
     if blocked is None:
@@ -91,7 +93,7 @@ def unblock_next_blocked_job(
     ):
       return None
 
-    job = Job.objects.using(alias).get(pk=blocked.job_id)
+    job = Job.objects.using(alias).get(pk=blocked.job_id, backend_alias=backend_alias)
     queue_name = blocked.queue_name
     priority = blocked.priority
     blocked.delete(using=alias)
@@ -134,7 +136,7 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
   with transaction.atomic(using=alias):
     queryset = (
       BlockedExecution.objects.using(alias)
-      .filter(expires_at__lte=now)
+      .filter(job__backend_alias=backend_alias, expires_at__lte=now)
       .order_by("expires_at", "-priority", "id")
     )
     blocked_rows = list(locked_queryset(queryset, use_skip_locked=use_skip_locked)[:batch_size])
@@ -143,7 +145,10 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
 
     jobs_by_id = {
       job.id: job
-      for job in Job.objects.using(alias).filter(pk__in=[b.job_id for b in blocked_rows])
+      for job in Job.objects.using(alias).filter(
+        backend_alias=backend_alias,
+        pk__in=[b.job_id for b in blocked_rows],
+      )
     }
 
     for blocked in blocked_rows:

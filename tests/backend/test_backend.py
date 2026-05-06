@@ -13,13 +13,16 @@ from dj_queue.backend import _async_backend_call
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import (
   ClaimedExecution,
+  BlockedExecution,
   FailedExecution,
   Job,
   Process,
   ReadyExecution,
   RecurringExecution,
+  Semaphore,
   ScheduledExecution,
 )
+from dj_queue.operations.concurrency import promote_expired_blocked_jobs
 from dj_queue.operations.cleanup import (
   clear_failed_jobs,
   clear_finished_jobs,
@@ -29,6 +32,7 @@ from dj_queue.operations.jobs import (
   discard_failed_job,
   discard_ready_jobs,
   discard_scheduled_jobs,
+  promote_scheduled_jobs,
   retry_failed_job,
 )
 from tests.tasks import add, async_echo, echo, limited, limited_discard
@@ -227,6 +231,14 @@ def test_get_result_failed():
 
 
 @pytest.mark.django_db
+def test_get_result_stays_backend_scoped_on_shared_queue_db():
+  job = make_job(args=["secondary"], backend_alias="secondary")
+
+  with pytest.raises(TaskResultDoesNotExist):
+    echo.get_backend().get_result(str(job.id))
+
+
+@pytest.mark.django_db
 def test_retry_failed_job_reuses_normal_dispatch_path():
   job = make_job(args=["retry"])
   FailedExecution.objects.create(
@@ -293,6 +305,29 @@ def test_discard_scheduled_jobs_in_batches():
 
 
 @pytest.mark.django_db
+def test_discard_scheduled_job_does_not_release_semaphore_slot():
+  Semaphore.objects.create(
+    key="account:1",
+    value=0,
+    limit=1,
+    expires_at=timezone.now() + timedelta(minutes=1),
+  )
+  future = timezone.now() + timedelta(minutes=5)
+  job = make_job(task=limited, args=[1], scheduled_at=future, concurrency_key="account:1")
+  ScheduledExecution.objects.create(
+    job=job,
+    queue_name=job.queue_name,
+    priority=job.priority,
+    scheduled_at=future,
+  )
+
+  deleted = discard_scheduled_jobs(job_ids=[job.id], batch_size=1)
+
+  assert deleted == 1
+  assert Semaphore.objects.get(key="account:1").value == 0
+
+
+@pytest.mark.django_db
 def test_clear_finished_jobs_by_age_and_task_path():
   old_finished = make_job(
     task=echo,
@@ -316,6 +351,28 @@ def test_clear_finished_jobs_by_age_and_task_path():
   assert Job.objects.filter(pk=old_finished.pk).exists() is False
   assert Job.objects.filter(pk=recent_finished.pk).exists() is True
   assert Job.objects.filter(task_path=add.module_path).exists() is True
+
+
+@pytest.mark.django_db
+def test_clear_finished_jobs_stays_backend_scoped_on_shared_queue_db():
+  default_job = make_job(
+    task=echo,
+    finished_at=timezone.now() - timedelta(minutes=10),
+    return_value="default",
+    backend_alias="default",
+  )
+  secondary_job = make_job(
+    task=echo,
+    finished_at=timezone.now() - timedelta(minutes=10),
+    return_value="secondary",
+    backend_alias="secondary",
+  )
+
+  deleted = clear_finished_jobs(older_than=60, batch_size=10, backend_alias="default")
+
+  assert deleted == 1
+  assert Job.objects.filter(pk=default_job.pk).exists() is False
+  assert Job.objects.filter(pk=secondary_job.pk).exists() is True
 
 
 @pytest.mark.django_db
@@ -359,6 +416,87 @@ def test_clear_failed_jobs_by_age_and_task_path():
   assert Job.objects.filter(pk=old_job.pk).exists() is False
   assert Job.objects.filter(pk=other_job.pk).exists() is True
   assert Job.objects.filter(pk=recent_job.pk).exists() is True
+
+
+@pytest.mark.django_db
+def test_clear_failed_jobs_stays_backend_scoped_on_shared_queue_db():
+  default_job = make_job(task=echo, backend_alias="default")
+  default_failed = FailedExecution.objects.create(
+    job=default_job,
+    exception_class="ValueError",
+    message="default",
+    traceback="default",
+  )
+  FailedExecution.objects.filter(pk=default_failed.pk).update(
+    created_at=timezone.now() - timedelta(minutes=10)
+  )
+
+  secondary_job = make_job(task=echo, backend_alias="secondary")
+  secondary_failed = FailedExecution.objects.create(
+    job=secondary_job,
+    exception_class="ValueError",
+    message="secondary",
+    traceback="secondary",
+  )
+  FailedExecution.objects.filter(pk=secondary_failed.pk).update(
+    created_at=timezone.now() - timedelta(minutes=10)
+  )
+
+  deleted = clear_failed_jobs(older_than=60, batch_size=10, backend_alias="default")
+
+  assert deleted == 1
+  assert Job.objects.filter(pk=default_job.pk).exists() is False
+  assert Job.objects.filter(pk=secondary_job.pk).exists() is True
+
+
+@pytest.mark.django_db
+def test_scheduled_promotion_stays_backend_scoped_on_shared_queue_db():
+  due_at = timezone.now() - timedelta(seconds=1)
+  default_job = make_job(task=echo, scheduled_at=due_at, backend_alias="default")
+  secondary_job = make_job(task=echo, scheduled_at=due_at, backend_alias="secondary")
+  for job in (default_job, secondary_job):
+    ScheduledExecution.objects.create(
+      job=job,
+      queue_name=job.queue_name,
+      priority=job.priority,
+      scheduled_at=due_at,
+    )
+
+  promoted = promote_scheduled_jobs(batch_size=10, backend_alias="default")
+
+  assert [job.pk for job in promoted] == [default_job.pk]
+  assert ReadyExecution.objects.filter(job=default_job).exists() is True
+  assert ScheduledExecution.objects.filter(job=secondary_job).exists() is True
+
+
+@pytest.mark.django_db
+def test_blocked_promotion_stays_backend_scoped_on_shared_queue_db():
+  default_job = make_job(
+    task=limited,
+    args=[1],
+    concurrency_key="account:1",
+    backend_alias="default",
+  )
+  secondary_job = make_job(
+    task=limited,
+    args=[2],
+    concurrency_key="account:2",
+    backend_alias="secondary",
+  )
+  for job in (default_job, secondary_job):
+    BlockedExecution.objects.create(
+      job=job,
+      queue_name=job.queue_name,
+      priority=job.priority,
+      concurrency_key=job.concurrency_key,
+      expires_at=timezone.now() - timedelta(seconds=1),
+    )
+
+  promoted = promote_expired_blocked_jobs(batch_size=10, backend_alias="default")
+
+  assert [job.pk for job in promoted] == [default_job.pk]
+  assert ReadyExecution.objects.filter(job=default_job).exists() is True
+  assert BlockedExecution.objects.filter(job=secondary_job).exists() is True
 
 
 @pytest.mark.django_db

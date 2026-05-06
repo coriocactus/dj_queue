@@ -301,7 +301,11 @@ def _discard_jobs_for_state(model, operation, *, batch_size, backend_alias):
   alias = get_database_alias(backend_alias)
   deleted = 0
   while True:
-    job_ids = list(model.objects.using(alias).values_list("job_id", flat=True)[:batch_size])
+    job_ids = list(
+      model.objects.using(alias)
+      .filter(job__backend_alias=backend_alias)
+      .values_list("job_id", flat=True)[:batch_size]
+    )
     if not job_ids:
       return deleted
     deleted += operation(job_ids=job_ids, batch_size=batch_size, backend_alias=backend_alias)

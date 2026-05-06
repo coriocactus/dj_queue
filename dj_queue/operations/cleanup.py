@@ -25,7 +25,11 @@ def clear_finished_jobs(
   if now is None:
     now = timezone.now()
   cutoff = now - timedelta(seconds=older_than)
-  queryset = Job.objects.using(alias).filter(finished_at__lt=cutoff).order_by("finished_at", "id")
+  queryset = (
+    Job.objects.using(alias)
+    .filter(backend_alias=backend_alias, finished_at__lt=cutoff)
+    .order_by("finished_at", "id")
+  )
   if task_path is not None:
     queryset = queryset.filter(task_path=task_path)
 
@@ -33,7 +37,7 @@ def clear_finished_jobs(
   if not job_ids:
     return 0
 
-  Job.objects.using(alias).filter(pk__in=job_ids).delete()
+  Job.objects.using(alias).filter(backend_alias=backend_alias, pk__in=job_ids).delete()
   return len(job_ids)
 
 
@@ -57,7 +61,7 @@ def clear_failed_jobs(
   cutoff = now - timedelta(seconds=older_than)
   queryset = (
     FailedExecution.objects.using(alias)
-    .filter(created_at__lt=cutoff)
+    .filter(job__backend_alias=backend_alias, created_at__lt=cutoff)
     .order_by("created_at", "job_id")
   )
   if task_path is not None:
@@ -67,7 +71,7 @@ def clear_failed_jobs(
   if not job_ids:
     return 0
 
-  Job.objects.using(alias).filter(pk__in=job_ids).delete()
+  Job.objects.using(alias).filter(backend_alias=backend_alias, pk__in=job_ids).delete()
   return len(job_ids)
 
 
