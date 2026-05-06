@@ -547,6 +547,89 @@ def test_fork_supervisor_starts_configured_children():
   supervisor.stop()
 
 
+def test_fork_supervisor_stop_waits_for_child_exit_before_hard_kill():
+  killed = []
+  waitpid_results = [(80001, 0)]
+
+  def waitpid(_pid, _flags):
+    if waitpid_results:
+      return waitpid_results.pop(0)
+    raise ChildProcessError
+
+  supervisor = build_fork_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[], recurring={}),
+    launcher=lambda spec: 80001,
+    waitpid=waitpid,
+    killer=lambda pid, sig: killed.append((pid, sig)),
+  )
+  supervisor.start()
+
+  supervisor.stop()
+
+  assert killed == [(80001, signal.SIGTERM)]
+  assert supervisor.children == {}
+
+
+def test_fork_supervisor_stop_kills_unreaped_child_and_fails_claimed_jobs():
+  killed = []
+  tasks_settings = async_tasks_settings(dispatchers=[], recurring={})
+  tasks_settings["default"]["OPTIONS"]["shutdown_timeout"] = 0
+  supervisor = build_fork_supervisor(
+    tasks_settings=tasks_settings,
+    launcher=lambda spec: 80001,
+    waitpid=lambda _pid, _flags: (0, 0),
+    killer=lambda pid, sig: killed.append((pid, sig)),
+  )
+  supervisor.start()
+  child_process = make_process(pid=80001, name="worker-1")
+  job = make_job(task_path="tests.tasks.echo")
+  make_claimed_execution(job=job, process=child_process)
+
+  supervisor.stop()
+
+  assert killed == [(80001, signal.SIGTERM), (80001, signal.SIGKILL)]
+  assert FailedExecution.objects.get(job=job).exception_class == (
+    f"{ProcessExitError.__module__}.{ProcessExitError.__qualname__}"
+  )
+  assert Process.objects.filter(pk=child_process.pk).exists() is False
+
+
+def test_fork_launcher_closes_parent_connections_around_fork(monkeypatch):
+  events = []
+  supervisor = build_fork_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[], recurring={}),
+    launcher=lambda spec: 80001,
+  )
+
+  monkeypatch.setattr("dj_queue.runtime.supervisor.os.fork", lambda: 80001)
+  monkeypatch.setattr(
+    "dj_queue.runtime.supervisor.connections",
+    type("DummyConnections", (), {"close_all": lambda self: events.append("close")})(),
+  )
+
+  pid = supervisor._default_launcher({"runner_class": object, "kwargs": {}})
+
+  assert pid == 80001
+  assert events == ["close", "close"]
+
+
+def test_fork_child_sigterm_requests_runner_stop(monkeypatch):
+  registered = {}
+  stopped = []
+  supervisor = build_fork_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[], recurring={}),
+    launcher=lambda spec: 80001,
+  )
+  runner = type("DummyRunner", (), {"request_stop": lambda self: stopped.append(True)})()
+
+  monkeypatch.setattr(signal, "signal", lambda sig, handler: registered.setdefault(sig, handler))
+
+  supervisor._register_child_signal_handlers(runner)
+  registered[signal.SIGTERM]()
+
+  assert stopped == [True]
+
+
 def test_dead_child_fails_claimed_jobs_and_replaces_runner():
   launched = []
   waitpid_results = [(90001, 0)]

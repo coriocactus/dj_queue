@@ -4,6 +4,7 @@ import socket
 import threading
 import time
 
+from django.db import connections
 from django.utils import timezone
 from datetime import timedelta
 
@@ -433,12 +434,21 @@ class ForkSupervisor(Supervisor):
     return process
 
   def stop(self):
+    timeout = max(float(self.config.shutdown_timeout), 0)
     for pid in tuple(self.children):
       try:
         self._killer(pid, signal.SIGTERM)
       except ProcessLookupError:
         pass
-    self.children.clear()
+
+    self._wait_for_children(timeout)
+    for pid in tuple(self.children):
+      try:
+        self._killer(pid, signal.SIGKILL)
+      except ProcessLookupError:
+        pass
+      self._fail_claimed_jobs_for_pid(pid)
+      self.children.pop(pid, None)
     return super().stop()
 
   def register_signal_handlers(self):
@@ -487,6 +497,22 @@ class ForkSupervisor(Supervisor):
       kind=spec["kind"],
     )
     return replacement_pid
+
+  def _wait_for_children(self, timeout):
+    deadline = time.monotonic() + timeout
+    while self.children and time.monotonic() < deadline:
+      try:
+        pid, _status = self._waitpid(-1, os.WNOHANG)
+      except ChildProcessError:
+        self.children.clear()
+        return None
+
+      if not pid:
+        time.sleep(min(0.05, max(deadline - time.monotonic(), 0)))
+        continue
+
+      self.children.pop(pid, None)
+    return None
 
   def poll_once(self):
     super().poll_once()
@@ -569,9 +595,25 @@ class ForkSupervisor(Supervisor):
     return specs
 
   def _default_launcher(self, spec):
+    connections.close_all()
     pid = os.fork()
     if pid == 0:
-      runner = spec["runner_class"](**spec["kwargs"])
-      runner.run()
+      connections.close_all()
+      try:
+        runner = spec["runner_class"](**spec["kwargs"])
+        self._register_child_signal_handlers(runner)
+        runner.run()
+      finally:
+        connections.close_all()
       self._exit_fn(0)
+    connections.close_all()
     return pid
+
+  def _register_child_signal_handlers(self, runner):
+    def request_stop(*_args):
+      runner.request_stop()
+      return True
+
+    signal.signal(signal.SIGTERM, request_stop)
+    signal.signal(signal.SIGINT, request_stop)
+    signal.signal(signal.SIGQUIT, lambda *_args: self._exit_fn(1))
