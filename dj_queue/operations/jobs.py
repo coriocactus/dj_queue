@@ -240,32 +240,36 @@ def claim_ready_jobs(
     jobs = [row.job for row in ready_rows]
 
     ReadyExecution.objects.using(alias).filter(pk__in=[row.pk for row in ready_rows]).delete()
+    claimed_at = timezone.now()
     _bulk_create(
       alias,
       ClaimedExecution,
-      [ClaimedExecution(job=job, process=process) for job in jobs],
+      [ClaimedExecution(job=job, process=process, created_at=claimed_at) for job in jobs],
     )
+    _attach_claim_metadata(jobs, process=process, claimed_at=claimed_at)
 
   for job in jobs:
     log_event("job.claimed", job_id=str(job.id), queue_name=job.queue_name, priority=job.priority)
   return jobs
 
 
-def execute_claimed_job(job_id, *, backend_alias="default"):
-  alias = get_database_alias(backend_alias)
-  claimed = (
-    ClaimedExecution.objects.using(alias)
-    .select_related("job", "process")
-    .get(job_id=job_id, job__backend_alias=backend_alias)
-  )
-  job = claimed.job
+def execute_claimed_job(job, *, backend_alias="default"):
+  if not isinstance(job, Job):
+    alias = get_database_alias(backend_alias)
+    claimed = (
+      ClaimedExecution.objects.using(alias)
+      .select_related("job", "process")
+      .get(job_id=job, job__backend_alias=backend_alias)
+    )
+    job = claimed.job
+    _attach_claim_metadata([job], process=claimed.process, claimed_at=claimed.created_at)
 
   try:
     task = import_string(job.task_path)
     args = list(job.payload.get("args", []))
     kwargs = dict(job.payload.get("kwargs", {}))
     if task.takes_context:
-      context = TaskContext(task_result=_task_result_for_claimed_job(task, claimed))
+      context = TaskContext(task_result=_task_result_for_claimed_job(task, job))
       return_value = task.call(context, *args, **kwargs)
     else:
       return_value = task.call(*args, **kwargs)
@@ -752,6 +756,13 @@ def _filter_queue_selectors(queryset, queues):
   return queryset.filter(condition)
 
 
+def _attach_claim_metadata(jobs, *, process, claimed_at):
+  worker_ids = [process.name] if process is not None else []
+  for job in jobs:
+    job._dj_queue_claimed_at = claimed_at
+    job._dj_queue_worker_ids = worker_ids
+
+
 def _select_ready_rows(queryset, *, limit, queues, use_skip_locked):
   if queues in (None, (), "*", ["*"], ("*",)):
     ordered = queryset.order_by("-priority", "id")
@@ -825,22 +836,21 @@ def _exception_path(error):
   return f"{error.__class__.__module__}.{error.__class__.__qualname__}"
 
 
-def _task_result_for_claimed_job(task, claimed):
-  worker_ids = []
-  if claimed.process_id is not None:
-    worker_ids = [claimed.process.name]
+def _task_result_for_claimed_job(task, job):
+  claimed_at = getattr(job, "_dj_queue_claimed_at", timezone.now())
+  worker_ids = getattr(job, "_dj_queue_worker_ids", [])
 
   return TaskResult(
     task=task,
-    id=str(claimed.job.id),
+    id=str(job.id),
     status=TaskResultStatus.RUNNING,
-    enqueued_at=claimed.job.created_at,
-    started_at=claimed.created_at,
+    enqueued_at=job.created_at,
+    started_at=claimed_at,
     finished_at=None,
-    last_attempted_at=claimed.created_at,
-    args=claimed.job.payload.get("args", []),
-    kwargs=claimed.job.payload.get("kwargs", {}),
-    backend=claimed.job.backend_alias,
+    last_attempted_at=claimed_at,
+    args=job.payload.get("args", []),
+    kwargs=job.payload.get("kwargs", {}),
+    backend=job.backend_alias,
     errors=[],
     worker_ids=worker_ids,
   )

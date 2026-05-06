@@ -164,6 +164,26 @@ def test_worker_executes_success_path():
   worker.stop()
 
 
+def test_worker_executes_already_claimed_job_object(monkeypatch):
+  job = make_ready_job(args=["claimed-object"])
+  seen = []
+  worker = make_worker()
+  worker.start()
+
+  def execute_job(claimed_job, *, backend_alias):
+    seen.append((claimed_job, backend_alias))
+
+  monkeypatch.setattr("dj_queue.runtime.worker.execute_claimed_job", execute_job)
+
+  worker.poll_once()
+
+  assert [(claimed_job.id, backend_alias) for claimed_job, backend_alias in seen] == [
+    (job.id, "default")
+  ]
+  assert isinstance(seen[0][0], Job)
+  worker.stop()
+
+
 def test_worker_executes_failure_path():
   job = make_ready_job(task=fail, args=["boom"])
   worker = make_worker()
