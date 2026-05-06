@@ -4,9 +4,11 @@ from concurrent.futures import Future
 from uuid import uuid4
 
 import pytest
+from django.utils import timezone
 
 from dj_queue.config import WorkerConfig
 from dj_queue.models import ClaimedExecution, FailedExecution, Job, Process, ReadyExecution
+from dj_queue.operations.jobs import complete_claimed_job, execute_claimed_job
 from dj_queue.runtime.worker import Worker
 from tests.tasks import echo, fail, non_json_result, with_context
 
@@ -182,6 +184,61 @@ def test_worker_executes_already_claimed_job_object(monkeypatch):
   ]
   assert isinstance(seen[0][0], Job)
   worker.stop()
+
+
+def test_execute_claimed_job_completes_already_loaded_job_object(monkeypatch):
+  job = make_ready_job(args=["complete-object"])
+  process = Process.objects.create(
+    backend_alias="default",
+    kind="Worker",
+    pid=12345,
+    hostname="localhost",
+    name="worker-complete-object",
+    metadata={},
+    last_heartbeat_at=timezone.now(),
+  )
+  ReadyExecution.objects.filter(job=job).delete()
+  ClaimedExecution.objects.create(job=job, process=process)
+  seen = []
+
+  def complete_job(claimed_job, return_value, *, backend_alias):
+    seen.append((claimed_job, return_value, backend_alias))
+
+  monkeypatch.setattr("dj_queue.operations.jobs.complete_claimed_job", complete_job)
+
+  execute_claimed_job(job)
+
+  assert [
+    (claimed_job.id, return_value, backend_alias)
+    for claimed_job, return_value, backend_alias in seen
+  ] == [(job.id, "complete-object", "default")]
+  assert isinstance(seen[0][0], Job)
+
+
+def test_complete_claimed_job_uses_loaded_job_without_select_related(monkeypatch):
+  job = make_ready_job(args=["done"])
+  process = Process.objects.create(
+    backend_alias="default",
+    kind="Worker",
+    pid=12345,
+    hostname="localhost",
+    name="worker-no-reread-complete",
+    metadata={},
+    last_heartbeat_at=timezone.now(),
+  )
+  ReadyExecution.objects.filter(job=job).delete()
+  ClaimedExecution.objects.create(job=job, process=process)
+
+  def fail_select_related(self, *args, **kwargs):
+    raise AssertionError("loaded-job completion should not select_related the job")
+
+  monkeypatch.setattr("django.db.models.query.QuerySet.select_related", fail_select_related)
+
+  complete_claimed_job(job, "done")
+
+  fresh_job = Job.objects.get(pk=job.pk)
+  assert fresh_job.return_value == "done"
+  assert ClaimedExecution.objects.filter(job=job).exists() is False
 
 
 def test_worker_executes_failure_path():

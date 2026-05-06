@@ -276,26 +276,26 @@ def execute_claimed_job(job, *, backend_alias="default"):
     return_value = _normalize_return_value(return_value)
   except Exception as exc:
     return fail_claimed_job(
-      job.id,
+      job,
       exc,
       traceback_text=traceback.format_exc(),
       backend_alias=job.backend_alias,
     )
 
-  return complete_claimed_job(job.id, return_value, backend_alias=job.backend_alias)
+  return complete_claimed_job(job, return_value, backend_alias=job.backend_alias)
 
 
-def complete_claimed_job(job_id, return_value, *, backend_alias="default"):
+def complete_claimed_job(job, return_value, *, backend_alias="default"):
   alias = get_database_alias(backend_alias)
+  job_id = job.id if isinstance(job, Job) else job
 
   with transaction.atomic(using=alias):
-    claimed = (
-      ClaimedExecution.objects.using(alias)
-      .select_for_update()
-      .select_related("job")
-      .get(job_id=job_id, job__backend_alias=backend_alias)
-    )
-    job = claimed.job
+    queryset = ClaimedExecution.objects.using(alias).select_for_update()
+    if isinstance(job, Job):
+      claimed = queryset.get(job_id=job_id, job__backend_alias=backend_alias)
+    else:
+      claimed = queryset.select_related("job").get(job_id=job_id, job__backend_alias=backend_alias)
+      job = claimed.job
     now = timezone.now()
     config = load_backend_config(job.backend_alias)
 
@@ -312,17 +312,17 @@ def complete_claimed_job(job_id, return_value, *, backend_alias="default"):
   return job
 
 
-def fail_claimed_job(job_id, error, *, traceback_text="", backend_alias="default"):
+def fail_claimed_job(job, error, *, traceback_text="", backend_alias="default"):
   alias = get_database_alias(backend_alias)
+  job_id = job.id if isinstance(job, Job) else job
 
   with transaction.atomic(using=alias):
-    claimed = (
-      ClaimedExecution.objects.using(alias)
-      .select_for_update()
-      .select_related("job")
-      .get(job_id=job_id, job__backend_alias=backend_alias)
-    )
-    job = claimed.job
+    queryset = ClaimedExecution.objects.using(alias).select_for_update()
+    if isinstance(job, Job):
+      claimed = queryset.get(job_id=job_id, job__backend_alias=backend_alias)
+    else:
+      claimed = queryset.select_related("job").get(job_id=job_id, job__backend_alias=backend_alias)
+      job = claimed.job
     claimed.delete(using=alias)
     FailedExecution.objects.using(alias).create(
       job=job,
