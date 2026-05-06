@@ -1,7 +1,6 @@
 from datetime import timedelta
 
 import pytest
-from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
@@ -101,7 +100,7 @@ def test_job_create_scheduled_has_scheduled_row():
 
 
 @pytest.mark.django_db
-def test_live_state_invariant_enforced():
+def test_execution_state_models_do_not_own_cross_table_transitions():
   job = make_job()
   ReadyExecution.objects.create(
     job=job,
@@ -109,13 +108,14 @@ def test_live_state_invariant_enforced():
     priority=job.priority,
   )
 
-  with pytest.raises(ValidationError, match="live execution state"):
-    ScheduledExecution.objects.create(
-      job=job,
-      queue_name=job.queue_name,
-      priority=job.priority,
-      scheduled_at=timezone.now() + timedelta(minutes=1),
-    )
+  scheduled = ScheduledExecution.objects.create(
+    job=job,
+    queue_name=job.queue_name,
+    priority=job.priority,
+    scheduled_at=timezone.now() + timedelta(minutes=1),
+  )
+
+  assert scheduled.job == job
 
 
 @pytest.mark.django_db

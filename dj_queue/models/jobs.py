@@ -1,6 +1,6 @@
 import uuid
 
-from django.core.exceptions import ObjectDoesNotExist, ValidationError
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import models
 from django.db.models import Q
 from django.utils.module_loading import import_string
@@ -127,14 +127,6 @@ class ReadyExecution(models.Model):
       models.Index(fields=["queue_name", "priority", "id"]),
     ]
 
-  def clean(self):
-    super().clean()
-    _validate_live_state(self)
-
-  def save(self, *args, **kwargs):
-    self.full_clean()
-    return super().save(*args, **kwargs)
-
   @classmethod
   def discard_all_in_batches(cls, *, batch_size=500, backend_alias="default"):
     operation = import_string("dj_queue.operations.jobs.discard_ready_jobs")
@@ -161,14 +153,6 @@ class ScheduledExecution(models.Model):
     db_table = "dj_queue_scheduled_executions"
     indexes = [models.Index(fields=["scheduled_at", "priority", "id"])]
 
-  def clean(self):
-    super().clean()
-    _validate_live_state(self)
-
-  def save(self, *args, **kwargs):
-    self.full_clean()
-    return super().save(*args, **kwargs)
-
 
 class ClaimedExecution(models.Model):
   job = models.OneToOneField(
@@ -188,14 +172,6 @@ class ClaimedExecution(models.Model):
   class Meta:
     db_table = "dj_queue_claimed_executions"
     indexes = [models.Index(fields=["process", "job"])]
-
-  def clean(self):
-    super().clean()
-    _validate_live_state(self)
-
-  def save(self, *args, **kwargs):
-    self.full_clean()
-    return super().save(*args, **kwargs)
 
   @classmethod
   def discard_all_in_batches(cls, **_kwargs):
@@ -221,14 +197,6 @@ class BlockedExecution(models.Model):
       models.Index(fields=["expires_at", "concurrency_key"]),
     ]
 
-  def clean(self):
-    super().clean()
-    _validate_live_state(self)
-
-  def save(self, *args, **kwargs):
-    self.full_clean()
-    return super().save(*args, **kwargs)
-
   @classmethod
   def discard_all_in_batches(cls, *, batch_size=500, backend_alias="default"):
     operation = import_string("dj_queue.operations.jobs.discard_blocked_jobs")
@@ -253,14 +221,6 @@ class FailedExecution(models.Model):
 
   class Meta:
     db_table = "dj_queue_failed_executions"
-
-  def clean(self):
-    super().clean()
-    _validate_live_state(self)
-
-  def save(self, *args, **kwargs):
-    self.full_clean()
-    return super().save(*args, **kwargs)
 
   def retry(self):
     return _retry_failed_job(self.job_id, backend_alias=self.job.backend_alias)
@@ -309,24 +269,3 @@ def _discard_jobs_for_state(model, operation, *, batch_size, backend_alias):
     if not job_ids:
       return deleted
     deleted += operation(job_ids=job_ids, batch_size=batch_size, backend_alias=backend_alias)
-
-
-def _validate_live_state(instance):
-  if not instance.job_id:
-    return
-
-  for model in LIVE_STATE_MODELS:
-    queryset = model._default_manager.filter(job_id=instance.job_id)
-    if model is instance.__class__ and instance.pk is not None:
-      queryset = queryset.exclude(pk=instance.pk)
-    if queryset.exists():
-      raise ValidationError({"job": "job already has a live execution state"})
-
-
-LIVE_STATE_MODELS = (
-  ReadyExecution,
-  ScheduledExecution,
-  ClaimedExecution,
-  BlockedExecution,
-  FailedExecution,
-)

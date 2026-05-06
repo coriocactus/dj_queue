@@ -283,6 +283,7 @@ def complete_claimed_job(job_id, return_value, *, backend_alias="default"):
   with transaction.atomic(using=alias):
     claimed = (
       ClaimedExecution.objects.using(alias)
+      .select_for_update()
       .select_related("job")
       .get(job_id=job_id, job__backend_alias=backend_alias)
     )
@@ -309,6 +310,7 @@ def fail_claimed_job(job_id, error, *, traceback_text="", backend_alias="default
   with transaction.atomic(using=alias):
     claimed = (
       ClaimedExecution.objects.using(alias)
+      .select_for_update()
       .select_related("job")
       .get(job_id=job_id, job__backend_alias=backend_alias)
     )
@@ -400,6 +402,7 @@ def retry_failed_job(job_id, *, backend_alias="default"):
   with transaction.atomic(using=alias):
     failed = (
       FailedExecution.objects.using(alias)
+      .select_for_update()
       .select_related("job")
       .get(job_id=job_id, job__backend_alias=backend_alias)
     )
@@ -440,6 +443,7 @@ def enqueue_job_again(job_id, *, backend_alias="default", run_after=_KEEP_RUN_AF
 
 def discard_failed_jobs(*, job_ids=None, batch_size=500, backend_alias="default"):
   alias = get_database_alias(backend_alias)
+  config = load_backend_config(backend_alias)
 
   with transaction.atomic(using=alias):
     queryset = (
@@ -447,7 +451,9 @@ def discard_failed_jobs(*, job_ids=None, batch_size=500, backend_alias="default"
     )
     if job_ids is not None:
       queryset = queryset.filter(job_id__in=job_ids)
-    failed_rows = list(queryset[:batch_size])
+    failed_rows = list(
+      locked_queryset(queryset, use_skip_locked=config.use_skip_locked)[:batch_size]
+    )
     if not failed_rows:
       return 0
 
