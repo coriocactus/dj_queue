@@ -8,7 +8,11 @@ from django.utils.module_loading import import_string
 
 from dj_queue.db import get_database_alias
 from dj_queue.models import Job
-from dj_queue.operations.jobs import enqueue_job_with_dispatch, enqueue_jobs_bulk
+from dj_queue.operations.jobs import (
+  enqueue_job_with_dispatch,
+  enqueue_jobs_bulk,
+  validate_queue_allowed,
+)
 
 
 class DjQueueBackend(BaseTaskBackend):
@@ -16,6 +20,10 @@ class DjQueueBackend(BaseTaskBackend):
   supports_defer = True
   supports_get_result = True
   supports_priority = True
+
+  def validate_task(self, task):
+    validate_queue_allowed(task.queue_name, backend_alias=self.alias)
+    return super().validate_task(task)
 
   def enqueue(self, task, args, kwargs):
     self.validate_task(task)

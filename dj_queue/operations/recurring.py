@@ -1,4 +1,8 @@
+from datetime import timedelta
+
+from croniter import croniter
 from django.db import transaction
+from django.db.models import Q
 from django.utils.module_loading import import_string
 
 from dj_queue.db import get_database_alias
@@ -48,6 +52,9 @@ def upsert_static_recurring_tasks(recurring_configs, *, backend_alias="default")
       changed_fields.append(field)
 
     if changed_fields:
+      if "schedule" in changed_fields:
+        existing_task.next_run_at = None
+        changed_fields.append("next_run_at")
       existing_task.save(using=alias, update_fields=[*changed_fields, "updated_at"])
 
   if to_create:
@@ -61,6 +68,7 @@ def upsert_static_recurring_tasks(recurring_configs, *, backend_alias="default")
 
 def fire_recurring_task(recurring_task, run_at, *, backend_alias="default"):
   alias = get_database_alias(backend_alias)
+  next_run_at = _next_run_after(recurring_task.schedule, run_at)
 
   with transaction.atomic(using=alias):
     created = create_ignore_conflicts(
@@ -71,6 +79,7 @@ def fire_recurring_task(recurring_task, run_at, *, backend_alias="default"):
       run_at=run_at,
     )
     if not created:
+      _advance_next_run_at(recurring_task, next_run_at, using=alias)
       # treat an existing reservation row as authoritative even if its job backfill
       # has not happened yet, so duplicate scheduler ticks never enqueue twice
       return None
@@ -95,4 +104,18 @@ def fire_recurring_task(recurring_task, run_at, *, backend_alias="default"):
     )
     execution.job = job
     execution.save(using=alias, update_fields=["job"])
+    _advance_next_run_at(recurring_task, next_run_at, using=alias)
     return execution
+
+
+def _next_run_after(schedule, run_at):
+  return croniter(schedule, run_at + timedelta(seconds=1)).get_next(type(run_at))
+
+
+def _advance_next_run_at(recurring_task, next_run_at, *, using):
+  RecurringTask.objects.using(using).filter(
+    Q(next_run_at__isnull=True) | Q(next_run_at__lt=next_run_at),
+    pk=recurring_task.pk,
+    backend_alias=recurring_task.backend_alias,
+  ).update(next_run_at=next_run_at)
+  recurring_task.next_run_at = next_run_at

@@ -321,6 +321,8 @@ If you need to pass model instances, files, or custom objects, store them elsewh
 
 For MySQL or MariaDB, install and configure a Django-compatible driver following Django's database docs.
 
+Other Django database vendors are rejected explicitly.
+
 Polling is the portability path everywhere. Backend-specific features improve latency and throughput but are not correctness requirements.
 
 For production PostgreSQL operational guidance, see [Postgres Queue Health](#postgres-queue-health).
@@ -329,6 +331,10 @@ For production PostgreSQL operational guidance, see [Postgres Queue Health](#pos
 
 `dj_queue` supports both static recurring tasks from settings and dynamic
 recurring tasks managed at runtime.
+
+Recurring tasks persist their next due cursor after the first scheduler poll so
+large recurring sets do not need cron parsing on every tick for rows that are not
+due yet.
 
 ### Static recurring tasks
 
@@ -510,7 +516,9 @@ backend-side validation failures instead of silently dropping work.
 Common reasons include:
 
 - args or kwargs are not JSON round-trippable
+- the task targets a queue outside a non-empty `QUEUES` allow-list
 - `concurrency_key` is set without `concurrency_limit`
+- `concurrency_limit` or `concurrency_duration` is not a positive integer
 - `concurrency_key` cannot be resolved from the enqueue arguments
 - `concurrency_key` does not resolve to a non-empty string up to 255 chars
 - `on_conflict` is not `"block"` or `"discard"`
@@ -702,6 +710,9 @@ Common setup choices:
 - multiple backends, same database: good for logical and operational separation without another database
 - multiple backends, multiple databases: use when you need stronger isolation and accept more migration and deployment complexity
 
+`TASKS[backend_alias]["QUEUES"]` is an enqueue allow-list. Leave it as `[]` to
+allow any queue name, or set an exact list to reject work outside those lanes.
+
 ### Deployment topology
 
 Once migrations are in place, start processing jobs with `python manage.py dj_queue`
@@ -891,6 +902,8 @@ The `/dj_queue/metrics` endpoint requires the `prometheus` extra:
 ```bash
 pip install "dj-queue[prometheus]"
 ```
+
+If the extra is missing, the endpoint returns `503` with an installation hint.
 
 Exported metric families:
 

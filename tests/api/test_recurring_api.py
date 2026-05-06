@@ -1,5 +1,6 @@
 import pytest
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 
 from dj_queue.api import schedule_recurring_task, unschedule_recurring_task
 from dj_queue.models import RecurringTask
@@ -83,6 +84,23 @@ def test_recurring_tasks_are_backend_scoped(settings):
   assert (
     RecurringTask.objects.filter(backend_alias="secondary", key="dynamic-task").exists() is True
   )
+
+
+def test_schedule_recurring_task_resets_persisted_next_run_when_schedule_changes():
+  recurring_task = schedule_recurring_task(
+    key="dynamic-task",
+    task_path="tests.tasks.echo",
+    schedule="* * * * *",
+  )
+  RecurringTask.objects.filter(pk=recurring_task.pk).update(next_run_at=timezone.now())
+
+  updated_task = schedule_recurring_task(
+    key="dynamic-task",
+    task_path="tests.tasks.echo",
+    schedule="*/5 * * * *",
+  )
+
+  assert updated_task.next_run_at is None
 
 
 def test_invalid_cron_is_rejected():

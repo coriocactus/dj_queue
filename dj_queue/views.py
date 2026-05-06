@@ -6,6 +6,8 @@ from django.utils.crypto import constant_time_compare
 from dj_queue import observability
 from dj_queue.contrib.prometheus import generate_latest, registry
 
+PROMETHEUS_UNAVAILABLE = "install dj-queue[prometheus] to enable /dj_queue/metrics\n"
+
 
 def observability_stats_view(request):
   auth_response = _observability_auth_response(request)
@@ -18,6 +20,8 @@ def observability_metrics_view(request):
   auth_response = _observability_auth_response(request)
   if auth_response is not None:
     return auth_response
+  if generate_latest is None or registry is None:
+    return HttpResponse(PROMETHEUS_UNAVAILABLE, status=503, content_type="text/plain")
   output = generate_latest(registry)
   return HttpResponse(output, content_type="text/plain; version=0.0.4; charset=utf-8")
 

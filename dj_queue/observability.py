@@ -388,7 +388,7 @@ def recurring_rows_for_backend(*, backend_alias, now):
       "schedule": task.schedule,
       "static": task.static,
       "last_run_at": last_runs.get(task.key),
-      "next_run_at": next_run_at(task.schedule, now),
+      "next_run_at": task.next_run_at or next_run_at(task.schedule, now),
     }
     for task in RecurringTask.objects.using(alias)
     .filter(backend_alias=backend_alias)

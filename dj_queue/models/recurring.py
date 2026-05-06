@@ -13,6 +13,7 @@ class RecurringTask(models.Model):
   priority = models.SmallIntegerField(default=0)
   description = models.TextField(default="", blank=True)
   static = models.BooleanField(default=False)
+  next_run_at = models.DateTimeField(null=True, blank=True)
   created_at = models.DateTimeField(auto_now_add=True)
   updated_at = models.DateTimeField(auto_now=True)
 
@@ -24,7 +25,13 @@ class RecurringTask(models.Model):
         name="dj_queue_recurring_tasks_backend_alias_key_unique",
       )
     ]
-    indexes = [models.Index(fields=["backend_alias", "key"])]
+    indexes = [
+      models.Index(fields=["backend_alias", "key"]),
+      models.Index(
+        fields=["backend_alias", "next_run_at", "key"],
+        name="dj_queue_rt_next_run_idx",
+      ),
+    ]
 
   def clean(self):
     super().clean()

@@ -1,6 +1,7 @@
 import os
 
 import pytest
+from django.core.exceptions import ImproperlyConfigured
 
 from dj_queue.db import (
   database_capabilities,
@@ -59,6 +60,16 @@ def test_sqlite_capabilities_disable_skip_locked_and_notify():
   assert capabilities.uses_serialized_writes is True
   assert supports_skip_locked("default") is False
   assert supports_listen_notify("default") is False
+
+
+def test_unsupported_database_vendor_is_rejected(monkeypatch):
+  class FakeConnection:
+    vendor = "oracle"
+
+  monkeypatch.setattr("dj_queue.db.connections", {"default": FakeConnection()})
+
+  with pytest.raises(ImproperlyConfigured, match="unsupported database vendor 'oracle'"):
+    database_capabilities("default")
 
 
 def test_queue_helpers_use_configured_database_alias(settings, monkeypatch):

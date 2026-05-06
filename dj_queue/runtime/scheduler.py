@@ -3,6 +3,7 @@ import socket
 from datetime import timedelta
 
 from croniter import croniter
+from django.db.models import Q
 from django.utils import timezone
 
 from dj_queue.config import load_backend_config
@@ -112,7 +113,10 @@ class Scheduler(BaseRunner):
   def _fire_due_tasks(self, now):
     alias = get_database_alias(self.backend_alias)
     queryset = (
-      RecurringTask.objects.using(alias).filter(backend_alias=self.backend_alias).order_by("key")
+      RecurringTask.objects.using(alias)
+      .filter(backend_alias=self.backend_alias)
+      .filter(Q(next_run_at__isnull=True) | Q(next_run_at__lte=now))
+      .order_by("next_run_at", "key")
     )
     if not self.config.scheduler.dynamic_tasks_enabled:
       queryset = queryset.filter(static=True)

@@ -1,4 +1,5 @@
 import asyncio
+import copy
 from datetime import timedelta
 import uuid
 
@@ -72,6 +73,12 @@ def make_process(**overrides):
   )
 
 
+def task_on_queue(task, queue_name):
+  queued_task = copy.copy(task)
+  object.__setattr__(queued_task, "queue_name", queue_name)
+  return queued_task
+
+
 def snapshot_jobs():
   return [
     (
@@ -99,6 +106,45 @@ def test_enqueue_immediate_uses_ready_path():
   assert result.kwargs == {}
   assert ReadyExecution.objects.filter(job=job).exists() is True
   assert ScheduledExecution.objects.exists() is False
+
+
+@pytest.mark.django_db
+def test_enqueue_rejects_queue_outside_backend_allow_list(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": ["default"],
+      "OPTIONS": {},
+    }
+  }
+  job_count = Job.objects.count()
+
+  with pytest.raises(EnqueueError, match="queue 'other' is not allowed"):
+    echo.get_backend().enqueue(task_on_queue(echo, "other"), ("rejected",), {})
+
+  assert Job.objects.count() == job_count
+
+
+@pytest.mark.django_db
+def test_enqueue_all_rejects_queue_outside_backend_allow_list_atomically(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": ["default"],
+      "OPTIONS": {},
+    }
+  }
+  backend = echo.get_backend()
+
+  with pytest.raises(EnqueueError, match="queue 'other' is not allowed"):
+    backend.enqueue_all(
+      [
+        (echo, ("accepted",), {}),
+        (task_on_queue(echo, "other"), ("rejected",), {}),
+      ]
+    )
+
+  assert Job.objects.count() == 0
 
 
 @pytest.mark.django_db
@@ -615,5 +661,27 @@ def test_enqueue_rejects_non_json_round_trippable_payload():
 
   with pytest.raises(EnqueueError, match="JSON"):
     echo.enqueue(object())
+
+  assert Job.objects.count() == job_count
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+  ("option", "value", "message"),
+  (
+    ("concurrency_limit", 0, "concurrency_limit must be a positive integer"),
+    ("concurrency_limit", -1, "concurrency_limit must be a positive integer"),
+    ("concurrency_limit", "many", "concurrency_limit must be a positive integer"),
+    ("concurrency_duration", 0, "concurrency_duration must be a positive integer"),
+    ("concurrency_duration", -1, "concurrency_duration must be a positive integer"),
+    ("concurrency_duration", "soon", "concurrency_duration must be a positive integer"),
+  ),
+)
+def test_enqueue_rejects_invalid_concurrency_options(monkeypatch, option, value, message):
+  job_count = Job.objects.count()
+  monkeypatch.setattr(limited.func, option, value)
+
+  with pytest.raises(EnqueueError, match=message):
+    limited.enqueue(1, value="rejected")
 
   assert Job.objects.count() == job_count

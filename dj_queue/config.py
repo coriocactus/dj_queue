@@ -225,7 +225,10 @@ def _load_backend_config_cached(
     clear_recurring_executions_after=_optional_int(
       resolved_options["clear_recurring_executions_after"]
     ),
-    default_concurrency_duration=int(resolved_options["default_concurrency_duration"]),
+    default_concurrency_duration=_positive_int(
+      resolved_options["default_concurrency_duration"],
+      "default_concurrency_duration",
+    ),
     database_alias=str(resolved_options["database_alias"]),
     use_skip_locked=bool(resolved_options["use_skip_locked"]),
     listen_notify=bool(resolved_options["listen_notify"]),
@@ -553,6 +556,21 @@ def _positive_float(value: Any, setting_name: str) -> float:
 
   if not math.isfinite(number) or number <= 0:
     raise ImproperlyConfigured(f"dj_queue {setting_name} must be a positive number, got {value!r}")
+  return number
+
+
+def _positive_int(value: Any, setting_name: str) -> int:
+  try:
+    number = int(value)
+  except (TypeError, ValueError, OverflowError) as exc:
+    raise ImproperlyConfigured(
+      f"dj_queue {setting_name} must be a positive integer, got {value!r}"
+    ) from exc
+
+  if number <= 0:
+    raise ImproperlyConfigured(
+      f"dj_queue {setting_name} must be a positive integer, got {value!r}"
+    )
   return number
 
 

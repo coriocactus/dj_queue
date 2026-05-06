@@ -36,6 +36,7 @@ def enqueue_job(task, args, kwargs, *, backend_alias="default"):
 
 
 def enqueue_job_with_dispatch(task, args, kwargs, *, backend_alias="default"):
+  validate_queue_allowed(task.queue_name, backend_alias=backend_alias)
   alias = get_database_alias(backend_alias)
   payload = _normalize_payload(args, kwargs)
   concurrency_key = _resolve_concurrency_key(task, args, kwargs)
@@ -71,6 +72,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
   prepared = []
 
   for index, (task, args, kwargs) in enumerate(task_calls):
+    validate_queue_allowed(task.queue_name, backend_alias=backend_alias)
     payload = _normalize_payload(args, kwargs)
     concurrency_key = _resolve_concurrency_key(task, args, kwargs)
     created_at = now + timedelta(microseconds=index)
@@ -639,18 +641,36 @@ def _concurrency_settings(task, *, backend_alias):
   if limit in (None, ""):
     raise EnqueueError("concurrency_limit is required when concurrency_key is set")
 
-  limit = int(limit)
-  duration_seconds = int(
+  limit = _positive_int_option(limit, "concurrency_limit")
+  duration_seconds = _positive_int_option(
     _task_option(
       task,
       "concurrency_duration",
       load_backend_config(backend_alias).default_concurrency_duration,
-    )
+    ),
+    "concurrency_duration",
   )
   on_conflict = str(_task_option(task, "on_conflict", "block"))
   if on_conflict not in {"block", "discard"}:
     raise EnqueueError("on_conflict must be 'block' or 'discard'")
   return limit, duration_seconds, on_conflict
+
+
+def validate_queue_allowed(queue_name, *, backend_alias="default"):
+  allowed_queues = load_backend_config(backend_alias).allowed_queues
+  if allowed_queues and queue_name not in allowed_queues:
+    raise EnqueueError(f"queue {queue_name!r} is not allowed for backend {backend_alias!r}")
+
+
+def _positive_int_option(value, name):
+  try:
+    number = int(value)
+  except (TypeError, ValueError, OverflowError) as exc:
+    raise EnqueueError(f"{name} must be a positive integer") from exc
+
+  if number <= 0:
+    raise EnqueueError(f"{name} must be a positive integer")
+  return number
 
 
 def _resolve_concurrency_key(task, args, kwargs):

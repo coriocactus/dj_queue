@@ -217,6 +217,50 @@ def test_scheduler_fires_static_task():
   scheduler.stop()
 
 
+def test_scheduler_persists_next_run_after_fire():
+  now = fixed_now()
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      recurring={
+        "static-task": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "* * * * *",
+        }
+      }
+    )
+  )
+
+  scheduler.poll_once(now=now)
+
+  task = RecurringTask.objects.get(backend_alias="default", key="static-task")
+  assert task.next_run_at == now.replace(minute=1, second=0, microsecond=0)
+  scheduler.stop()
+
+
+def test_scheduler_skips_recurring_tasks_before_persisted_next_run(monkeypatch):
+  now = fixed_now()
+  RecurringTask.objects.create(
+    backend_alias="default",
+    key="dynamic-task",
+    task_path="tests.tasks.echo",
+    payload={"args": [], "kwargs": {}},
+    schedule="* * * * *",
+    next_run_at=now + timedelta(minutes=5),
+  )
+  scheduler = build_scheduler(tasks_settings=scheduler_tasks_settings(dynamic_tasks_enabled=True))
+
+  def fire_unexpectedly(*args, **kwargs):
+    raise AssertionError("recurring task is not due")
+
+  monkeypatch.setattr("dj_queue.runtime.scheduler.fire_recurring_task", fire_unexpectedly)
+
+  fired_jobs = scheduler.poll_once(now=now)
+
+  assert fired_jobs == []
+  assert Job.objects.count() == 0
+  scheduler.stop()
+
+
 def test_scheduler_dedup_across_instances():
   now = fixed_now()
   tasks_settings = scheduler_tasks_settings(

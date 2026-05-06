@@ -154,18 +154,28 @@ def schedule_recurring_task(
   if kwargs is None:
     kwargs = {}
 
+  previous_schedule = (
+    RecurringTask.objects.using(alias)
+    .filter(backend_alias=backend_alias, key=key)
+    .values_list("schedule", flat=True)
+    .first()
+  )
+  defaults = {
+    "task_path": task_path,
+    "payload": {"args": list(args), "kwargs": dict(kwargs)},
+    "schedule": schedule,
+    "queue_name": queue_name,
+    "priority": priority,
+    "description": description,
+    "static": False,
+  }
+  if previous_schedule != schedule:
+    defaults["next_run_at"] = None
+
   recurring_task, _ = RecurringTask.objects.using(alias).update_or_create(
     backend_alias=backend_alias,
     key=key,
-    defaults={
-      "task_path": task_path,
-      "payload": {"args": list(args), "kwargs": dict(kwargs)},
-      "schedule": schedule,
-      "queue_name": queue_name,
-      "priority": priority,
-      "description": description,
-      "static": False,
-    },
+    defaults=defaults,
   )
   return recurring_task
 

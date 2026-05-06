@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Literal
 
+from django.core.exceptions import ImproperlyConfigured
 from django.db import DEFAULT_DB_ALIAS, connections
 
 from dj_queue.config import load_backend_config
@@ -65,4 +66,9 @@ def _backend_family(connection) -> Literal["postgresql", "mysql", "mariadb", "sq
     return "sqlite"
   if connection.vendor == "mysql" and getattr(connection, "mysql_is_mariadb", False):
     return "mariadb"
-  return "mysql"
+  if connection.vendor == "mysql":
+    return "mysql"
+  raise ImproperlyConfigured(
+    f"dj_queue unsupported database vendor {connection.vendor!r}; "
+    "supported vendors are 'postgresql', 'mysql', and 'sqlite'"
+  )

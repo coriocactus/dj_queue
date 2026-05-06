@@ -422,6 +422,28 @@ def test_missing_runner_polling_interval_uses_positive_defaults(settings):
   assert config.scheduler.polling_interval == 5
 
 
+@pytest.mark.parametrize(
+  ("value", "setting_name"),
+  (
+    (0, "default_concurrency_duration"),
+    (-1, "default_concurrency_duration"),
+    ("soon", "default_concurrency_duration"),
+  ),
+)
+def test_default_concurrency_duration_must_be_positive_integer(settings, value, setting_name):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {
+        "default_concurrency_duration": value,
+      },
+    }
+  }
+
+  with pytest.raises(ImproperlyConfigured, match=setting_name):
+    load_backend_config()
+
+
 def test_workers_single_mapping_still_normalizes_async_processes_to_one(settings):
   settings.TASKS = {
     "default": {

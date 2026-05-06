@@ -1,7 +1,11 @@
 try:
   from prometheus_client import CollectorRegistry, generate_latest
   from prometheus_client.core import GaugeMetricFamily
-
+except ImportError:
+  DjQueueCollector = None
+  registry = None
+  generate_latest = None
+else:
   from dj_queue import observability
 
   class DjQueueCollector:
@@ -122,8 +126,3 @@ try:
 
   registry = CollectorRegistry(auto_describe=False)
   registry.register(DjQueueCollector())
-
-except ImportError:
-  DjQueueCollector = None
-  registry = None
-  generate_latest = None

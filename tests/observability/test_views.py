@@ -170,6 +170,25 @@ def test_metrics_endpoint_renders_prometheus_text(client, settings):
   assert 'state="ready"' in content
 
 
+def test_metrics_endpoint_returns_clear_error_without_prometheus_extra(
+  client, settings, monkeypatch
+):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {"database_alias": "default"},
+    }
+  }
+  monkeypatch.setattr("dj_queue.views.generate_latest", None)
+  monkeypatch.setattr("dj_queue.views.registry", None)
+
+  response = client.get(reverse("dj_queue:metrics"))
+
+  assert response.status_code == 503
+  assert b"dj-queue[prometheus]" in response.content
+
+
 def test_observability_endpoints_allow_open_access_when_token_unset(client, settings):
   settings.TASKS = {
     "default": {
