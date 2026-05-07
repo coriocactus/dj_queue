@@ -13,6 +13,7 @@ from benchmarks.harness import (
   environment_metadata,
   parse_sizes,
   prepare_database,
+  preflight_persistent_connection_budget,
   reset_database,
 )
 from benchmarks.reports import render_markdown_report
@@ -94,7 +95,7 @@ def main(argv):
 
   try:
     return run_benchmarks(args)
-  except ValueError as exc:
+  except (RuntimeError, ValueError) as exc:
     print(exc, file=sys.stderr)
     return 2
 
@@ -105,6 +106,7 @@ def run_benchmarks(args):
   if args.create_db:
     ensure_database_exists(args.backend)
   django.setup()
+  preflight_persistent_connection_budget(backend=args.backend)
   prepare_database(migrate=args.migrate)
 
   from benchmarks.scenarios import QUICK_SCENARIOS, SCENARIOS

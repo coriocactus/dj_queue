@@ -198,6 +198,24 @@ def test_startup_orphan_cleanup_fails_leftover_claimed_jobs():
   supervisor.stop()
 
 
+def test_supervisor_start_checks_persistent_connection_budget(monkeypatch):
+  seen = []
+
+  def record_warning(config, *, backend_alias):
+    seen.append((config, backend_alias))
+
+  monkeypatch.setattr(
+    "dj_queue.runtime.supervisor.warn_if_persistent_connection_budget_is_tight",
+    record_warning,
+  )
+  supervisor = make_supervisor(name="supervisor-connection-budget")
+
+  supervisor.start()
+  supervisor.stop()
+
+  assert seen == [(supervisor.config, "default")]
+
+
 def test_prune_stale_process_rows_fails_their_claimed_jobs():
   stale_process = make_process(
     name="stale-worker",

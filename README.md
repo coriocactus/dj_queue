@@ -653,7 +653,9 @@ policy, and autovacuum tuning.
 - Consider a positive Django `CONN_MAX_AGE` for the queue database connection
   path. It can materially improve worker throughput by reusing worker-thread
   connections, but size PostgreSQL `max_connections` or your connection pool
-  for the total web, runner, and worker-thread footprint first.
+  for the total web, runner, and worker-thread footprint first. `dj_queue`
+  logs `connection_budget.warning` on startup when the local worker footprint
+  appears close to PostgreSQL connection capacity.
 - Keep retention short. Set `preserve_finished_jobs = False` if you do not need
   successful results. Otherwise use bounded `clear_finished_jobs_after`,
   `clear_failed_jobs_after`, and `clear_recurring_executions_after` values.

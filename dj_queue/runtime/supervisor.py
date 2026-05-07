@@ -15,6 +15,7 @@ from dj_queue.log import log_event
 from dj_queue.models import ClaimedExecution, Process
 from dj_queue.operations.jobs import fail_claimed_job
 from dj_queue.runtime.base import BaseRunner, app_executor
+from dj_queue.runtime.connection_budget import warn_if_persistent_connection_budget_is_tight
 from dj_queue.runtime.dispatcher import Dispatcher
 from dj_queue.runtime.errors import handle_thread_error
 from dj_queue.runtime.pidfile import PidFile
@@ -83,6 +84,10 @@ class Supervisor(BaseRunner):
   def start(self):
     self._acquire_pidfile()
     process = super().start()
+    warn_if_persistent_connection_budget_is_tight(
+      self.config,
+      backend_alias=self.backend_alias,
+    )
     self.fail_startup_orphaned_jobs()
     return process
 

@@ -14,6 +14,12 @@ from django.conf import settings
 from django.core.management import call_command
 from django.db import connection, connections
 
+from dj_queue.runtime.connection_budget import (
+  estimate_persistent_worker_connections,
+  persistent_connections_enabled,
+  postgres_connection_capacity,
+)
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LOCAL_RESULTS_DIR = PROJECT_ROOT / "benchmark-results"
 
@@ -114,6 +120,44 @@ def prepare_database(*, migrate=True):
   ensure_database_path()
   if migrate:
     call_command("migrate", verbosity=0, interactive=False)
+
+
+def preflight_persistent_connection_budget(*, backend):
+  if backend != "postgres":
+    return None
+  conn_max_age = settings.DATABASES["default"].get("CONN_MAX_AGE", 0)
+  if not persistent_connections_enabled(conn_max_age):
+    return None
+
+  options = settings.TASKS["default"]["OPTIONS"]
+  workers = options["workers"]
+  worker_processes = sum(worker.get("processes", 1) for worker in workers)
+  worker_threads = sum(worker.get("processes", 1) * worker["threads"] for worker in workers)
+  estimated_connections = estimate_persistent_worker_connections(
+    worker_processes=worker_processes,
+    worker_threads=worker_threads,
+  )
+  capacity = postgres_connection_capacity("default")
+  if capacity is None:
+    return None
+  assert_persistent_connection_budget(
+    estimated_connections=estimated_connections,
+    available_connections=capacity.available_connections,
+  )
+  return {
+    "estimated_connections": estimated_connections,
+    "available_connections": capacity.available_connections,
+  }
+
+
+def assert_persistent_connection_budget(*, estimated_connections, available_connections):
+  if estimated_connections < available_connections:
+    return None
+  raise RuntimeError(
+    "benchmark persistent connection preflight failed: "
+    f"estimated {estimated_connections} worker connections but only "
+    f"{available_connections} PostgreSQL connections are available"
+  )
 
 
 def reset_database():
