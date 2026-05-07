@@ -21,7 +21,7 @@ def app_executor():
   try:
     yield
   finally:
-    connections.close_all()
+    close_old_connections()
 
 
 _sqlite_process_write_lock = threading.Lock()

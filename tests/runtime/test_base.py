@@ -9,17 +9,12 @@ def test_app_executor_closes_old_connections_on_entry_and_exit(monkeypatch):
   def record_close():
     events.append("old")
 
-  class DummyConnections:
-    def close_all(self):
-      events.append("all")
-
   monkeypatch.setattr("dj_queue.runtime.base.close_old_connections", record_close)
-  monkeypatch.setattr("dj_queue.runtime.base.connections", DummyConnections())
 
   with app_executor():
     events.append("body")
 
-  assert events == ["old", "body", "all"]
+  assert events == ["old", "body", "old"]
 
 
 def test_app_executor_closes_old_connections_on_exit_when_body_raises(monkeypatch):
@@ -28,16 +23,11 @@ def test_app_executor_closes_old_connections_on_exit_when_body_raises(monkeypatc
   def record_close():
     events.append("old")
 
-  class DummyConnections:
-    def close_all(self):
-      events.append("all")
-
   monkeypatch.setattr("dj_queue.runtime.base.close_old_connections", record_close)
-  monkeypatch.setattr("dj_queue.runtime.base.connections", DummyConnections())
 
   with pytest.raises(RuntimeError, match="boom"):
     with app_executor():
       events.append("body")
       raise RuntimeError("boom")
 
-  assert events == ["old", "body", "all"]
+  assert events == ["old", "body", "old"]

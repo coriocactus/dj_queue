@@ -24,6 +24,16 @@ def _positive_int_env(name, default):
   return number
 
 
+def _non_negative_int_env(name, default):
+  value = os.environ.get(name)
+  if value in (None, ""):
+    return default
+  number = int(value)
+  if number < 0:
+    raise ValueError(f"{name} must be a non-negative integer")
+  return number
+
+
 def _bool_env(name, default):
   value = os.environ.get(name)
   if value in (None, ""):
@@ -76,7 +86,8 @@ _DATABASES = {
   },
 }
 
-DATABASES = {"default": _DATABASES[BENCHMARK_BACKEND]}
+CONN_MAX_AGE = _non_negative_int_env("BENCHMARK_CONN_MAX_AGE", 0)
+DATABASES = {"default": {**_DATABASES[BENCHMARK_BACKEND], "CONN_MAX_AGE": CONN_MAX_AGE}}
 DEFAULT_WORKER_COUNT = 1 if BENCHMARK_BACKEND == "sqlite" else 4
 DEFAULT_WORKER_THREADS = 1 if BENCHMARK_BACKEND == "sqlite" else 8
 WORKER_COUNT = _positive_int_env("BENCHMARK_WORKER_COUNT", DEFAULT_WORKER_COUNT)

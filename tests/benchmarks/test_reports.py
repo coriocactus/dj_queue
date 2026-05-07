@@ -47,11 +47,13 @@ def test_render_markdown_report_uses_recorded_run_metadata():
             "worker_count": 2,
             "worker_threads": 4,
             "preserve_finished_jobs": False,
+            "conn_max_age": 60,
           },
           "run": benchmark_run_metadata(
             worker_count=2,
             worker_threads=4,
             preserve_finished_jobs=False,
+            conn_max_age=60,
           ),
         }
       )
@@ -63,11 +65,12 @@ def test_render_markdown_report_uses_recorded_run_metadata():
   assert "- benchmark worker count: `2`" in markdown
   assert "- benchmark worker threads: `4`" in markdown
   assert "- preserve finished jobs: `False`" in markdown
+  assert "- database CONN_MAX_AGE: `60`" in markdown
   assert "docker compose up postgres -d" in markdown
   assert (
     "bin/benchmark.py all --backend postgres --sizes 1000,10000 --warmups 1 "
     "--runs 3 --output benchmark-results/postgres-all.jsonl --worker-count 2 "
-    "--worker-threads 4 --no-preserve-finished-jobs"
+    "--worker-threads 4 --no-preserve-finished-jobs --conn-max-age 60"
   ) in markdown
   assert (
     "bin/benchmark.py report benchmark-results/postgres-all.jsonl "

@@ -55,6 +55,7 @@ def render_markdown(rows, *, input_path=None, output_path=None, run_command=None
         f"- benchmark worker count: `{benchmark['worker_count']}`",
         f"- benchmark worker threads: `{benchmark['worker_threads']}`",
         f"- preserve finished jobs: `{benchmark['preserve_finished_jobs']}`",
+        f"- database CONN_MAX_AGE: `{benchmark.get('conn_max_age', 0)}`",
       ]
     )
   lines.extend(["", "## Results", ""])
@@ -130,6 +131,8 @@ def command_from_metadata(metadata):
     parts.append("--no-preserve-finished-jobs")
   elif run.get("preserve_finished_jobs") is True:
     parts.append("--preserve-finished-jobs")
+  if run.get("conn_max_age") is not None:
+    parts.extend(["--conn-max-age", run["conn_max_age"]])
   if not run.get("create_db", True):
     parts.append("--no-create-db")
   if not run.get("migrate", True):

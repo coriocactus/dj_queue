@@ -52,6 +52,11 @@ def add_run_options(parser, *, default_sizes):
   parser.add_argument("--runs", type=int, default=1, help="Measured repetitions per size.")
   parser.add_argument("--warmups", type=int, default=0, help="Unrecorded warmups per size.")
   parser.add_argument("--output", help="JSONL output path.")
+  parser.add_argument(
+    "--conn-max-age",
+    type=int,
+    help="Override benchmark database CONN_MAX_AGE in seconds.",
+  )
   parser.add_argument("--worker-count", type=int, help="Override benchmark worker count.")
   parser.add_argument("--worker-threads", type=int, help="Override threads per benchmark worker.")
   parser.add_argument(
@@ -146,6 +151,8 @@ def configure_environment(args):
     os.environ["BENCHMARK_WORKER_THREADS"] = str(args.worker_threads)
   if args.preserve_finished_jobs is not None:
     os.environ["BENCHMARK_PRESERVE_FINISHED_JOBS"] = str(int(args.preserve_finished_jobs))
+  if args.conn_max_age is not None:
+    os.environ["BENCHMARK_CONN_MAX_AGE"] = str(args.conn_max_age)
 
 
 def validate_run_options(args):
@@ -155,6 +162,8 @@ def validate_run_options(args):
     raise ValueError("worker-count must be positive")
   if args.worker_threads is not None and args.worker_threads <= 0:
     raise ValueError("worker-threads must be positive")
+  if args.conn_max_age is not None and args.conn_max_age < 0:
+    raise ValueError("conn-max-age must be non-negative")
 
 
 def run_metadata(args, *, sizes, output_path):
@@ -168,6 +177,7 @@ def run_metadata(args, *, sizes, output_path):
     "create_db": args.create_db,
     "migrate": args.migrate,
     "reset_db": args.reset_db,
+    "conn_max_age": args.conn_max_age,
     "worker_count": args.worker_count,
     "worker_threads": args.worker_threads,
     "preserve_finished_jobs": args.preserve_finished_jobs,

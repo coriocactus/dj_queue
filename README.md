@@ -650,6 +650,10 @@ policy, and autovacuum tuning.
 
 - Use a dedicated queue database via `database_alias`. Keep reporting and
   long-running transactions off the queue database.
+- Consider a positive Django `CONN_MAX_AGE` for the queue database connection
+  path. It can materially improve worker throughput by reusing worker-thread
+  connections, but size PostgreSQL `max_connections` or your connection pool
+  for the total web, runner, and worker-thread footprint first.
 - Keep retention short. Set `preserve_finished_jobs = False` if you do not need
   successful results. Otherwise use bounded `clear_finished_jobs_after`,
   `clear_failed_jobs_after`, and `clear_recurring_executions_after` values.

@@ -177,6 +177,7 @@ def benchmark_settings_info():
     "worker_count": len(workers),
     "worker_threads": worker_threads[0] if len(worker_threads) == 1 else worker_threads,
     "preserve_finished_jobs": options["preserve_finished_jobs"],
+    "conn_max_age": settings.DATABASES["default"].get("CONN_MAX_AGE", 0),
   }
 
 
