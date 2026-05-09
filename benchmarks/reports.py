@@ -1,4 +1,5 @@
 import json
+import os
 import shlex
 from collections import defaultdict
 from datetime import UTC, datetime
@@ -13,6 +14,7 @@ SCENARIO_DESCRIPTIONS = {
   "worker-drain": "async supervisor drain throughput for no-op ready jobs",
   "concurrency-contention": "one hot concurrency key through enqueue, block, release, and unblock",
 }
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def render_markdown_report(input_path, output_path, *, run_command=None):
@@ -50,7 +52,7 @@ def render_markdown(rows, *, input_path=None, output_path=None, run_command=None
     "## Environment",
     "",
     f"- backend: `{metadata['backend']}`",
-    f"- database: `{database['vendor']}` `{database['name']}`",
+    f"- database: `{database['vendor']}` `{display_path(database['name'])}`",
     f"- database version: `{database['version']}`",
     f"- Python: `{metadata['python']}`",
     f"- Django: `{metadata['django']}`",
@@ -130,7 +132,7 @@ def command_from_metadata(metadata):
       "--runs",
       str(run["runs"]),
       "--output",
-      run["output"],
+      display_path(run["output"]),
     ]
   )
   if run.get("worker_count") is not None:
@@ -153,10 +155,24 @@ def command_from_metadata(metadata):
 
 
 def report_command(input_path, output_path, *, run_command=None):
-  parts = ["bin/benchmark.py", "report", str(input_path), "--output", str(output_path)]
+  parts = [
+    "bin/benchmark.py",
+    "report",
+    display_path(input_path),
+    "--output",
+    display_path(output_path),
+  ]
   if run_command:
     parts.extend(["--run-command", run_command])
   return shell_join(parts)
+
+
+def display_path(path):
+  path = Path(path)
+  if not path.is_absolute():
+    return path.as_posix()
+
+  return os.path.relpath(path, PROJECT_ROOT)
 
 
 def shell_join(parts):

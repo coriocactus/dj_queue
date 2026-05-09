@@ -1,4 +1,9 @@
+from pathlib import Path
+
 from benchmarks.reports import SCENARIO_DESCRIPTIONS, render_markdown
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_render_markdown_report_includes_environment_and_metrics():
@@ -88,6 +93,56 @@ def test_render_markdown_report_uses_recorded_run_metadata():
     "bin/benchmark.py report benchmark-results/postgres-all.jsonl "
     "--output docs/benchmarks/postgres-all.md"
   ) in markdown
+
+
+def test_render_markdown_report_uses_relative_reproduce_paths():
+  input_path = PROJECT_ROOT / "benchmark-results" / "postgres-20260509T164423Z.jsonl"
+  output_path = PROJECT_ROOT / "docs" / "benchmarks" / "postgres.md"
+
+  markdown = render_markdown(
+    [
+      benchmark_row(
+        metadata={
+          "run": benchmark_run_metadata(output=str(input_path), conn_max_age=60),
+        }
+      )
+    ],
+    input_path=input_path,
+    output_path=output_path,
+  )
+
+  assert str(PROJECT_ROOT) not in markdown
+  assert (
+    "bin/benchmark.py all --backend postgres --sizes 1000,10000 --warmups 1 "
+    "--runs 3 --output benchmark-results/postgres-20260509T164423Z.jsonl "
+    "--conn-max-age 60"
+  ) in markdown
+  assert (
+    "bin/benchmark.py report benchmark-results/postgres-20260509T164423Z.jsonl "
+    "--output docs/benchmarks/postgres.md"
+  ) in markdown
+
+
+def test_render_markdown_report_uses_relative_database_path():
+  db_path = PROJECT_ROOT / "benchmark-results" / "dj_queue_benchmark.sqlite3"
+
+  markdown = render_markdown(
+    [
+      benchmark_row(
+        metadata={
+          "backend": "sqlite",
+          "database": {
+            "vendor": "sqlite",
+            "name": str(db_path),
+            "version": "3.50.4",
+          },
+        }
+      )
+    ]
+  )
+
+  assert str(PROJECT_ROOT) not in markdown
+  assert "- database: `sqlite` `benchmark-results/dj_queue_benchmark.sqlite3`" in markdown
 
 
 def test_render_markdown_report_accepts_run_command_override():
