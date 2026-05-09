@@ -68,7 +68,7 @@ class QueueInfo:
     alias = get_database_alias(backend_alias)
     queue_names = (
       ReadyExecution.objects.using(alias)
-      .filter(job__backend_alias=backend_alias)
+      .filter(backend_alias=backend_alias)
       .order_by("queue_name")
       .values_list(
         "queue_name",
@@ -81,8 +81,8 @@ class QueueInfo:
   def _ready_queryset(self):
     alias = get_database_alias(self.backend_alias)
     return ReadyExecution.objects.using(alias).filter(
+      backend_alias=self.backend_alias,
       queue_name=self.queue_name,
-      job__backend_alias=self.backend_alias,
     )
 
 

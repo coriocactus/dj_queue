@@ -48,6 +48,7 @@ def make_ready_job(**overrides):
   job = make_job(**overrides)
   ReadyExecution.objects.create(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
   )
@@ -70,6 +71,7 @@ def make_scheduled_job(**overrides):
   job = make_job(scheduled_at=scheduled_at, **overrides)
   ScheduledExecution.objects.create(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
     scheduled_at=scheduled_at,
@@ -82,6 +84,7 @@ def make_blocked_job(**overrides):
   job = make_job(**overrides)
   BlockedExecution.objects.create(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
     concurrency_key=job.concurrency_key,

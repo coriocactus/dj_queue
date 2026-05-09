@@ -43,6 +43,7 @@ def make_scheduled_job(task=echo, *, scheduled_at=None, **overrides):
   )
   ScheduledExecution.objects.create(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
     scheduled_at=scheduled_at,

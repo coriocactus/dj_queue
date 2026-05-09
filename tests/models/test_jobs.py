@@ -74,6 +74,7 @@ def test_job_create_immediate_has_ready_row():
 
   ready_execution = ReadyExecution.objects.create(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
   )
@@ -89,6 +90,7 @@ def test_job_create_scheduled_has_scheduled_row():
 
   scheduled_execution = ScheduledExecution.objects.create(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
     scheduled_at=job.scheduled_at,
@@ -104,12 +106,14 @@ def test_execution_state_models_do_not_own_cross_table_transitions():
   job = make_job()
   ReadyExecution.objects.create(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
   )
 
   scheduled = ScheduledExecution.objects.create(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
     scheduled_at=timezone.now() + timedelta(minutes=1),
@@ -141,11 +145,13 @@ def test_job_delete_cascades_to_all_execution_rows():
 
   ReadyExecution.objects.create(
     job=ready_job,
+    backend_alias=ready_job.backend_alias,
     queue_name=ready_job.queue_name,
     priority=ready_job.priority,
   )
   ScheduledExecution.objects.create(
     job=scheduled_job,
+    backend_alias=scheduled_job.backend_alias,
     queue_name=scheduled_job.queue_name,
     priority=scheduled_job.priority,
     scheduled_at=scheduled_job.scheduled_at,
@@ -153,6 +159,7 @@ def test_job_delete_cascades_to_all_execution_rows():
   ClaimedExecution.objects.create(job=claimed_job, process=process)
   BlockedExecution.objects.create(
     job=blocked_job,
+    backend_alias=blocked_job.backend_alias,
     queue_name=blocked_job.queue_name,
     priority=blocked_job.priority,
     concurrency_key=blocked_job.concurrency_key,
@@ -183,6 +190,7 @@ def test_job_status_ready():
   job = make_job()
   ReadyExecution.objects.create(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
   )
@@ -203,6 +211,7 @@ def test_job_status_blocked():
   job = make_job(concurrency_key="account:1")
   BlockedExecution.objects.create(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
     concurrency_key=job.concurrency_key,
@@ -217,6 +226,7 @@ def test_job_status_scheduled():
   job = make_job(scheduled_at=timezone.now() + timedelta(minutes=5))
   ScheduledExecution.objects.create(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
     scheduled_at=job.scheduled_at,
@@ -250,6 +260,7 @@ def test_job_queryset_scopes_match_statuses():
   ready_job = make_job(task_path="tests.tasks.ready")
   ReadyExecution.objects.create(
     job=ready_job,
+    backend_alias=ready_job.backend_alias,
     queue_name=ready_job.queue_name,
     priority=ready_job.priority,
   )
@@ -260,6 +271,7 @@ def test_job_queryset_scopes_match_statuses():
   blocked_job = make_job(task_path="tests.tasks.blocked", concurrency_key="account:2")
   BlockedExecution.objects.create(
     job=blocked_job,
+    backend_alias=blocked_job.backend_alias,
     queue_name=blocked_job.queue_name,
     priority=blocked_job.priority,
     concurrency_key=blocked_job.concurrency_key,
@@ -272,6 +284,7 @@ def test_job_queryset_scopes_match_statuses():
   )
   ScheduledExecution.objects.create(
     job=scheduled_job,
+    backend_alias=scheduled_job.backend_alias,
     queue_name=scheduled_job.queue_name,
     priority=scheduled_job.priority,
     scheduled_at=scheduled_job.scheduled_at,

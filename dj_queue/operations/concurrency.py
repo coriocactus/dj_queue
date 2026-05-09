@@ -100,7 +100,7 @@ def unblock_next_blocked_job(
     queryset = (
       BlockedExecution.objects.using(alias)
       .select_related("job")
-      .filter(concurrency_key=key, job__backend_alias=backend_alias)
+      .filter(backend_alias=backend_alias, concurrency_key=key)
       .order_by("-priority", "id")
     )
     blocked = locked_queryset(queryset, use_skip_locked=use_skip_locked).first()
@@ -122,6 +122,7 @@ def unblock_next_blocked_job(
     _lock_active_pauses(alias, backend_alias, {queue_name})
     ReadyExecution.objects.using(alias).create(
       job=job,
+      backend_alias=backend_alias,
       queue_name=queue_name,
       priority=priority,
       latency_started_at=now,
@@ -170,7 +171,7 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
     queryset = (
       BlockedExecution.objects.using(alias)
       .select_related("job")
-      .filter(job__backend_alias=backend_alias, expires_at__lte=now)
+      .filter(backend_alias=backend_alias, expires_at__lte=now)
       .order_by("expires_at", "-priority", "id")
     )
     blocked_rows = list(locked_queryset(queryset, use_skip_locked=use_skip_locked)[:batch_size])
@@ -202,6 +203,7 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
         _lock_active_pauses(alias, backend_alias, {queue_name})
         ReadyExecution.objects.using(alias).create(
           job=job,
+          backend_alias=backend_alias,
           queue_name=queue_name,
           priority=priority,
           latency_started_at=now,
@@ -212,6 +214,7 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
         if uses_serialized_writes:
           BlockedExecution.objects.using(alias).create(
             job=job,
+            backend_alias=backend_alias,
             queue_name=blocked.queue_name,
             priority=blocked.priority,
             concurrency_key=blocked.concurrency_key,

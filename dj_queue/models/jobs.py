@@ -116,6 +116,7 @@ class ReadyExecution(models.Model):
     on_delete=models.CASCADE,
     related_name="ready_execution",
   )
+  backend_alias = models.CharField(max_length=64)
   queue_name = models.CharField(max_length=64)
   priority = models.SmallIntegerField()
   created_at = models.DateTimeField(auto_now_add=True)
@@ -124,10 +125,21 @@ class ReadyExecution(models.Model):
   class Meta:
     db_table = "dj_queue_ready_executions"
     indexes = [
-      models.Index(fields=["priority", "id"]),
-      models.Index(fields=["queue_name", "priority", "id"]),
-      models.Index(fields=["-priority", "id"]),
-      models.Index(fields=["queue_name", "-priority", "id"]),
+      models.Index(
+        fields=["backend_alias", "priority", "id"], name="dj_queue_re_backend_prio_idx"
+      ),
+      models.Index(
+        fields=["backend_alias", "queue_name", "priority", "id"],
+        name="dj_queue_re_backend_queue_idx",
+      ),
+      models.Index(
+        fields=["backend_alias", "-priority", "id"],
+        name="dj_queue_re_backend_prio_desc_idx",
+      ),
+      models.Index(
+        fields=["backend_alias", "queue_name", "-priority", "id"],
+        name="dj_queue_re_backend_queue_desc_idx",
+      ),
     ]
 
   @classmethod
@@ -147,6 +159,7 @@ class ScheduledExecution(models.Model):
     on_delete=models.CASCADE,
     related_name="scheduled_execution",
   )
+  backend_alias = models.CharField(max_length=64)
   queue_name = models.CharField(max_length=64)
   priority = models.SmallIntegerField()
   scheduled_at = models.DateTimeField()
@@ -155,8 +168,14 @@ class ScheduledExecution(models.Model):
   class Meta:
     db_table = "dj_queue_scheduled_executions"
     indexes = [
-      models.Index(fields=["scheduled_at", "priority", "id"]),
-      models.Index(fields=["scheduled_at", "-priority", "id"]),
+      models.Index(
+        fields=["backend_alias", "scheduled_at", "priority", "id"],
+        name="dj_queue_se_backend_due_idx",
+      ),
+      models.Index(
+        fields=["backend_alias", "scheduled_at", "-priority", "id"],
+        name="dj_queue_se_backend_due_desc_idx",
+      ),
     ]
 
 
@@ -190,6 +209,7 @@ class BlockedExecution(models.Model):
     on_delete=models.CASCADE,
     related_name="blocked_execution",
   )
+  backend_alias = models.CharField(max_length=64)
   queue_name = models.CharField(max_length=64)
   priority = models.SmallIntegerField()
   concurrency_key = models.CharField(max_length=255)
@@ -199,10 +219,22 @@ class BlockedExecution(models.Model):
   class Meta:
     db_table = "dj_queue_blocked_executions"
     indexes = [
-      models.Index(fields=["concurrency_key", "priority", "id"]),
-      models.Index(fields=["expires_at", "concurrency_key"]),
-      models.Index(fields=["concurrency_key", "-priority", "id"]),
-      models.Index(fields=["expires_at", "-priority", "id"]),
+      models.Index(
+        fields=["backend_alias", "concurrency_key", "priority", "id"],
+        name="dj_queue_bl_backend_conc_idx",
+      ),
+      models.Index(
+        fields=["backend_alias", "expires_at", "concurrency_key"],
+        name="dj_queue_bl_backend_exp_conc_idx",
+      ),
+      models.Index(
+        fields=["backend_alias", "concurrency_key", "-priority", "id"],
+        name="dj_queue_bl_backend_conc_desc_idx",
+      ),
+      models.Index(
+        fields=["backend_alias", "expires_at", "-priority", "id"],
+        name="dj_queue_bl_backend_exp_desc_idx",
+      ),
     ]
 
   @classmethod
@@ -270,9 +302,14 @@ def _discard_jobs_for_state(model, operation, *, batch_size, backend_alias):
   alias = get_database_alias(backend_alias)
   deleted = 0
   while True:
+    filter_kwargs = (
+      {"backend_alias": backend_alias}
+      if any(field.name == "backend_alias" for field in model._meta.fields)
+      else {"job__backend_alias": backend_alias}
+    )
     job_ids = list(
       model.objects.using(alias)
-      .filter(job__backend_alias=backend_alias)
+      .filter(**filter_kwargs)
       .values_list("job_id", flat=True)[:batch_size]
     )
     if not job_ids:

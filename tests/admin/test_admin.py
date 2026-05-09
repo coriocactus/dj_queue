@@ -68,6 +68,7 @@ def make_scheduled_job(**overrides):
   job = make_job(scheduled_at=scheduled_at, **overrides)
   ScheduledExecution.objects.create(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
     scheduled_at=scheduled_at,
@@ -115,7 +116,10 @@ def test_job_admin_status_filter(admin_client):
   finished_job = make_job(queue_name="finished", finished_at=timezone.now())
   ready_job = make_job(queue_name="ready")
   ReadyExecution.objects.create(
-    job=ready_job, queue_name=ready_job.queue_name, priority=ready_job.priority
+    job=ready_job,
+    backend_alias=ready_job.backend_alias,
+    queue_name=ready_job.queue_name,
+    priority=ready_job.priority,
   )
 
   response = admin_client.get(
@@ -133,7 +137,10 @@ def test_job_admin_status_sort(admin_client):
   _finished_job = make_job(task_path="tests.tasks.finished", finished_at=timezone.now())
   ready_job = make_job(task_path="tests.tasks.ready")
   ReadyExecution.objects.create(
-    job=ready_job, queue_name=ready_job.queue_name, priority=ready_job.priority
+    job=ready_job,
+    backend_alias=ready_job.backend_alias,
+    queue_name=ready_job.queue_name,
+    priority=ready_job.priority,
   )
 
   response = admin_client.get(
@@ -163,7 +170,12 @@ def test_job_admin_queue_name_links_to_matching_queue_state(admin_client):
 
 def test_job_change_view_shows_status_and_queue_link_for_job_state(admin_client):
   job = make_job(queue_name="alpha")
-  ReadyExecution.objects.create(job=job, queue_name=job.queue_name, priority=job.priority)
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
 
   response = admin_client.get(
     reverse("admin:dj_queue_job_change", args=[job.pk]),
@@ -923,6 +935,7 @@ def test_semaphore_admin_blocked_waiters_sort(admin_client):
     )
     BlockedExecution.objects.create(
       job=job,
+      backend_alias=job.backend_alias,
       queue_name=job.queue_name,
       priority=job.priority,
       concurrency_key=job.concurrency_key,
@@ -931,6 +944,7 @@ def test_semaphore_admin_blocked_waiters_sort(admin_client):
   job = make_job(queue_name="blocked", concurrency_key=low.key, task_path="tests.tasks.low")
   BlockedExecution.objects.create(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
     concurrency_key=job.concurrency_key,

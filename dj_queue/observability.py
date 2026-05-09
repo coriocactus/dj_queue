@@ -121,7 +121,7 @@ def queue_rows(*, backend_alias, now, process_cutoff):
   queue_names = set()
 
   ready_counts = _counts_by_value(
-    ReadyExecution.objects.using(alias).filter(job__backend_alias=backend_alias),
+    ReadyExecution.objects.using(alias).filter(backend_alias=backend_alias),
     field_name="queue_name",
   )
   claimed_counts = _counts_by_value(
@@ -129,11 +129,11 @@ def queue_rows(*, backend_alias, now, process_cutoff):
     field_name="job__queue_name",
   )
   scheduled_counts = _counts_by_value(
-    ScheduledExecution.objects.using(alias).filter(job__backend_alias=backend_alias),
+    ScheduledExecution.objects.using(alias).filter(backend_alias=backend_alias),
     field_name="queue_name",
   )
   blocked_counts = _counts_by_value(
-    BlockedExecution.objects.using(alias).filter(job__backend_alias=backend_alias),
+    BlockedExecution.objects.using(alias).filter(backend_alias=backend_alias),
     field_name="queue_name",
   )
   failed_counts = _counts_by_value(
@@ -158,21 +158,21 @@ def queue_rows(*, backend_alias, now, process_cutoff):
   oldest_ready = {
     row["queue_name"]: row["oldest"]
     for row in ReadyExecution.objects.using(alias)
-    .filter(job__backend_alias=backend_alias)
+    .filter(backend_alias=backend_alias)
     .values("queue_name")
     .annotate(oldest=Min(Coalesce("latency_started_at", "created_at")))
   }
   oldest_scheduled = {
     row["queue_name"]: row["oldest"]
     for row in ScheduledExecution.objects.using(alias)
-    .filter(job__backend_alias=backend_alias)
+    .filter(backend_alias=backend_alias)
     .values("queue_name")
     .annotate(oldest=Min("scheduled_at"))
   }
   oldest_blocked = {
     row["queue_name"]: row["oldest"]
     for row in BlockedExecution.objects.using(alias)
-    .filter(job__backend_alias=backend_alias)
+    .filter(backend_alias=backend_alias)
     .values("queue_name")
     .annotate(oldest=Min("expires_at"))
   }
@@ -264,19 +264,19 @@ def queue_snapshot(
   if oldest_ready_at is None:
     oldest_ready_at = (
       ReadyExecution.objects.using(alias)
-      .filter(job__backend_alias=backend_alias, queue_name=queue_name)
+      .filter(backend_alias=backend_alias, queue_name=queue_name)
       .aggregate(oldest=Min(Coalesce("latency_started_at", "created_at")))["oldest"]
     )
   if oldest_scheduled_at is None:
     oldest_scheduled_at = (
       ScheduledExecution.objects.using(alias)
-      .filter(job__backend_alias=backend_alias, queue_name=queue_name)
+      .filter(backend_alias=backend_alias, queue_name=queue_name)
       .aggregate(oldest=Min("scheduled_at"))["oldest"]
     )
   if oldest_blocked_at is None:
     oldest_blocked_at = (
       BlockedExecution.objects.using(alias)
-      .filter(job__backend_alias=backend_alias, queue_name=queue_name)
+      .filter(backend_alias=backend_alias, queue_name=queue_name)
       .aggregate(oldest=Min("expires_at"))["oldest"]
     )
   if live_workers is None:

@@ -111,6 +111,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
         [
           ReadyExecution(
             job=job,
+            backend_alias=backend_alias,
             queue_name=job.queue_name,
             priority=job.priority,
             created_at=job.created_at,
@@ -150,6 +151,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
         scheduled_rows.append(
           ScheduledExecution(
             job=job,
+            backend_alias=backend_alias,
             queue_name=job.queue_name,
             priority=job.priority,
             scheduled_at=job.scheduled_at,
@@ -163,6 +165,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
         ready_rows.append(
           ReadyExecution(
             job=job,
+            backend_alias=backend_alias,
             queue_name=job.queue_name,
             priority=job.priority,
             created_at=job.created_at,
@@ -219,9 +222,7 @@ def claim_ready_jobs(
   with transaction.atomic(using=alias):
     paused_queue_names = _lock_active_pauses(alias, backend_alias)
     queryset = (
-      ReadyExecution.objects.using(alias)
-      .select_related("job")
-      .filter(job__backend_alias=backend_alias)
+      ReadyExecution.objects.using(alias).select_related("job").filter(backend_alias=backend_alias)
     )
     if paused_queue_names:
       queryset = queryset.exclude(queue_name__in=paused_queue_names)
@@ -362,7 +363,7 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
     queryset = (
       ScheduledExecution.objects.using(alias)
       .select_related("job")
-      .filter(job__backend_alias=backend_alias, scheduled_at__lte=now)
+      .filter(backend_alias=backend_alias, scheduled_at__lte=now)
       .order_by("scheduled_at", "-priority", "id")
     )
     scheduled_rows = list(locked_queryset(queryset, use_skip_locked=use_skip_locked)[:batch_size])
@@ -384,6 +385,7 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
         [
           ReadyExecution(
             job=job,
+            backend_alias=backend_alias,
             queue_name=job.queue_name,
             priority=job.priority,
             created_at=now,
@@ -417,7 +419,7 @@ def dispatch_scheduled_job_now(job_id, *, backend_alias="default"):
     scheduled = locked_queryset(
       ScheduledExecution.objects.using(alias)
       .select_related("job")
-      .filter(job_id=job_id, job__backend_alias=backend_alias),
+      .filter(job_id=job_id, backend_alias=backend_alias),
       use_skip_locked=config.use_skip_locked,
     ).first()
     if scheduled is None:
@@ -523,7 +525,7 @@ def discard_ready_jobs(*, job_ids=None, batch_size=500, backend_alias="default")
 
   with transaction.atomic(using=alias):
     queryset = (
-      ReadyExecution.objects.using(alias).filter(job__backend_alias=backend_alias).order_by("id")
+      ReadyExecution.objects.using(alias).filter(backend_alias=backend_alias).order_by("id")
     )
     if job_ids is not None:
       queryset = queryset.filter(job_id__in=job_ids)
@@ -550,9 +552,7 @@ def discard_scheduled_jobs(*, job_ids=None, batch_size=500, backend_alias="defau
 
   with transaction.atomic(using=alias):
     queryset = (
-      ScheduledExecution.objects.using(alias)
-      .filter(job__backend_alias=backend_alias)
-      .order_by("id")
+      ScheduledExecution.objects.using(alias).filter(backend_alias=backend_alias).order_by("id")
     )
     if job_ids is not None:
       queryset = queryset.filter(job_id__in=job_ids)
@@ -578,7 +578,7 @@ def discard_blocked_jobs(*, job_ids=None, batch_size=500, backend_alias="default
 
   with transaction.atomic(using=alias):
     queryset = (
-      BlockedExecution.objects.using(alias).filter(job__backend_alias=backend_alias).order_by("id")
+      BlockedExecution.objects.using(alias).filter(backend_alias=backend_alias).order_by("id")
     )
     if job_ids is not None:
       queryset = queryset.filter(job_id__in=job_ids)
@@ -611,6 +611,7 @@ def _dispatch_job(job, *, task, backend_alias, now=None):
   if job.scheduled_at is not None and job.scheduled_at > now:
     ScheduledExecution.objects.using(alias).create(
       job=job,
+      backend_alias=backend_alias,
       queue_name=job.queue_name,
       priority=job.priority,
       scheduled_at=job.scheduled_at,
@@ -621,6 +622,7 @@ def _dispatch_job(job, *, task, backend_alias, now=None):
     _lock_active_pauses(alias, backend_alias, {job.queue_name})
     ReadyExecution.objects.using(alias).create(
       job=job,
+      backend_alias=backend_alias,
       queue_name=job.queue_name,
       priority=job.priority,
       latency_started_at=now,
@@ -637,6 +639,7 @@ def _dispatch_job(job, *, task, backend_alias, now=None):
     _lock_active_pauses(alias, backend_alias, {job.queue_name})
     ReadyExecution.objects.using(alias).create(
       job=job,
+      backend_alias=backend_alias,
       queue_name=job.queue_name,
       priority=job.priority,
       latency_started_at=now,
@@ -651,6 +654,7 @@ def _dispatch_job(job, *, task, backend_alias, now=None):
 
   BlockedExecution.objects.using(alias).create(
     job=job,
+    backend_alias=backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
     concurrency_key=job.concurrency_key,

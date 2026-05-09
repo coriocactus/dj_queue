@@ -33,7 +33,12 @@ def make_job(**overrides):
 
 def make_ready_job(**overrides):
   job = make_job(**overrides)
-  ReadyExecution.objects.create(job=job, queue_name=job.queue_name, priority=job.priority)
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
   return job
 
 

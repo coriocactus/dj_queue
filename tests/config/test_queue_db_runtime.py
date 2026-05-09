@@ -60,6 +60,7 @@ def _make_ready_job(alias="queue", **overrides):
   )
   ReadyExecution.objects.using(alias).create(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
   )

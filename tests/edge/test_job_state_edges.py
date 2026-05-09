@@ -61,6 +61,7 @@ def test_discard_blocked_job_does_not_change_semaphore_value():
   job = make_job(task_path="tests.tasks.limited", concurrency_key="account:1")
   BlockedExecution.objects.create(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
     concurrency_key=job.concurrency_key,

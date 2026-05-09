@@ -75,7 +75,12 @@ def make_ready_job(task=echo, **overrides):
     return_value=overrides.pop("return_value", None),
     **overrides,
   )
-  ReadyExecution.objects.create(job=job, queue_name=job.queue_name, priority=job.priority)
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
   return job
 
 

@@ -108,6 +108,7 @@ def test_10k_tasks_async_mode_no_duplicates(queue_test_settings):
     [
       ReadyExecution(
         job=job,
+        backend_alias=job.backend_alias,
         queue_name=job.queue_name,
         priority=job.priority,
         created_at=now,

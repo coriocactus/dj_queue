@@ -4,7 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 import pytest
-from django.db import connections
+from django.db import connection, connections
+from django.test.utils import CaptureQueriesContext
 from django.tasks import TaskResultStatus
 from django.utils import timezone
 
@@ -59,6 +60,17 @@ def make_job(task=echo, **overrides):
     return_value=overrides.pop("return_value", None),
     **overrides,
   )
+
+
+def assert_no_backend_scoping_join(queries, state_table):
+  offending_queries = [
+    query["sql"]
+    for query in queries
+    if state_table in query["sql"]
+    and "dj_queue_jobs" in query["sql"]
+    and '"dj_queue_jobs"."backend_alias" =' in query["sql"]
+  ]
+  assert offending_queries == []
 
 
 @pytest.mark.django_db
@@ -250,6 +262,7 @@ def test_missing_concurrency_task_path_releases_slot_and_unblocks_next_waiter():
   ClaimedExecution.objects.create(job=first, process=process)
   BlockedExecution.objects.create(
     job=second,
+    backend_alias=second.backend_alias,
     queue_name=second.queue_name,
     priority=second.priority,
     concurrency_key="account:missing-task",
@@ -268,6 +281,7 @@ def test_dispatcher_promotes_expired_blocked_jobs():
   job = make_job(task=limited, args=[1], kwargs={"value": "later"}, concurrency_key="account:1")
   BlockedExecution.objects.create(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
     concurrency_key=job.concurrency_key,
@@ -322,6 +336,7 @@ def test_promote_expired_blocked_jobs_reuses_task_import_for_shared_task_path(mo
     )
     BlockedExecution.objects.create(
       job=job,
+      backend_alias=job.backend_alias,
       queue_name=job.queue_name,
       priority=job.priority,
       concurrency_key=job.concurrency_key,
@@ -351,6 +366,7 @@ def test_promote_expired_blocked_jobs_uses_backend_default_concurrency_duration(
   job = make_job(task=limited, args=[1], kwargs={"value": "later"}, concurrency_key="account:1")
   BlockedExecution.objects.create(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
     concurrency_key=job.concurrency_key,
@@ -396,7 +412,12 @@ def test_queue_pause_blocks_claiming_not_enqueue():
 @pytest.mark.django_db(transaction=True)
 def test_claim_rechecks_pause_created_during_claim(monkeypatch):
   job = make_job(queue_name="critical")
-  ReadyExecution.objects.create(job=job, queue_name="critical", priority=0)
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name="critical",
+    priority=0,
+  )
   original_select_ready_rows = __import__(
     "dj_queue.operations.jobs", fromlist=["_select_ready_rows"]
   )._select_ready_rows
@@ -422,7 +443,12 @@ def test_claim_rechecks_pause_created_during_claim(monkeypatch):
 @pytest.mark.django_db(transaction=True)
 def test_sqlite_claim_skips_ready_row_consumed_after_selection(monkeypatch):
   job = make_job()
-  ReadyExecution.objects.create(job=job, queue_name=job.queue_name, priority=job.priority)
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
   original_select_ready_rows = __import__(
     "dj_queue.operations.jobs", fromlist=["_select_ready_rows"]
   )._select_ready_rows
@@ -448,6 +474,7 @@ def test_sqlite_promote_skips_scheduled_row_consumed_after_selection(monkeypatch
   job = make_job(scheduled_at=scheduled_at)
   ScheduledExecution.objects.create(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
     scheduled_at=scheduled_at,
@@ -483,6 +510,7 @@ def test_sqlite_promote_skips_blocked_row_consumed_after_selection(monkeypatch):
   job = make_job(task=limited, args=[1], kwargs={"value": "later"}, concurrency_key="account:1")
   BlockedExecution.objects.create(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
     concurrency_key=job.concurrency_key,
@@ -538,13 +566,70 @@ def test_queue_selector_exact_prefix_and_star_ordering():
 def test_claim_ready_jobs_bulk_inserts_claimed_rows_for_full_batch():
   jobs = [make_job(args=[index]) for index in range(3)]
   for job in jobs:
-    ReadyExecution.objects.create(job=job, queue_name=job.queue_name, priority=job.priority)
+    ReadyExecution.objects.create(
+      job=job,
+      backend_alias=job.backend_alias,
+      queue_name=job.queue_name,
+      priority=job.priority,
+    )
 
   claimed_jobs = claim_ready_jobs(limit=3)
 
   assert [job.id for job in claimed_jobs] == [jobs[0].id, jobs[1].id, jobs[2].id]
   assert ClaimedExecution.objects.count() == 3
   assert ReadyExecution.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_claim_ready_jobs_scopes_backend_on_ready_state_table():
+  job = make_job()
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+
+  with CaptureQueriesContext(connection) as queries:
+    claim_ready_jobs(limit=1)
+
+  assert_no_backend_scoping_join(queries, "dj_queue_ready_executions")
+
+
+@pytest.mark.django_db
+def test_promote_scheduled_jobs_scopes_backend_on_scheduled_state_table():
+  scheduled_at = timezone.now() - timedelta(seconds=1)
+  job = make_job(scheduled_at=scheduled_at)
+  ScheduledExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+    scheduled_at=scheduled_at,
+  )
+
+  with CaptureQueriesContext(connection) as queries:
+    promote_scheduled_jobs(batch_size=10)
+
+  assert_no_backend_scoping_join(queries, "dj_queue_scheduled_executions")
+
+
+@pytest.mark.django_db
+def test_promote_expired_blocked_jobs_scopes_backend_on_blocked_state_table():
+  job = make_job(task=limited, args=[1], kwargs={"value": "later"}, concurrency_key="account:1")
+  BlockedExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+    concurrency_key=job.concurrency_key,
+    expires_at=timezone.now() - timedelta(seconds=1),
+  )
+
+  with CaptureQueriesContext(connection) as queries:
+    promote_expired_blocked_jobs(batch_size=10)
+
+  assert_no_backend_scoping_join(queries, "dj_queue_blocked_executions")
 
 
 @pytest.mark.django_db

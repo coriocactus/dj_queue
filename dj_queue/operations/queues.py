@@ -19,7 +19,7 @@ def pause_queue(queue_name, *, backend_alias="default"):
     list(
       ReadyExecution.objects.using(alias)
       .select_for_update()
-      .filter(queue_name=queue_name, job__backend_alias=backend_alias)
+      .filter(backend_alias=backend_alias, queue_name=queue_name)
       .values_list("pk", flat=True)
     )
   log_event("queue.paused", backend_alias=backend_alias, queue_name=queue_name)
@@ -43,7 +43,7 @@ def resume_queue(queue_name, *, backend_alias="default", resumed_at=None):
     pause_duration = Value(resumed_at - paused_at, output_field=DurationField())
     ready_row_ids = list(
       ReadyExecution.objects.using(alias)
-      .filter(queue_name=queue_name, job__backend_alias=backend_alias)
+      .filter(backend_alias=backend_alias, queue_name=queue_name)
       .values_list("id", flat=True)
     )
     if ready_row_ids:

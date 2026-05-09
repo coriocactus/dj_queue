@@ -322,7 +322,12 @@ def test_discard_failed_job_removes_job():
 def test_discard_ready_jobs_in_batches():
   for index in range(3):
     job = make_job(args=[index])
-    ReadyExecution.objects.create(job=job, queue_name=job.queue_name, priority=job.priority)
+    ReadyExecution.objects.create(
+      job=job,
+      backend_alias=job.backend_alias,
+      queue_name=job.queue_name,
+      priority=job.priority,
+    )
 
   deleted = discard_ready_jobs(batch_size=2)
 
@@ -338,6 +343,7 @@ def test_discard_scheduled_jobs_in_batches():
     job = make_job(args=[index], scheduled_at=future)
     ScheduledExecution.objects.create(
       job=job,
+      backend_alias=job.backend_alias,
       queue_name=job.queue_name,
       priority=job.priority,
       scheduled_at=future,
@@ -362,6 +368,7 @@ def test_discard_scheduled_job_does_not_release_semaphore_slot():
   job = make_job(task=limited, args=[1], scheduled_at=future, concurrency_key="account:1")
   ScheduledExecution.objects.create(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
     scheduled_at=future,
@@ -503,6 +510,7 @@ def test_scheduled_promotion_stays_backend_scoped_on_shared_queue_db():
   for job in (default_job, secondary_job):
     ScheduledExecution.objects.create(
       job=job,
+      backend_alias=job.backend_alias,
       queue_name=job.queue_name,
       priority=job.priority,
       scheduled_at=due_at,
@@ -522,6 +530,7 @@ def test_scheduled_promotion_bulk_promotes_jobs_without_importing_tasks(monkeypa
   for job in jobs:
     ScheduledExecution.objects.create(
       job=job,
+      backend_alias=job.backend_alias,
       queue_name=job.queue_name,
       priority=job.priority,
       scheduled_at=due_at,
@@ -556,6 +565,7 @@ def test_blocked_promotion_stays_backend_scoped_on_shared_queue_db():
   for job in (default_job, secondary_job):
     BlockedExecution.objects.create(
       job=job,
+      backend_alias=job.backend_alias,
       queue_name=job.queue_name,
       priority=job.priority,
       concurrency_key=job.concurrency_key,
