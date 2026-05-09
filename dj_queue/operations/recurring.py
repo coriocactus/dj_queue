@@ -1,3 +1,4 @@
+import json
 from datetime import timedelta
 
 from croniter import croniter
@@ -6,9 +7,10 @@ from django.db.models import Q
 from django.utils.module_loading import import_string
 
 from dj_queue.db import get_database_alias
+from dj_queue.exceptions import EnqueueError
 from dj_queue.models import RecurringExecution, RecurringTask
 from dj_queue.operations._insert import create_ignore_conflicts
-from dj_queue.operations.jobs import enqueue_job
+from dj_queue.operations.jobs import enqueue_job, validate_queue_allowed
 
 
 def upsert_static_recurring_tasks(recurring_configs, *, backend_alias="default"):
@@ -66,6 +68,66 @@ def upsert_static_recurring_tasks(recurring_configs, *, backend_alias="default")
   queryset.delete()
 
 
+def schedule_recurring_task(
+  *,
+  key,
+  task_path,
+  schedule,
+  args=(),
+  kwargs=None,
+  queue_name="default",
+  priority=0,
+  description="",
+  backend_alias="default",
+):
+  alias = get_database_alias(backend_alias)
+  if kwargs is None:
+    kwargs = {}
+
+  task = import_string(task_path)
+  if not hasattr(task, "using"):
+    raise EnqueueError("task_path must reference a Django task")
+  validate_queue_allowed(queue_name, backend_alias=backend_alias)
+  payload = _normalize_payload(args, kwargs)
+
+  previous_schedule = (
+    RecurringTask.objects.using(alias)
+    .filter(backend_alias=backend_alias, key=key)
+    .values_list("schedule", flat=True)
+    .first()
+  )
+  defaults = {
+    "task_path": task_path,
+    "payload": payload,
+    "schedule": schedule,
+    "queue_name": queue_name,
+    "priority": priority,
+    "description": description,
+    "static": False,
+  }
+  if previous_schedule != schedule:
+    defaults["next_run_at"] = None
+
+  recurring_task, _ = RecurringTask.objects.using(alias).update_or_create(
+    backend_alias=backend_alias,
+    key=key,
+    defaults=defaults,
+  )
+  return recurring_task
+
+
+def unschedule_recurring_task(key, *, backend_alias="default"):
+  alias = get_database_alias(backend_alias)
+  queryset = RecurringTask.objects.using(alias).filter(
+    backend_alias=backend_alias,
+    key=key,
+    static=False,
+  )
+  deleted = queryset.count()
+  queryset.delete()
+  return deleted
+
+
 def fire_recurring_task(recurring_task, run_at, *, backend_alias="default"):
   alias = get_database_alias(backend_alias)
   next_run_at = _next_run_after(recurring_task.schedule, run_at)
@@ -110,6 +172,13 @@ def fire_recurring_task(recurring_task, run_at, *, backend_alias="default"):
 
 def _next_run_after(schedule, run_at):
   return croniter(schedule, run_at + timedelta(seconds=1)).get_next(type(run_at))
+
+
+def _normalize_payload(args, kwargs):
+  try:
+    return json.loads(json.dumps({"args": list(args), "kwargs": dict(kwargs)}))
+  except (TypeError, ValueError) as exc:
+    raise EnqueueError("payload must be JSON round-trippable") from exc
 
 
 def _advance_next_run_at(recurring_task, next_run_at, *, using):

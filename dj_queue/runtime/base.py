@@ -75,6 +75,7 @@ class BaseRunner:
     self.supervisor = supervisor
     self.process = None
     self._stop_event = threading.Event()
+    self._heartbeat_stop_event = threading.Event()
     self._heartbeat_thread = None
     if heartbeat_interval is None:
       heartbeat_interval = load_backend_config(backend_alias).process_heartbeat_interval
@@ -161,7 +162,7 @@ class BaseRunner:
   def runtime_metadata(self):
     return self.process_metadata()
 
-  def _begin_stop(self):
+  def _begin_stop(self, *, stop_heartbeat=True):
     if self._stopped:
       return None
 
@@ -170,7 +171,8 @@ class BaseRunner:
     process = self.process
     if process is not None and self._started:
       fire_hooks(f"{self.hook_prefix}.stop", process, backend_alias=self.backend_alias)
-    self._stop_heartbeat_thread()
+    if stop_heartbeat:
+      self._stop_heartbeat_thread()
     return process
 
   def _finish_stop(self, process):
@@ -213,6 +215,7 @@ class BaseRunner:
   def _start_heartbeat_thread(self):
     if self._heartbeat_interval <= 0:
       return
+    self._heartbeat_stop_event.clear()
     self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
     self._heartbeat_thread.start()
 
@@ -220,12 +223,13 @@ class BaseRunner:
     thread = self._heartbeat_thread
     if thread is None:
       return
+    self._heartbeat_stop_event.set()
     thread.join(timeout=max(self._heartbeat_interval, 0.1) + 0.1)
     self._heartbeat_thread = None
 
   def _heartbeat_loop(self):
     alias = get_database_alias(self.backend_alias)
-    while not self._stop_event.wait(self._heartbeat_interval):
+    while not self._heartbeat_stop_event.wait(self._heartbeat_interval):
       if self.process is None:
         return
       try:

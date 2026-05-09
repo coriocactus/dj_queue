@@ -174,12 +174,15 @@ def _load_backend_config_cached(
   if mode not in {"fork", "async"}:
     raise ImproperlyConfigured(f"dj_queue mode must be 'fork' or 'async', got {mode!r}")
 
-  only_work = bool(cli_overrides.get("only_work", False))
-  only_dispatch = bool(cli_overrides.get("only_dispatch", False))
+  only_work = _bool_option(cli_overrides.get("only_work", False), "--only-work")
+  only_dispatch = _bool_option(cli_overrides.get("only_dispatch", False), "--only-dispatch")
   if only_work and only_dispatch:
     raise ImproperlyConfigured("--only-work and --only-dispatch cannot be combined")
 
   skip_recurring = _resolve_skip_recurring(cli_overrides, env)
+  preserve_finished_jobs = _bool_option(
+    resolved_options["preserve_finished_jobs"], "preserve_finished_jobs"
+  )
   on_thread_error = _validated_callback_path(resolved_options.get("on_thread_error"))
   recurring = _build_recurring_config(resolved_options.get("recurring", {}))
   scheduler = _build_scheduler_config(resolved_options.get("scheduler", DEFAULT_SCHEDULER))
@@ -195,7 +198,7 @@ def _load_backend_config_cached(
   elif skip_recurring or not _scheduler_has_work(
     scheduler,
     recurring,
-    preserve_finished_jobs=bool(resolved_options["preserve_finished_jobs"]),
+    preserve_finished_jobs=preserve_finished_jobs,
     clear_finished_jobs_after=resolved_options["clear_finished_jobs_after"],
     clear_failed_jobs_after=resolved_options["clear_failed_jobs_after"],
     clear_recurring_executions_after=resolved_options["clear_recurring_executions_after"],
@@ -215,11 +218,15 @@ def _load_backend_config_cached(
     dispatchers=dispatchers,
     scheduler=scheduler,
     recurring=recurring,
-    process_heartbeat_interval=int(resolved_options["process_heartbeat_interval"]),
-    process_alive_threshold=int(resolved_options["process_alive_threshold"]),
-    shutdown_timeout=int(resolved_options["shutdown_timeout"]),
+    process_heartbeat_interval=_nonnegative_float(
+      resolved_options["process_heartbeat_interval"], "process_heartbeat_interval"
+    ),
+    process_alive_threshold=_positive_float(
+      resolved_options["process_alive_threshold"], "process_alive_threshold"
+    ),
+    shutdown_timeout=_nonnegative_float(resolved_options["shutdown_timeout"], "shutdown_timeout"),
     supervisor_pidfile=resolved_options["supervisor_pidfile"],
-    preserve_finished_jobs=bool(resolved_options["preserve_finished_jobs"]),
+    preserve_finished_jobs=preserve_finished_jobs,
     clear_finished_jobs_after=_optional_int(resolved_options["clear_finished_jobs_after"]),
     clear_failed_jobs_after=_optional_int(resolved_options["clear_failed_jobs_after"]),
     clear_recurring_executions_after=_optional_int(
@@ -230,9 +237,9 @@ def _load_backend_config_cached(
       "default_concurrency_duration",
     ),
     database_alias=str(resolved_options["database_alias"]),
-    use_skip_locked=bool(resolved_options["use_skip_locked"]),
-    listen_notify=bool(resolved_options["listen_notify"]),
-    silence_polling=bool(resolved_options["silence_polling"]),
+    use_skip_locked=_bool_option(resolved_options["use_skip_locked"], "use_skip_locked"),
+    listen_notify=_bool_option(resolved_options["listen_notify"], "listen_notify"),
+    silence_polling=_bool_option(resolved_options["silence_polling"], "silence_polling"),
     on_thread_error=on_thread_error,
     skip_recurring=skip_recurring,
     only_work=only_work,
@@ -359,7 +366,7 @@ def _resolve_skip_recurring(
   env: Mapping[str, str],
 ) -> bool:
   if "skip_recurring" in cli_overrides:
-    return bool(cli_overrides["skip_recurring"])
+    return _bool_option(cli_overrides["skip_recurring"], "skip_recurring")
 
   value = env.get("DJ_QUEUE_SKIP_RECURRING")
   if value is None:
@@ -376,6 +383,16 @@ def _parse_bool(value: str, setting_name: str) -> bool:
   raise ImproperlyConfigured(
     f"{setting_name} must be one of {sorted(TRUTHY_ENV_VALUES | FALSY_ENV_VALUES)}"
   )
+
+
+def _bool_option(value: Any, setting_name: str) -> bool:
+  if isinstance(value, bool):
+    return value
+  if isinstance(value, str):
+    return _parse_bool(value, setting_name)
+  if isinstance(value, int) and value in (0, 1):
+    return bool(value)
+  raise ImproperlyConfigured(f"dj_queue {setting_name} must be a boolean")
 
 
 def _validated_callback_path(callback_path: Any) -> str | None:
@@ -403,8 +420,13 @@ def _build_worker_configs(raw_workers: Any, mode: str) -> tuple[WorkerConfig, ..
 
     worker = WorkerConfig(
       queues=_as_queue_selectors(raw_worker.get("queues", DEFAULT_WORKER["queues"])),
-      threads=int(raw_worker.get("threads", DEFAULT_WORKER["threads"])),
-      processes=int(raw_worker.get("processes", DEFAULT_WORKER["processes"])),
+      threads=_positive_int(
+        raw_worker.get("threads", DEFAULT_WORKER["threads"]), f"workers[{index}].threads"
+      ),
+      processes=_positive_int(
+        raw_worker.get("processes", DEFAULT_WORKER["processes"]),
+        f"workers[{index}].processes",
+      ),
       polling_interval=_positive_float(
         raw_worker.get("polling_interval", DEFAULT_WORKER["polling_interval"]),
         f"workers[{index}].polling_interval",
@@ -434,22 +456,27 @@ def _build_dispatcher_configs(raw_dispatchers: Any) -> tuple[DispatcherConfig, .
 
     dispatchers.append(
       DispatcherConfig(
-        batch_size=int(raw_dispatcher.get("batch_size", DEFAULT_DISPATCHER["batch_size"])),
+        batch_size=_positive_int(
+          raw_dispatcher.get("batch_size", DEFAULT_DISPATCHER["batch_size"]),
+          f"dispatchers[{index}].batch_size",
+        ),
         polling_interval=_positive_float(
           raw_dispatcher.get("polling_interval", DEFAULT_DISPATCHER["polling_interval"]),
           f"dispatchers[{index}].polling_interval",
         ),
-        concurrency_maintenance=bool(
+        concurrency_maintenance=_bool_option(
           raw_dispatcher.get(
             "concurrency_maintenance",
             DEFAULT_DISPATCHER["concurrency_maintenance"],
-          )
+          ),
+          f"dispatchers[{index}].concurrency_maintenance",
         ),
-        concurrency_maintenance_interval=int(
+        concurrency_maintenance_interval=_nonnegative_float(
           raw_dispatcher.get(
             "concurrency_maintenance_interval",
             DEFAULT_DISPATCHER["concurrency_maintenance_interval"],
-          )
+          ),
+          f"dispatchers[{index}].concurrency_maintenance_interval",
         ),
       )
     )
@@ -463,11 +490,12 @@ def _build_scheduler_config(raw_scheduler: Any) -> SchedulerConfig:
     raise ImproperlyConfigured("scheduler config must be a mapping")
 
   return SchedulerConfig(
-    dynamic_tasks_enabled=bool(
+    dynamic_tasks_enabled=_bool_option(
       raw_scheduler.get(
         "dynamic_tasks_enabled",
         DEFAULT_SCHEDULER["dynamic_tasks_enabled"],
-      )
+      ),
+      "scheduler.dynamic_tasks_enabled",
     ),
     polling_interval=_positive_float(
       raw_scheduler.get("polling_interval", DEFAULT_SCHEDULER["polling_interval"]),
@@ -556,6 +584,21 @@ def _positive_float(value: Any, setting_name: str) -> float:
 
   if not math.isfinite(number) or number <= 0:
     raise ImproperlyConfigured(f"dj_queue {setting_name} must be a positive number, got {value!r}")
+  return number
+
+
+def _nonnegative_float(value: Any, setting_name: str) -> float:
+  try:
+    number = float(value)
+  except (TypeError, ValueError) as exc:
+    raise ImproperlyConfigured(
+      f"dj_queue {setting_name} must be a non-negative number, got {value!r}"
+    ) from exc
+
+  if not math.isfinite(number) or number < 0:
+    raise ImproperlyConfigured(
+      f"dj_queue {setting_name} must be a non-negative number, got {value!r}"
+    )
   return number
 
 

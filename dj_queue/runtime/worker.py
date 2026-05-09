@@ -78,7 +78,7 @@ class Worker(BaseRunner):
     if timeout is None:
       timeout = load_backend_config(self.backend_alias).shutdown_timeout
 
-    process = self._begin_stop()
+    process = self._begin_stop(stop_heartbeat=False)
     if process is None:
       return True
 
@@ -88,6 +88,7 @@ class Worker(BaseRunner):
       with finish_lock:
         if self.process is None:
           return None
+        self._stop_heartbeat_thread()
         with app_executor():
           self._finish_stop(process)
       return None

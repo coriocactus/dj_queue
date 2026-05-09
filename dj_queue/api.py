@@ -1,14 +1,12 @@
 from functools import partial
 
-from django.db.models import Case, DateTimeField, DurationField, ExpressionWrapper, F, Value, When
 from django.db.models.functions import Coalesce
 from django.db import transaction
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
 from dj_queue.db import get_database_alias
-from dj_queue.log import log_event
-from dj_queue.models import Pause, ReadyExecution, RecurringTask
+from dj_queue.models import Pause, ReadyExecution
 
 
 class QueueInfo:
@@ -46,53 +44,12 @@ class QueueInfo:
     )
 
   def pause(self):
-    alias = get_database_alias(self.backend_alias)
-    Pause.objects.using(alias).get_or_create(
-      backend_alias=self.backend_alias,
-      queue_name=self.queue_name,
-    )
-    log_event("queue.paused", backend_alias=self.backend_alias, queue_name=self.queue_name)
+    pause_queue = import_string("dj_queue.operations.queues.pause_queue")
+    pause_queue(self.queue_name, backend_alias=self.backend_alias)
 
   def resume(self):
-    alias = get_database_alias(self.backend_alias)
-    with transaction.atomic(using=alias):
-      pause = (
-        Pause.objects.using(alias)
-        .select_for_update()
-        .filter(backend_alias=self.backend_alias, queue_name=self.queue_name)
-        .first()
-      )
-      if pause is None:
-        return
-
-      resumed_at = timezone.now()
-      paused_at = pause.created_at
-      pause_duration = Value(resumed_at - paused_at, output_field=DurationField())
-      ready_row_ids = list(self._ready_queryset().values_list("id", flat=True))
-      if ready_row_ids:
-        ReadyExecution.objects.using(alias).filter(pk__in=ready_row_ids).update(
-          latency_started_at=Case(
-            When(
-              latency_started_at__isnull=True,
-              created_at__lt=paused_at,
-              then=ExpressionWrapper(
-                F("created_at") + pause_duration, output_field=DateTimeField()
-              ),
-            ),
-            When(
-              latency_started_at__lt=paused_at,
-              then=ExpressionWrapper(
-                F("latency_started_at") + pause_duration,
-                output_field=DateTimeField(),
-              ),
-            ),
-            default=Value(resumed_at, output_field=DateTimeField()),
-            output_field=DateTimeField(),
-          ),
-        )
-      pause.delete()
-
-    log_event("queue.resumed", backend_alias=self.backend_alias, queue_name=self.queue_name)
+    resume_queue = import_string("dj_queue.operations.queues.resume_queue")
+    resume_queue(self.queue_name, backend_alias=self.backend_alias)
 
   def clear(self, *, batch_size=500):
     deleted = 0
@@ -150,43 +107,20 @@ def schedule_recurring_task(
   description="",
   backend_alias="default",
 ):
-  alias = get_database_alias(backend_alias)
-  if kwargs is None:
-    kwargs = {}
-
-  previous_schedule = (
-    RecurringTask.objects.using(alias)
-    .filter(backend_alias=backend_alias, key=key)
-    .values_list("schedule", flat=True)
-    .first()
-  )
-  defaults = {
-    "task_path": task_path,
-    "payload": {"args": list(args), "kwargs": dict(kwargs)},
-    "schedule": schedule,
-    "queue_name": queue_name,
-    "priority": priority,
-    "description": description,
-    "static": False,
-  }
-  if previous_schedule != schedule:
-    defaults["next_run_at"] = None
-
-  recurring_task, _ = RecurringTask.objects.using(alias).update_or_create(
-    backend_alias=backend_alias,
+  operation = import_string("dj_queue.operations.recurring.schedule_recurring_task")
+  return operation(
     key=key,
-    defaults=defaults,
+    task_path=task_path,
+    schedule=schedule,
+    args=args,
+    kwargs=kwargs,
+    queue_name=queue_name,
+    priority=priority,
+    description=description,
+    backend_alias=backend_alias,
   )
-  return recurring_task
 
 
 def unschedule_recurring_task(key, *, backend_alias="default"):
-  alias = get_database_alias(backend_alias)
-  queryset = RecurringTask.objects.using(alias).filter(
-    backend_alias=backend_alias,
-    key=key,
-    static=False,
-  )
-  deleted = queryset.count()
-  queryset.delete()
-  return deleted
+  operation = import_string("dj_queue.operations.recurring.unschedule_recurring_task")
+  return operation(key, backend_alias=backend_alias)

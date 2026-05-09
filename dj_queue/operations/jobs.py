@@ -10,7 +10,7 @@ from django.utils import timezone
 from django.utils.module_loading import import_string
 
 from dj_queue.config import load_backend_config
-from dj_queue.db import get_database_alias, locked_queryset
+from dj_queue.db import database_capabilities, get_database_alias, locked_queryset
 from dj_queue.exceptions import EnqueueError
 from dj_queue.log import log_event
 from dj_queue.models import (
@@ -20,9 +20,11 @@ from dj_queue.models import (
   Job,
   Pause,
   ReadyExecution,
+  Semaphore,
   ScheduledExecution,
 )
 from dj_queue.operations.concurrency import (
+  concurrency_settings,
   semaphore_acquire,
   semaphore_release,
   unblock_next_blocked_job,
@@ -214,13 +216,8 @@ def claim_ready_jobs(
   if use_skip_locked is None:
     use_skip_locked = load_backend_config(backend_alias).use_skip_locked
 
-  paused_queue_names = list(
-    Pause.objects.using(alias)
-    .filter(backend_alias=backend_alias)
-    .values_list("queue_name", flat=True)
-  )
-
   with transaction.atomic(using=alias):
+    paused_queue_names = _lock_active_pauses(alias, backend_alias)
     queryset = (
       ReadyExecution.objects.using(alias)
       .select_related("job")
@@ -237,9 +234,22 @@ def claim_ready_jobs(
     if not ready_rows:
       return []
 
+    paused_queue_names = _lock_active_pauses(
+      alias,
+      backend_alias,
+      {row.queue_name for row in ready_rows},
+    )
+    if paused_queue_names:
+      ready_rows = [row for row in ready_rows if row.queue_name not in paused_queue_names]
+      if not ready_rows:
+        return []
+
+    ready_rows = _consume_selected_rows(alias, ReadyExecution, ready_rows)
+    if not ready_rows:
+      return []
+
     jobs = [row.job for row in ready_rows]
 
-    ReadyExecution.objects.using(alias).filter(pk__in=[row.pk for row in ready_rows]).delete()
     claimed_at = timezone.now()
     _bulk_create(
       alias,
@@ -359,11 +369,11 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
     if not scheduled_rows:
       return []
 
-    jobs = [row.job for row in scheduled_rows]
+    scheduled_rows = _consume_selected_rows(alias, ScheduledExecution, scheduled_rows)
+    if not scheduled_rows:
+      return []
 
-    ScheduledExecution.objects.using(alias).filter(
-      pk__in=[row.pk for row in scheduled_rows]
-    ).delete()
+    jobs = [row.job for row in scheduled_rows]
 
     direct_jobs = [job for job in jobs if not job.concurrency_key]
     if direct_jobs:
@@ -617,7 +627,7 @@ def _dispatch_job(job, *, task, backend_alias, now=None):
     )
     return "ready"
 
-  limit, duration_seconds, on_conflict = _concurrency_settings(task, backend_alias=backend_alias)
+  limit, duration_seconds, on_conflict = concurrency_settings(task, backend_alias=backend_alias)
   if semaphore_acquire(
     job.concurrency_key,
     limit=limit,
@@ -653,8 +663,13 @@ def _release_concurrency_slot(job):
   if not job.concurrency_key:
     return
 
-  task = import_string(job.task_path)
-  limit, duration_seconds, _ = _concurrency_settings(task, backend_alias=job.backend_alias)
+  try:
+    task = import_string(job.task_path)
+    limit, duration_seconds, _ = concurrency_settings(task, backend_alias=job.backend_alias)
+  except ImportError:
+    limit = _semaphore_limit(job) or 1
+    duration_seconds = load_backend_config(job.backend_alias).default_concurrency_duration
+
   semaphore_release(
     job.concurrency_key,
     duration_seconds=duration_seconds,
@@ -669,41 +684,20 @@ def _release_concurrency_slot(job):
   )
 
 
-def _concurrency_settings(task, *, backend_alias):
-  limit = _task_option(task, "concurrency_limit")
-  if limit in (None, ""):
-    raise EnqueueError("concurrency_limit is required when concurrency_key is set")
-
-  limit = _positive_int_option(limit, "concurrency_limit")
-  duration_seconds = _positive_int_option(
-    _task_option(
-      task,
-      "concurrency_duration",
-      load_backend_config(backend_alias).default_concurrency_duration,
-    ),
-    "concurrency_duration",
+def _semaphore_limit(job):
+  alias = get_database_alias(job.backend_alias)
+  return (
+    Semaphore.objects.using(alias)
+    .filter(key=job.concurrency_key)
+    .values_list("limit", flat=True)
+    .first()
   )
-  on_conflict = str(_task_option(task, "on_conflict", "block"))
-  if on_conflict not in {"block", "discard"}:
-    raise EnqueueError("on_conflict must be 'block' or 'discard'")
-  return limit, duration_seconds, on_conflict
 
 
 def validate_queue_allowed(queue_name, *, backend_alias="default"):
   allowed_queues = load_backend_config(backend_alias).allowed_queues
   if allowed_queues and queue_name not in allowed_queues:
     raise EnqueueError(f"queue {queue_name!r} is not allowed for backend {backend_alias!r}")
-
-
-def _positive_int_option(value, name):
-  try:
-    number = int(value)
-  except (TypeError, ValueError, OverflowError) as exc:
-    raise EnqueueError(f"{name} must be a positive integer") from exc
-
-  if number <= 0:
-    raise EnqueueError(f"{name} must be a positive integer")
-  return number
 
 
 def _resolve_concurrency_key(task, args, kwargs):
@@ -806,18 +800,27 @@ def _task_option(task, name, default=None):
   return getattr(task.func, name, default)
 
 
-def _lock_active_pauses(alias, backend_alias, queue_names):
-  active_queue_names = tuple(queue_name for queue_name in queue_names if queue_name)
-  if not active_queue_names:
-    return None
+def _lock_active_pauses(alias, backend_alias, queue_names=None):
+  queryset = Pause.objects.using(alias).select_for_update().filter(backend_alias=backend_alias)
+  if queue_names is not None:
+    active_queue_names = tuple(queue_name for queue_name in queue_names if queue_name)
+    if not active_queue_names:
+      return set()
+    queryset = queryset.filter(queue_name__in=active_queue_names)
+  return set(queryset.values_list("queue_name", flat=True))
 
-  list(
-    Pause.objects.using(alias)
-    .select_for_update()
-    .filter(backend_alias=backend_alias, queue_name__in=active_queue_names)
-    .values_list("queue_name", flat=True)
-  )
-  return None
+
+def _consume_selected_rows(alias, model, rows):
+  if not database_capabilities(alias).uses_serialized_writes:
+    model.objects.using(alias).filter(pk__in=[row.pk for row in rows]).delete()
+    return rows
+
+  consumed_rows = []
+  for row in rows:
+    deleted, _ = model.objects.using(alias).filter(pk=row.pk).delete()
+    if deleted:
+      consumed_rows.append(row)
+  return consumed_rows
 
 
 def _bulk_create(alias, model, objects):

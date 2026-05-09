@@ -1,3 +1,4 @@
+import json
 import threading
 
 from django.db import connections
@@ -19,9 +20,10 @@ class NoopWakeupBackend:
 
 
 class NotifyWakeupBackend:
-  def __init__(self, *, backend_alias, wake_up):
+  def __init__(self, *, backend_alias, wake_up, queues=("*",)):
     self.backend_alias = backend_alias
     self.wake_up = wake_up
+    self.queues = tuple(queues or ("*",))
     self.failed = False
     self._connection = None
     self._watcher = None
@@ -65,8 +67,9 @@ class NotifyWakeupBackend:
         handle_thread_error(error, context="worker.notify", backend_alias=self.backend_alias)
         return
 
-      for _notify in notifications:
-        self.wake_up()
+      for notification in notifications:
+        if _matches_queue_selectors(_queue_names_from_payload(notification.payload), self.queues):
+          self.wake_up()
 
   def _open_connection(self):
     alias = get_database_alias(self.backend_alias)
@@ -98,7 +101,8 @@ def notify_ready_queues(queue_names, *, backend_alias="default"):
   if not supports_listen_notify(alias):
     return None
 
-  _notify(READY_CHANNEL, READY_PAYLOAD, backend_alias=backend_alias)
+  payload = json.dumps(list(dict.fromkeys(queue_names)), separators=(",", ":"))
+  _notify(READY_CHANNEL, payload, backend_alias=backend_alias)
   return None
 
 
@@ -107,7 +111,7 @@ def build_wakeup_backend(*, backend_alias="default", queues=(), wake_up=None):
   alias = get_database_alias(backend_alias)
   if wake_up is None or not config.listen_notify or not supports_listen_notify(alias):
     return NoopWakeupBackend()
-  return NotifyWakeupBackend(backend_alias=backend_alias, wake_up=wake_up)
+  return NotifyWakeupBackend(backend_alias=backend_alias, queues=queues, wake_up=wake_up)
 
 
 def _notify(channel, payload, *, backend_alias):
@@ -117,3 +121,32 @@ def _notify(channel, payload, *, backend_alias):
   except Exception:
     return None
   return None
+
+
+def _queue_names_from_payload(payload):
+  if payload == READY_PAYLOAD:
+    return None
+  try:
+    queue_names = json.loads(payload)
+  except (TypeError, ValueError):
+    return None
+  if not isinstance(queue_names, list):
+    return None
+  return tuple(str(queue_name) for queue_name in queue_names)
+
+
+def _matches_queue_selectors(queue_names, selectors):
+  if queue_names is None:
+    return True
+  if selectors in (None, (), "*", ["*"], ("*",)):
+    return True
+
+  for selector in (selectors,) if isinstance(selectors, str) else tuple(selectors):
+    if selector == "*":
+      return True
+    for queue_name in queue_names:
+      if selector.endswith("*") and queue_name.startswith(selector[:-1]):
+        return True
+      if queue_name == selector:
+        return True
+  return False

@@ -501,6 +501,126 @@ def test_boolean_environment_values_parse_truthy_and_falsy_forms(settings, value
   assert (config.scheduler is None) is skip_recurring
 
 
+@pytest.mark.parametrize(
+  "setting_name",
+  (
+    "preserve_finished_jobs",
+    "use_skip_locked",
+    "listen_notify",
+    "silence_polling",
+  ),
+)
+def test_boolean_options_parse_truthy_and_falsy_strings(settings, setting_name):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {
+        setting_name: "false",
+        "clear_finished_jobs_after": 10,
+      },
+    },
+  }
+
+  config = load_backend_config()
+
+  assert getattr(config, setting_name) is False
+
+
+@pytest.mark.parametrize(
+  ("section", "setting_name"),
+  (
+    ("dispatchers", "concurrency_maintenance"),
+    ("scheduler", "dynamic_tasks_enabled"),
+  ),
+)
+def test_nested_boolean_options_parse_truthy_and_falsy_strings(settings, section, setting_name):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {
+        section: {setting_name: "false"},
+      },
+    },
+  }
+
+  config = load_backend_config()
+
+  if section == "dispatchers":
+    assert getattr(config.dispatchers[0], setting_name) is False
+  else:
+    assert getattr(config.scheduler, setting_name) is False
+
+
+@pytest.mark.parametrize(
+  ("setting_name", "value"),
+  (
+    ("preserve_finished_jobs", "sometimes"),
+    ("use_skip_locked", "sometimes"),
+    ("listen_notify", "sometimes"),
+    ("silence_polling", "sometimes"),
+  ),
+)
+def test_boolean_options_reject_unknown_strings(settings, setting_name, value):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {setting_name: value},
+    },
+  }
+
+  with pytest.raises(ImproperlyConfigured) as exc_info:
+    load_backend_config()
+  assert setting_name in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+  ("setting_name", "value"),
+  (
+    ("process_heartbeat_interval", -1),
+    ("process_heartbeat_interval", "soon"),
+    ("process_alive_threshold", 0),
+    ("process_alive_threshold", "soon"),
+    ("shutdown_timeout", -1),
+    ("shutdown_timeout", "soon"),
+  ),
+)
+def test_runtime_numeric_options_validate(settings, setting_name, value):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {setting_name: value},
+    },
+  }
+
+  with pytest.raises(ImproperlyConfigured, match=setting_name):
+    load_backend_config()
+
+
+@pytest.mark.parametrize(
+  ("options", "setting_name"),
+  (
+    ({"workers": {"threads": 0}}, "workers[0].threads"),
+    ({"workers": {"processes": 0}}, "workers[0].processes"),
+    ({"dispatchers": {"batch_size": 0}}, "dispatchers[0].batch_size"),
+    (
+      {"dispatchers": {"concurrency_maintenance_interval": -1}},
+      "dispatchers[0].concurrency_maintenance_interval",
+    ),
+  ),
+)
+def test_nested_runtime_numeric_options_validate(settings, options, setting_name):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": options,
+    },
+  }
+
+  with pytest.raises(ImproperlyConfigured) as exc_info:
+    load_backend_config()
+  assert setting_name in str(exc_info.value)
+
+
 def test_load_backend_config_caches_repeated_inputs(settings, monkeypatch):
   settings.TASKS = {
     "default": {

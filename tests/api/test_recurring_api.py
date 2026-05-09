@@ -44,6 +44,60 @@ def test_unschedule_recurring_task_removes_dynamic_row():
   )
 
 
+def test_schedule_recurring_task_delegates_to_operation(monkeypatch):
+  calls = []
+
+  def fake_import_string(path):
+    assert path == "dj_queue.operations.recurring.schedule_recurring_task"
+
+    def operation(**kwargs):
+      calls.append(kwargs)
+      return "scheduled"
+
+    return operation
+
+  monkeypatch.setattr("dj_queue.api.import_string", fake_import_string)
+
+  result = schedule_recurring_task(
+    key="dynamic-task",
+    task_path="tests.tasks.echo",
+    schedule="* * * * *",
+  )
+
+  assert result == "scheduled"
+  assert calls == [
+    {
+      "key": "dynamic-task",
+      "task_path": "tests.tasks.echo",
+      "schedule": "* * * * *",
+      "args": (),
+      "kwargs": None,
+      "queue_name": "default",
+      "priority": 0,
+      "description": "",
+      "backend_alias": "default",
+    }
+  ]
+
+
+def test_unschedule_recurring_task_delegates_to_operation(monkeypatch):
+  calls = []
+
+  def fake_import_string(path):
+    assert path == "dj_queue.operations.recurring.unschedule_recurring_task"
+
+    def operation(key, *, backend_alias="default"):
+      calls.append((key, backend_alias))
+      return 1
+
+    return operation
+
+  monkeypatch.setattr("dj_queue.api.import_string", fake_import_string)
+
+  assert unschedule_recurring_task("dynamic-task", backend_alias="default") == 1
+  assert calls == [("dynamic-task", "default")]
+
+
 def test_recurring_tasks_are_backend_scoped(settings):
   settings.TASKS = {
     "default": {
@@ -110,6 +164,17 @@ def test_invalid_cron_is_rejected():
       task_path="tests.tasks.echo",
       schedule="not a cron",
     )
+
+
+def test_missing_recurring_task_path_is_rejected_without_persisting():
+  with pytest.raises(ImportError):
+    schedule_recurring_task(
+      key="missing-task",
+      task_path="tests.tasks.missing_recurring_task",
+      schedule="* * * * *",
+    )
+
+  assert RecurringTask.objects.filter(key="missing-task").exists() is False
 
 
 def test_schedule_recurring_task_validates_once(monkeypatch):

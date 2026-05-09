@@ -1,4 +1,6 @@
+import json
 from datetime import datetime
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -10,7 +12,6 @@ from dj_queue.models import Job, RecurringExecution, RecurringTask
 from dj_queue.runtime.notify import (
   NoopWakeupBackend,
   NotifyWakeupBackend,
-  READY_PAYLOAD,
   build_wakeup_backend,
   notify_ready_queues,
 )
@@ -238,7 +239,7 @@ def test_notify_watcher_shutdown_is_clean():
   assert watcher.is_alive() is False
 
 
-def test_notify_ready_queues_sends_one_generic_wakeup(monkeypatch):
+def test_notify_ready_queues_sends_one_queue_payload(monkeypatch):
   sent = []
 
   monkeypatch.setattr("dj_queue.runtime.notify.supports_listen_notify", lambda alias: True)
@@ -252,4 +253,46 @@ def test_notify_ready_queues_sends_one_generic_wakeup(monkeypatch):
 
   notify_ready_queues(("alpha", "alpha", "beta"), backend_alias="default")
 
-  assert sent == [("dj_queue_ready", READY_PAYLOAD, "default")]
+  assert len(sent) == 1
+  channel, payload, backend_alias = sent[0]
+  assert channel == "dj_queue_ready"
+  assert json.loads(payload) == ["alpha", "beta"]
+  assert backend_alias == "default"
+
+
+def test_notify_wakeup_backend_ignores_non_matching_queue_payload():
+  wakes = []
+  backend = NotifyWakeupBackend(
+    backend_alias="default",
+    queues=("alpha", "mail*"),
+    wake_up=lambda: wakes.append("wake"),
+  )
+
+  class FakeConnection:
+    def notifies(self, *, timeout, stop_after):
+      backend._stop_event.set()
+      return [SimpleNamespace(payload=json.dumps(["beta"]))]
+
+  backend._connection = FakeConnection()
+  backend._watch()
+
+  assert wakes == []
+
+
+def test_notify_wakeup_backend_wakes_matching_queue_payload():
+  wakes = []
+  backend = NotifyWakeupBackend(
+    backend_alias="default",
+    queues=("alpha", "mail*"),
+    wake_up=lambda: wakes.append("wake"),
+  )
+
+  class FakeConnection:
+    def notifies(self, *, timeout, stop_after):
+      backend._stop_event.set()
+      return [SimpleNamespace(payload=json.dumps(["mailers"]))]
+
+  backend._connection = FakeConnection()
+  backend._watch()
+
+  assert wakes == ["wake"]

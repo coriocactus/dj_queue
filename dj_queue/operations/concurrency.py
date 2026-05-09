@@ -6,9 +6,10 @@ from django.utils import timezone
 from django.utils.module_loading import import_string
 
 from dj_queue.config import load_backend_config
-from dj_queue.db import get_database_alias, locked_queryset
+from dj_queue.db import database_capabilities, get_database_alias, locked_queryset
+from dj_queue.exceptions import EnqueueError
 from dj_queue.log import log_event
-from dj_queue.models import BlockedExecution, Pause, ReadyExecution, Semaphore
+from dj_queue.models import BlockedExecution, ClaimedExecution, Pause, ReadyExecution, Semaphore
 from dj_queue.operations._insert import create_ignore_conflicts
 from dj_queue.runtime import notify as runtime_notify
 
@@ -64,6 +65,26 @@ def semaphore_release(key, *, duration_seconds, backend_alias="default"):
     return True
 
 
+def concurrency_settings(task, *, backend_alias):
+  limit = _task_option(task, "concurrency_limit")
+  if limit in (None, ""):
+    raise EnqueueError("concurrency_limit is required when concurrency_key is set")
+
+  limit = _positive_int_option(limit, "concurrency_limit")
+  duration_seconds = _positive_int_option(
+    _task_option(
+      task,
+      "concurrency_duration",
+      load_backend_config(backend_alias).default_concurrency_duration,
+    ),
+    "concurrency_duration",
+  )
+  on_conflict = str(_task_option(task, "on_conflict", "block"))
+  if on_conflict not in {"block", "discard"}:
+    raise EnqueueError("on_conflict must be 'block' or 'discard'")
+  return limit, duration_seconds, on_conflict
+
+
 def unblock_next_blocked_job(
   key,
   *,
@@ -117,7 +138,17 @@ def unblock_next_blocked_job(
 
 def cleanup_expired_semaphores(*, backend_alias="default"):
   alias = get_database_alias(backend_alias)
-  queryset = Semaphore.objects.using(alias).filter(expires_at__lte=timezone.now())
+  active_concurrency_keys = (
+    ClaimedExecution.objects.using(alias)
+    .exclude(job__concurrency_key__isnull=True)
+    .exclude(job__concurrency_key="")
+    .values_list("job__concurrency_key", flat=True)
+  )
+  queryset = (
+    Semaphore.objects.using(alias)
+    .filter(expires_at__lte=timezone.now())
+    .exclude(key__in=active_concurrency_keys)
+  )
   deleted = queryset.count()
   if not deleted:
     return 0
@@ -133,6 +164,7 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
   now = timezone.now()
   promoted_jobs = []
   task_settings = {}
+  uses_serialized_writes = database_capabilities(alias).uses_serialized_writes
 
   with transaction.atomic(using=alias):
     queryset = (
@@ -144,14 +176,17 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
     blocked_rows = list(locked_queryset(queryset, use_skip_locked=use_skip_locked)[:batch_size])
     if not blocked_rows:
       return []
+    if uses_serialized_writes:
+      blocked_rows = _consume_selected_rows(alias, BlockedExecution, blocked_rows)
+      if not blocked_rows:
+        return []
 
     for blocked in blocked_rows:
       job = blocked.job
       limit, duration_seconds = task_settings.get(job.task_path, (None, None))
       if limit is None:
         task = import_string(job.task_path)
-        limit = int(getattr(task.func, "concurrency_limit"))
-        duration_seconds = int(getattr(task.func, "concurrency_duration", 60))
+        limit, duration_seconds, _ = concurrency_settings(task, backend_alias=backend_alias)
         task_settings[job.task_path] = (limit, duration_seconds)
 
       if semaphore_acquire(
@@ -162,7 +197,8 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
       ):
         queue_name = blocked.queue_name
         priority = blocked.priority
-        blocked.delete(using=alias)
+        if not uses_serialized_writes:
+          blocked.delete(using=alias)
         _lock_active_pauses(alias, backend_alias, {queue_name})
         ReadyExecution.objects.using(alias).create(
           job=job,
@@ -172,8 +208,18 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
         )
         promoted_jobs.append(job)
       else:
-        blocked.expires_at = now + timedelta(seconds=duration_seconds)
-        blocked.save(using=alias, update_fields=["expires_at"])
+        expires_at = now + timedelta(seconds=duration_seconds)
+        if uses_serialized_writes:
+          BlockedExecution.objects.using(alias).create(
+            job=job,
+            queue_name=blocked.queue_name,
+            priority=blocked.priority,
+            concurrency_key=blocked.concurrency_key,
+            expires_at=expires_at,
+          )
+        else:
+          blocked.expires_at = expires_at
+          blocked.save(using=alias, update_fields=["expires_at"])
 
   for job in promoted_jobs:
     log_event("job.unblocked", job_id=str(job.id), concurrency_key=job.concurrency_key)
@@ -193,3 +239,29 @@ def _lock_active_pauses(alias, backend_alias, queue_names):
     .values_list("queue_name", flat=True)
   )
   return None
+
+
+def _consume_selected_rows(alias, model, rows):
+  consumed_rows = []
+  for row in rows:
+    deleted, _ = model.objects.using(alias).filter(pk=row.pk).delete()
+    if deleted:
+      consumed_rows.append(row)
+  return consumed_rows
+
+
+def _positive_int_option(value, name):
+  try:
+    number = int(value)
+  except (TypeError, ValueError, OverflowError) as exc:
+    raise EnqueueError(f"{name} must be a positive integer") from exc
+
+  if number <= 0:
+    raise EnqueueError(f"{name} must be a positive integer")
+  return number
+
+
+def _task_option(task, name, default=None):
+  if hasattr(task, name):
+    return getattr(task, name)
+  return getattr(task.func, name, default)

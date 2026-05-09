@@ -395,6 +395,38 @@ def test_worker_timeout_shutdown_keeps_process_until_work_finishes():
   wait_until(lambda: Process.objects.filter(name="worker-timeout-shutdown").exists() is False)
 
 
+def test_worker_timeout_shutdown_keeps_heartbeat_until_work_finishes():
+  release = threading.Event()
+  worker = Worker(
+    WorkerConfig(queues=("*",), threads=1, processes=1, polling_interval=0.1),
+    name="worker-timeout-heartbeat",
+    pid=12345,
+    hostname="localhost",
+    heartbeat_interval=0.01,
+  )
+  make_ready_job(args=["slow-timeout-heartbeat"])
+  worker.start()
+  worker._execute_job = lambda job_id: release.wait(timeout=5)
+
+  worker.poll_once()
+  process_pk = worker.process.pk
+  initial_heartbeat = Process.objects.get(pk=process_pk).last_heartbeat_at
+
+  try:
+    drained = worker.stop(timeout=0.01)
+
+    assert drained is False
+    wait_until(
+      lambda: (
+        Process.objects.filter(pk=process_pk).first() is not None
+        and Process.objects.get(pk=process_pk).last_heartbeat_at > initial_heartbeat
+      )
+    )
+  finally:
+    release.set()
+    wait_until(lambda: Process.objects.filter(pk=process_pk).exists() is False)
+
+
 def test_worker_missing_task_path_fails_job_cleanly():
   job = make_ready_job(task_path="tests.tasks.missing")
   worker = make_worker()

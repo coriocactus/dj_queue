@@ -14,9 +14,11 @@ from dj_queue.models import (
   FailedExecution,
   Job,
   Pause,
+  Process,
   ReadyExecution,
   RecurringExecution,
   RecurringTask,
+  ScheduledExecution,
   Semaphore,
 )
 from dj_queue.operations.concurrency import (
@@ -30,8 +32,11 @@ from dj_queue.operations.jobs import (
   claim_ready_jobs,
   complete_claimed_job,
   discard_ready_jobs,
+  execute_claimed_job,
   fail_claimed_job,
+  promote_scheduled_jobs,
 )
+from dj_queue.api import QueueInfo
 from tests.tasks import echo, limited, other_queue
 
 
@@ -220,6 +225,44 @@ def test_failed_completion_still_unblocks_next_waiter():
   assert Semaphore.objects.get(key="account:1").value == 0
 
 
+@pytest.mark.django_db(transaction=True)
+def test_missing_concurrency_task_path_releases_slot_and_unblocks_next_waiter():
+  process = Process.objects.create(
+    backend_alias="default",
+    kind="Worker",
+    pid=12345,
+    hostname="localhost",
+    name="worker-missing-concurrency-task",
+    metadata={},
+    last_heartbeat_at=timezone.now(),
+  )
+  first = make_job(
+    task_path="tests.tasks.missing_concurrency_task",
+    concurrency_key="account:missing-task",
+  )
+  second = make_job(concurrency_key="account:missing-task")
+  Semaphore.objects.create(
+    key="account:missing-task",
+    value=0,
+    limit=1,
+    expires_at=timezone.now() + timedelta(seconds=60),
+  )
+  ClaimedExecution.objects.create(job=first, process=process)
+  BlockedExecution.objects.create(
+    job=second,
+    queue_name=second.queue_name,
+    priority=second.priority,
+    concurrency_key="account:missing-task",
+    expires_at=timezone.now() + timedelta(seconds=60),
+  )
+
+  execute_claimed_job(first)
+
+  assert FailedExecution.objects.filter(job=first).exists() is True
+  assert ReadyExecution.objects.filter(job=second).exists() is True
+  assert BlockedExecution.objects.filter(job=second).exists() is False
+
+
 @pytest.mark.django_db
 def test_dispatcher_promotes_expired_blocked_jobs():
   job = make_job(task=limited, args=[1], kwargs={"value": "later"}, concurrency_key="account:1")
@@ -237,6 +280,25 @@ def test_dispatcher_promotes_expired_blocked_jobs():
   assert BlockedExecution.objects.filter(job=job).exists() is False
   assert ReadyExecution.objects.filter(job=job).exists() is True
   assert Semaphore.objects.get(key="account:1").value == 0
+
+
+@pytest.mark.django_db
+def test_expired_semaphore_cleanup_preserves_active_claimed_key():
+  first = limited.enqueue(1, value="first")
+  second = limited.enqueue(1, value="second")
+  claim_ready_jobs(limit=1)
+  Semaphore.objects.filter(key="account:1").update(
+    expires_at=timezone.now() - timedelta(seconds=1)
+  )
+  BlockedExecution.objects.filter(job_id=second.id).update(
+    expires_at=timezone.now() - timedelta(seconds=1)
+  )
+
+  assert cleanup_expired_semaphores() == 0
+  assert promote_expired_blocked_jobs(batch_size=10) == []
+  assert ClaimedExecution.objects.filter(job_id=first.id).exists() is True
+  assert BlockedExecution.objects.filter(job_id=second.id).exists() is True
+  assert ReadyExecution.objects.filter(job_id=second.id).exists() is False
 
 
 @pytest.mark.django_db
@@ -272,6 +334,43 @@ def test_promote_expired_blocked_jobs_reuses_task_import_for_shared_task_path(mo
 
 
 @pytest.mark.django_db
+def test_promote_expired_blocked_jobs_uses_backend_default_concurrency_duration(
+  monkeypatch, settings
+):
+  settings.TASKS = {
+    **settings.TASKS,
+    "default": {
+      **settings.TASKS["default"],
+      "OPTIONS": {
+        **settings.TASKS["default"].get("OPTIONS", {}),
+        "default_concurrency_duration": 240,
+      },
+    },
+  }
+  monkeypatch.delattr(limited.func, "concurrency_duration", raising=False)
+  job = make_job(task=limited, args=[1], kwargs={"value": "later"}, concurrency_key="account:1")
+  BlockedExecution.objects.create(
+    job=job,
+    queue_name=job.queue_name,
+    priority=job.priority,
+    concurrency_key=job.concurrency_key,
+    expires_at=timezone.now() - timedelta(seconds=1),
+  )
+  Semaphore.objects.create(
+    key="account:1",
+    value=0,
+    limit=1,
+    expires_at=timezone.now() + timedelta(seconds=240),
+  )
+  before_promote = timezone.now()
+
+  assert promote_expired_blocked_jobs(batch_size=10) == []
+
+  blocked = BlockedExecution.objects.get(job=job)
+  assert blocked.expires_at >= before_promote + timedelta(seconds=200)
+
+
+@pytest.mark.django_db
 def test_discarding_ready_job_releases_waiter():
   first = limited.enqueue(1, value="first")
   second = limited.enqueue(1, value="second")
@@ -292,6 +391,123 @@ def test_queue_pause_blocks_claiming_not_enqueue():
 
   assert ReadyExecution.objects.filter(queue_name="other").count() == 1
   assert claimed_jobs == []
+
+
+@pytest.mark.django_db(transaction=True)
+def test_claim_rechecks_pause_created_during_claim(monkeypatch):
+  job = make_job(queue_name="critical")
+  ReadyExecution.objects.create(job=job, queue_name="critical", priority=0)
+  original_select_ready_rows = __import__(
+    "dj_queue.operations.jobs", fromlist=["_select_ready_rows"]
+  )._select_ready_rows
+
+  def pause_during_selection(*args, **kwargs):
+    rows = original_select_ready_rows(*args, **kwargs)
+    QueueInfo("critical").pause()
+    return rows
+
+  monkeypatch.setattr("dj_queue.operations.jobs._select_ready_rows", pause_during_selection)
+
+  claimed_jobs = claim_ready_jobs(limit=1, queues=("critical",))
+
+  assert claimed_jobs == []
+  assert ReadyExecution.objects.filter(job=job).exists() is True
+  assert ClaimedExecution.objects.filter(job=job).exists() is False
+
+
+@pytest.mark.skipif(
+  os.environ.get("DB_BACKEND", "sqlite") != "sqlite",
+  reason="simulates SQLite's lack of row-level locks",
+)
+@pytest.mark.django_db(transaction=True)
+def test_sqlite_claim_skips_ready_row_consumed_after_selection(monkeypatch):
+  job = make_job()
+  ReadyExecution.objects.create(job=job, queue_name=job.queue_name, priority=job.priority)
+  original_select_ready_rows = __import__(
+    "dj_queue.operations.jobs", fromlist=["_select_ready_rows"]
+  )._select_ready_rows
+
+  def consume_during_selection(*args, **kwargs):
+    rows = original_select_ready_rows(*args, **kwargs)
+    ReadyExecution.objects.filter(pk__in=[row.pk for row in rows]).delete()
+    return rows
+
+  monkeypatch.setattr("dj_queue.operations.jobs._select_ready_rows", consume_during_selection)
+
+  assert claim_ready_jobs(limit=1) == []
+  assert ClaimedExecution.objects.filter(job=job).exists() is False
+
+
+@pytest.mark.skipif(
+  os.environ.get("DB_BACKEND", "sqlite") != "sqlite",
+  reason="simulates SQLite's lack of row-level locks",
+)
+@pytest.mark.django_db(transaction=True)
+def test_sqlite_promote_skips_scheduled_row_consumed_after_selection(monkeypatch):
+  scheduled_at = timezone.now() - timedelta(seconds=1)
+  job = make_job(scheduled_at=scheduled_at)
+  ScheduledExecution.objects.create(
+    job=job,
+    queue_name=job.queue_name,
+    priority=job.priority,
+    scheduled_at=scheduled_at,
+  )
+  original_locked_queryset = __import__(
+    "dj_queue.operations.jobs", fromlist=["locked_queryset"]
+  ).locked_queryset
+
+  class ConsumingQuerySet:
+    def __init__(self, queryset):
+      self.queryset = queryset
+
+    def __getitem__(self, index):
+      rows = list(self.queryset[index])
+      ScheduledExecution.objects.filter(pk__in=[row.pk for row in rows]).delete()
+      return rows
+
+  def consume_during_selection(queryset, *, use_skip_locked=True):
+    return ConsumingQuerySet(original_locked_queryset(queryset, use_skip_locked=use_skip_locked))
+
+  monkeypatch.setattr("dj_queue.operations.jobs.locked_queryset", consume_during_selection)
+
+  assert promote_scheduled_jobs(batch_size=10) == []
+  assert ReadyExecution.objects.filter(job=job).exists() is False
+
+
+@pytest.mark.skipif(
+  os.environ.get("DB_BACKEND", "sqlite") != "sqlite",
+  reason="simulates SQLite's lack of row-level locks",
+)
+@pytest.mark.django_db(transaction=True)
+def test_sqlite_promote_skips_blocked_row_consumed_after_selection(monkeypatch):
+  job = make_job(task=limited, args=[1], kwargs={"value": "later"}, concurrency_key="account:1")
+  BlockedExecution.objects.create(
+    job=job,
+    queue_name=job.queue_name,
+    priority=job.priority,
+    concurrency_key=job.concurrency_key,
+    expires_at=timezone.now() - timedelta(seconds=1),
+  )
+  original_locked_queryset = __import__(
+    "dj_queue.operations.concurrency", fromlist=["locked_queryset"]
+  ).locked_queryset
+
+  class ConsumingQuerySet:
+    def __init__(self, queryset):
+      self.queryset = queryset
+
+    def __getitem__(self, index):
+      rows = list(self.queryset[index])
+      BlockedExecution.objects.filter(pk__in=[row.pk for row in rows]).delete()
+      return rows
+
+  def consume_during_selection(queryset, *, use_skip_locked=True):
+    return ConsumingQuerySet(original_locked_queryset(queryset, use_skip_locked=use_skip_locked))
+
+  monkeypatch.setattr("dj_queue.operations.concurrency.locked_queryset", consume_during_selection)
+
+  assert promote_expired_blocked_jobs(batch_size=10) == []
+  assert ReadyExecution.objects.filter(job=job).exists() is False
 
 
 @pytest.mark.django_db
