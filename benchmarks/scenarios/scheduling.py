@@ -126,6 +126,7 @@ def _scheduled_job(value, scheduled_at, *, now):
 def _scheduled_row(job, scheduled_at):
   return ScheduledExecution(
     job=job,
+    backend_alias=job.backend_alias,
     queue_name=job.queue_name,
     priority=job.priority,
     scheduled_at=scheduled_at,

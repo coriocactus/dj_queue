@@ -29,6 +29,7 @@ def worker_drain(size):
     [
       ReadyExecution(
         job=job,
+        backend_alias=job.backend_alias,
         queue_name=job.queue_name,
         priority=job.priority,
         created_at=now,
