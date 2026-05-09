@@ -86,8 +86,13 @@ def throughput(count, duration):
 
 
 def ensure_database_exists(backend):
-  if backend != "postgres":
-    return
+  if backend == "postgres":
+    ensure_postgres_database_exists()
+  elif backend in {"mysql", "mariadb"}:
+    ensure_mysql_family_database_exists(backend)
+
+
+def ensure_postgres_database_exists():
 
   db_name = os.environ.get("BENCHMARK_DB_NAME", "dj_queue_benchmark")
   if "benchmark" not in db_name.lower():
@@ -113,6 +118,37 @@ def ensure_database_exists(backend):
         cursor.execute(
           psycopg.sql.SQL("CREATE DATABASE {}").format(psycopg.sql.Identifier(db_name))
         )
+
+
+def ensure_mysql_family_database_exists(backend):
+  db_name = os.environ.get("BENCHMARK_DB_NAME", "dj_queue_benchmark")
+  if "benchmark" not in db_name.lower():
+    raise RuntimeError(f"refusing to create a {backend} database without 'benchmark' in its name")
+
+  try:
+    import pymysql
+  except ImportError as exc:
+    raise RuntimeError("creating MySQL-family benchmark databases requires pymysql") from exc
+
+  default_port = "17306" if backend == "mariadb" else "17312"
+  conninfo = {
+    "user": os.environ.get("BENCHMARK_DB_USER", "root"),
+    "password": os.environ.get("BENCHMARK_DB_PASSWORD", "root"),
+    "host": os.environ.get("BENCHMARK_DB_HOST", "127.0.0.1"),
+    "port": int(os.environ.get("BENCHMARK_DB_PORT", default_port)),
+    "database": os.environ.get("BENCHMARK_MAINTENANCE_DB", "mysql"),
+    "autocommit": True,
+  }
+  with pymysql.connect(**conninfo) as conn:
+    with conn.cursor() as cursor:
+      cursor.execute(
+        f"CREATE DATABASE IF NOT EXISTS `{mysql_identifier(db_name)}` "
+        "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+      )
+
+
+def mysql_identifier(value):
+  return value.replace("`", "``")
 
 
 def prepare_database(*, migrate=True):

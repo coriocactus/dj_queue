@@ -70,7 +70,7 @@ def add_run_options(parser, *, default_sizes):
     "--create-db",
     action=argparse.BooleanOptionalAction,
     default=True,
-    help="Create the PostgreSQL benchmark database if it is missing.",
+    help="Create the benchmark database if it is missing for supported backends.",
   )
   parser.add_argument(
     "--migrate",
