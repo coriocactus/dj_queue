@@ -5,6 +5,7 @@ from datetime import timedelta
 
 import pytest
 from django.db import connection, connections
+from django.db.utils import OperationalError
 from django.test.utils import CaptureQueriesContext
 from django.tasks import TaskResultStatus
 from django.utils import timezone
@@ -37,6 +38,7 @@ from dj_queue.operations.jobs import (
   fail_claimed_job,
   promote_scheduled_jobs,
 )
+import dj_queue.operations.jobs as job_operations
 from dj_queue.api import QueueInfo
 from tests.tasks import echo, limited, other_queue
 
@@ -79,6 +81,35 @@ def test_semaphore_acquire_release_cycle():
   assert semaphore_acquire("account:1", limit=1, duration_seconds=60) is False
   assert semaphore_release("account:1", duration_seconds=60) is True
   assert semaphore_acquire("account:1", limit=1, duration_seconds=60) is True
+
+
+@pytest.mark.django_db(transaction=True)
+def test_claim_ready_jobs_retries_transient_database_deadlock(monkeypatch):
+  job = make_job(args=["deadlock"])
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+  calls = 0
+  original_consume_selected_rows = job_operations._consume_selected_rows
+
+  def consume_with_deadlock_once(alias, model, rows):
+    nonlocal calls
+    calls += 1
+    if calls == 1:
+      raise OperationalError(
+        "(1213, 'Deadlock found when trying to get lock; try restarting transaction')"
+      )
+    return original_consume_selected_rows(alias, model, rows)
+
+  monkeypatch.setattr(job_operations, "_consume_selected_rows", consume_with_deadlock_once)
+
+  claimed_jobs = claim_ready_jobs(limit=1)
+
+  assert [claimed_job.id for claimed_job in claimed_jobs] == [job.id]
+  assert calls == 2
 
 
 @pytest.mark.django_db

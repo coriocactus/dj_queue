@@ -1,10 +1,12 @@
 import inspect
 import json
+import time
 import traceback
 from datetime import timedelta
 
 from django.db import connections, transaction
 from django.db.models import Q
+from django.db.utils import OperationalError
 from django.tasks import TaskContext, TaskResult, TaskResultStatus
 from django.utils import timezone
 from django.utils.module_loading import import_string
@@ -30,6 +32,16 @@ from dj_queue.operations.concurrency import (
   unblock_next_blocked_job,
 )
 from dj_queue.runtime import notify as runtime_notify
+
+
+CLAIM_READY_JOBS_RETRY_ATTEMPTS = 3
+TRANSIENT_CLAIM_ERROR_MESSAGES = (
+  "deadlock",
+  "lock wait timeout",
+  "try restarting transaction",
+  "could not serialize access",
+  "database is locked",
+)
 
 
 def enqueue_job(task, args, kwargs, *, backend_alias="default"):
@@ -219,6 +231,37 @@ def claim_ready_jobs(
   if use_skip_locked is None:
     use_skip_locked = load_backend_config(backend_alias).use_skip_locked
 
+  for attempt in range(CLAIM_READY_JOBS_RETRY_ATTEMPTS):
+    try:
+      jobs = _claim_ready_jobs_once(
+        limit=limit,
+        queues=queues,
+        process=process,
+        backend_alias=backend_alias,
+        use_skip_locked=use_skip_locked,
+        alias=alias,
+      )
+      break
+    except OperationalError as error:
+      if attempt == CLAIM_READY_JOBS_RETRY_ATTEMPTS - 1 or not _is_transient_claim_error(error):
+        raise
+      time.sleep(0.01 * (attempt + 1))
+
+  for job in jobs:
+    log_event("job.claimed", job_id=str(job.id), queue_name=job.queue_name, priority=job.priority)
+  return jobs
+
+
+def _claim_ready_jobs_once(
+  *,
+  limit,
+  queues,
+  process,
+  backend_alias,
+  use_skip_locked,
+  alias,
+):
+
   with transaction.atomic(using=alias):
     paused_queue_names = _lock_active_pauses(alias, backend_alias)
     queryset = (
@@ -259,8 +302,6 @@ def claim_ready_jobs(
     )
     _attach_claim_metadata(jobs, process=process, claimed_at=claimed_at)
 
-  for job in jobs:
-    log_event("job.claimed", job_id=str(job.id), queue_name=job.queue_name, priority=job.priority)
   return jobs
 
 
@@ -782,6 +823,11 @@ def _select_ready_rows(queryset, *, limit, queues, use_skip_locked):
     selected_ids.update(row.pk for row in rows)
 
   return selected_rows
+
+
+def _is_transient_claim_error(error):
+  message = str(error).lower()
+  return any(marker in message for marker in TRANSIENT_CLAIM_ERROR_MESSAGES)
 
 
 def _normalize_payload(args, kwargs):
