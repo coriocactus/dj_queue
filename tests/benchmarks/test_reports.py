@@ -1,4 +1,4 @@
-from benchmarks.reports import render_markdown
+from benchmarks.reports import SCENARIO_DESCRIPTIONS, render_markdown
 
 
 def test_render_markdown_report_includes_environment_and_metrics():
@@ -34,8 +34,20 @@ def test_render_markdown_report_includes_environment_and_metrics():
   assert "# dj_queue PostgreSQL Benchmark Report" in markdown
   assert "`dj_queue_benchmark`" in markdown
   assert "bulk-enqueue" in markdown
+  assert (
+    "### `bulk-enqueue`: bulk immediate enqueue throughput and SQL statement count" in markdown
+  )
   assert "1000.000" in markdown
   assert "| 100 | 0 | 0.100 | 1000.000 | 5 |" in markdown
+
+
+def test_render_markdown_report_includes_all_scenario_descriptions():
+  markdown = render_markdown(
+    [benchmark_row(scenario=scenario) for scenario in SCENARIO_DESCRIPTIONS]
+  )
+
+  for scenario, description in SCENARIO_DESCRIPTIONS.items():
+    assert f"### `{scenario}`: {description}" in markdown
 
 
 def test_render_markdown_report_uses_recorded_run_metadata():
@@ -94,7 +106,7 @@ def test_render_markdown_report_accepts_run_command_override():
   assert "--run-command 'bin/benchmark.py all --backend postgres" in markdown
 
 
-def benchmark_row(*, metadata=None):
+def benchmark_row(*, scenario="bulk-enqueue", metadata=None):
   base_metadata = {
     "backend": "postgres",
     "database": {
@@ -112,7 +124,7 @@ def benchmark_row(*, metadata=None):
   if metadata:
     base_metadata.update(metadata)
   return {
-    "scenario": "bulk-enqueue",
+    "scenario": scenario,
     "size": 100,
     "run_index": 0,
     "metrics": {

@@ -5,6 +5,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 
+SCENARIO_DESCRIPTIONS = {
+  "single-enqueue": "one-by-one immediate enqueue latency and throughput",
+  "bulk-enqueue": "bulk immediate enqueue throughput and SQL statement count",
+  "scheduled-promotion": "due scheduled-row promotion from a mixed due/future backlog",
+  "recurring-scale": "scheduler poll cost for persisted not-due recurring rows",
+  "worker-drain": "async supervisor drain throughput for no-op ready jobs",
+  "concurrency-contention": "one hot concurrency key through enqueue, block, release, and unblock",
+}
+
+
 def render_markdown_report(input_path, output_path, *, run_command=None):
   rows = read_jsonl(input_path)
   if not rows:
@@ -171,7 +181,11 @@ def render_scenario_table(scenario, rows):
   columns = [metric for metric in preferred if metric in metric_names]
   columns.extend(metric for metric in metric_names if metric not in columns)
 
-  lines = [f"### `{scenario}`", ""]
+  description = SCENARIO_DESCRIPTIONS.get(scenario)
+  heading = f"### `{scenario}`"
+  if description:
+    heading = f"{heading}: {description}"
+  lines = [heading, ""]
   header = ["size", "run", *columns]
   lines.append("| " + " | ".join(header) + " |")
   lines.append("|" + "---|" * len(header))

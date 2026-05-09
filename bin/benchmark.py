@@ -2,7 +2,9 @@
 
 import argparse
 import os
+import subprocess
 import sys
+from pathlib import Path
 
 import django
 
@@ -20,6 +22,12 @@ from benchmarks.reports import render_markdown_report
 
 DEFAULT_QUICK_SIZES = [100, 1000]
 DEFAULT_ALL_SIZES = [1000, 10000]
+SCRIPT_PATH = Path(__file__).resolve()
+ALL_BACKENDS = ("postgres", "mariadb", "mysql", "sqlite")
+SERVER_BACKEND_BENCHMARK_OPTIONS = {
+  "warmups": "1",
+  "runs": "3",
+}
 
 
 def parse_args(argv):
@@ -31,6 +39,21 @@ def parse_args(argv):
 
   all_parser = subparsers.add_parser("all", help="Run every scenario with larger defaults.")
   add_run_options(all_parser, default_sizes=",".join(str(size) for size in DEFAULT_ALL_SIZES))
+
+  all_backends = subparsers.add_parser(
+    "all-backends",
+    help="Run every scenario for every supported backend and render reports.",
+  )
+  all_backends.add_argument(
+    "--sizes",
+    default=",".join(str(size) for size in DEFAULT_ALL_SIZES),
+    help="Comma-separated workload sizes.",
+  )
+  all_backends.add_argument(
+    "--report-dir",
+    default="docs/benchmarks",
+    help="Directory for rendered Markdown reports.",
+  )
 
   scenario = subparsers.add_parser("scenario", help="Run one scenario.")
   scenario.add_argument("scenario")
@@ -94,10 +117,51 @@ def main(argv):
     return 0
 
   try:
+    if args.command == "all-backends":
+      return run_all_backend_benchmarks(args)
     return run_benchmarks(args)
   except (RuntimeError, ValueError) as exc:
     print(exc, file=sys.stderr)
     return 2
+
+
+def run_all_backend_benchmarks(args):
+  parse_sizes(args.sizes, default=DEFAULT_ALL_SIZES)
+  report_dir = Path(args.report_dir)
+  for backend in ALL_BACKENDS:
+    output_path = default_output_path(backend)
+    command = all_backend_command(backend, sizes=args.sizes, output_path=output_path)
+    try:
+      subprocess.run(command, check=True)
+    except subprocess.CalledProcessError as exc:
+      raise RuntimeError(f"benchmark failed for backend {backend!r}") from exc
+    render_markdown_report(output_path, report_dir / f"{backend}.md")
+  return 0
+
+
+def all_backend_command(backend, *, sizes, output_path):
+  command = [
+    sys.executable,
+    str(SCRIPT_PATH),
+    "all",
+    "--backend",
+    backend,
+    "--sizes",
+    sizes,
+  ]
+  if backend != "sqlite":
+    command.extend(
+      [
+        "--warmups",
+        SERVER_BACKEND_BENCHMARK_OPTIONS["warmups"],
+        "--runs",
+        SERVER_BACKEND_BENCHMARK_OPTIONS["runs"],
+      ]
+    )
+  command.extend(["--output", str(output_path)])
+  if backend == "postgres":
+    command.extend(["--conn-max-age", "60"])
+  return command
 
 
 def run_benchmarks(args):
