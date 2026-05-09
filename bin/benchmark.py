@@ -24,7 +24,7 @@ DEFAULT_QUICK_SIZES = [100, 1000]
 DEFAULT_ALL_SIZES = [1000, 10000]
 SCRIPT_PATH = Path(__file__).resolve()
 ALL_BACKENDS = ("postgres", "mariadb", "mysql", "sqlite")
-SERVER_BACKEND_BENCHMARK_OPTIONS = {
+ALL_BACKEND_BENCHMARK_OPTIONS = {
   "warmups": "1",
   "runs": "3",
 }
@@ -149,15 +149,14 @@ def all_backend_command(backend, *, sizes, output_path):
     "--sizes",
     sizes,
   ]
-  if backend != "sqlite":
-    command.extend(
-      [
-        "--warmups",
-        SERVER_BACKEND_BENCHMARK_OPTIONS["warmups"],
-        "--runs",
-        SERVER_BACKEND_BENCHMARK_OPTIONS["runs"],
-      ]
-    )
+  command.extend(
+    [
+      "--warmups",
+      ALL_BACKEND_BENCHMARK_OPTIONS["warmups"],
+      "--runs",
+      ALL_BACKEND_BENCHMARK_OPTIONS["runs"],
+    ]
+  )
   command.extend(["--output", str(output_path)])
   if backend == "postgres":
     command.extend(["--conn-max-age", "60"])
