@@ -22,6 +22,13 @@ STATUS_RELATIONS = (
   "blocked_execution",
   "failed_execution",
 )
+STATE_MODELS = (
+  ReadyExecution,
+  ScheduledExecution,
+  ClaimedExecution,
+  BlockedExecution,
+  FailedExecution,
+)
 
 
 def make_job(**overrides):
@@ -66,6 +73,14 @@ def assert_job_state(job, expected_status):
     assert instance.status == expected_status
     for status_name in STATUS_NAMES:
       assert getattr(instance, status_name) is (status_name == expected_status)
+
+
+def test_execution_state_index_names_fit_django_limit():
+  index_names = [
+    index.name for model in STATE_MODELS for index in model._meta.indexes if index.name
+  ]
+
+  assert all(len(name) <= 30 for name in index_names)
 
 
 @pytest.mark.django_db

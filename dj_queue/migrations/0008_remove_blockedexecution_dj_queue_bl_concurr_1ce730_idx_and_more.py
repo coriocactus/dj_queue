@@ -98,68 +98,64 @@ class Migration(migrations.Migration):
       model_name="blockedexecution",
       index=models.Index(
         fields=["backend_alias", "concurrency_key", "priority", "id"],
-        name="dj_queue_bl_backend_conc_idx",
+        name="djq_bl_b_conc_idx",
       ),
     ),
     migrations.AddIndex(
       model_name="blockedexecution",
       index=models.Index(
         fields=["backend_alias", "expires_at", "concurrency_key"],
-        name="dj_queue_bl_backend_exp_conc_idx",
+        name="djq_bl_b_exp_conc_idx",
       ),
     ),
     migrations.AddIndex(
       model_name="blockedexecution",
       index=models.Index(
         fields=["backend_alias", "concurrency_key", "-priority", "id"],
-        name="dj_queue_bl_backend_conc_desc_idx",
+        name="djq_bl_b_conc_d_idx",
       ),
     ),
     migrations.AddIndex(
       model_name="blockedexecution",
       index=models.Index(
         fields=["backend_alias", "expires_at", "-priority", "id"],
-        name="dj_queue_bl_backend_exp_desc_idx",
+        name="djq_bl_b_exp_d_idx",
       ),
     ),
     migrations.AddIndex(
       model_name="readyexecution",
-      index=models.Index(
-        fields=["backend_alias", "priority", "id"], name="dj_queue_re_backend_prio_idx"
-      ),
+      index=models.Index(fields=["backend_alias", "priority", "id"], name="djq_re_b_prio_idx"),
     ),
     migrations.AddIndex(
       model_name="readyexecution",
       index=models.Index(
         fields=["backend_alias", "queue_name", "priority", "id"],
-        name="dj_queue_re_backend_queue_idx",
+        name="djq_re_b_queue_idx",
       ),
     ),
     migrations.AddIndex(
       model_name="readyexecution",
-      index=models.Index(
-        fields=["backend_alias", "-priority", "id"], name="dj_queue_re_backend_prio_desc_idx"
-      ),
+      index=models.Index(fields=["backend_alias", "-priority", "id"], name="djq_re_b_prio_d_idx"),
     ),
     migrations.AddIndex(
       model_name="readyexecution",
       index=models.Index(
         fields=["backend_alias", "queue_name", "-priority", "id"],
-        name="dj_queue_re_backend_queue_desc_idx",
+        name="djq_re_b_queue_d_idx",
       ),
     ),
     migrations.AddIndex(
       model_name="scheduledexecution",
       index=models.Index(
         fields=["backend_alias", "scheduled_at", "priority", "id"],
-        name="dj_queue_se_backend_due_idx",
+        name="djq_se_b_due_idx",
       ),
     ),
     migrations.AddIndex(
       model_name="scheduledexecution",
       index=models.Index(
         fields=["backend_alias", "scheduled_at", "-priority", "id"],
-        name="dj_queue_se_backend_due_desc_idx",
+        name="djq_se_b_due_d_idx",
       ),
     ),
   ]
