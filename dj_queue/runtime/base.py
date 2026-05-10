@@ -73,6 +73,7 @@ class BaseRunner:
     self.hostname = hostname
     self.sleeper = sleeper or InterruptibleSleeper()
     self.supervisor = supervisor
+    self.supervisor_id = getattr(supervisor, "pk", supervisor)
     self.process = None
     self._stop_event = threading.Event()
     self._heartbeat_stop_event = threading.Event()
@@ -195,7 +196,7 @@ class BaseRunner:
           hostname=self.hostname,
           name=self.name,
           metadata=self.runtime_metadata(),
-          supervisor=self.supervisor,
+          supervisor_id=self.supervisor_id,
           last_heartbeat_at=timezone.now(),
         ),
         alias=alias,

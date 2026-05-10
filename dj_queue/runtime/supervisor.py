@@ -559,6 +559,7 @@ class ForkSupervisor(Supervisor):
 
   def _build_runner_specs(self):
     specs = []
+    supervisor_id = self.process.pk if self.process else None
 
     for index, worker_config in enumerate(self.config.workers, start=1):
       for process_index in range(worker_config.processes):
@@ -572,6 +573,7 @@ class ForkSupervisor(Supervisor):
               "backend_alias": self.backend_alias,
               "name": f"worker-{suffix}",
               "hostname": self.hostname,
+              "supervisor": supervisor_id,
             },
           }
         )
@@ -586,6 +588,7 @@ class ForkSupervisor(Supervisor):
             "backend_alias": self.backend_alias,
             "name": f"dispatcher-{index}",
             "hostname": self.hostname,
+            "supervisor": supervisor_id,
           },
         }
       )
@@ -600,6 +603,7 @@ class ForkSupervisor(Supervisor):
             "backend_alias": self.backend_alias,
             "name": "scheduler-1",
             "hostname": self.hostname,
+            "supervisor": supervisor_id,
           },
         }
       )
