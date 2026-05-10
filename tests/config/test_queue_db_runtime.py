@@ -176,7 +176,7 @@ def test_use_skip_locked_false_preserves_correctness(
 
     claimed = claim_ready_jobs(limit=2, backend_alias="default")
 
-    assert [job.pk for job in claimed] == [first.pk, second.pk]
+    assert [claimed_job.job.pk for claimed_job in claimed] == [first.pk, second.pk]
     assert ClaimedExecution.objects.using("queue").count() == 2
     assert ReadyExecution.objects.using("queue").count() == 0
 
@@ -218,6 +218,6 @@ def test_claim_ready_jobs_stays_backend_scoped_on_shared_queue_db(
 
     claimed = claim_ready_jobs(limit=2, backend_alias="default")
 
-    assert [job.pk for job in claimed] == [default_job.pk]
+    assert [claimed_job.job.pk for claimed_job in claimed] == [default_job.pk]
     assert ClaimedExecution.objects.using("queue").filter(job=default_job).exists() is True
     assert ReadyExecution.objects.using("queue").filter(job=secondary_job).exists() is True

@@ -1,4 +1,3 @@
-import json
 from datetime import timedelta
 
 from croniter import croniter
@@ -9,6 +8,7 @@ from django.utils.module_loading import import_string
 from dj_queue.db import get_database_alias
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import RecurringExecution, RecurringTask
+from dj_queue.operations._helpers import _normalize_payload
 from dj_queue.operations._insert import create_ignore_conflicts
 from dj_queue.operations.jobs import enqueue_job, validate_queue_allowed
 
@@ -174,17 +174,15 @@ def _next_run_after(schedule, run_at):
   return croniter(schedule, run_at + timedelta(seconds=1)).get_next(type(run_at))
 
 
-def _normalize_payload(args, kwargs):
-  try:
-    return json.loads(json.dumps({"args": list(args), "kwargs": dict(kwargs)}))
-  except (TypeError, ValueError) as exc:
-    raise EnqueueError("payload must be JSON round-trippable") from exc
-
-
 def _advance_next_run_at(recurring_task, next_run_at, *, using):
-  RecurringTask.objects.using(using).filter(
-    Q(next_run_at__isnull=True) | Q(next_run_at__lt=next_run_at),
-    pk=recurring_task.pk,
-    backend_alias=recurring_task.backend_alias,
-  ).update(next_run_at=next_run_at)
-  recurring_task.next_run_at = next_run_at
+  updated = (
+    RecurringTask.objects.using(using)
+    .filter(
+      Q(next_run_at__isnull=True) | Q(next_run_at__lt=next_run_at),
+      pk=recurring_task.pk,
+      backend_alias=recurring_task.backend_alias,
+    )
+    .update(next_run_at=next_run_at)
+  )
+  if updated:
+    recurring_task.next_run_at = next_run_at

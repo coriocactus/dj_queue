@@ -433,7 +433,7 @@ expecting one semaphore namespace per backend alias.
 tables:
 
 ```python
-from dj_queue.api import QueueInfo
+from dj_queue.api import QueueInfo, claim_ready_jobs, execute_claimed_job
 
 orders = QueueInfo("orders")
 
@@ -444,6 +444,10 @@ print(orders.paused)
 orders.pause()
 orders.resume()
 orders.clear()
+
+claimed_jobs = claim_ready_jobs(limit=1, queues=["orders"])
+if claimed_jobs:
+  execute_claimed_job(claimed_jobs[0])
 ```
 
 Notes:
@@ -452,6 +456,8 @@ Notes:
 - pause rows are scoped per backend alias
 - `clear()` discards ready jobs only
 - pass `backend_alias=` when you want to target a non-default `TASKS` alias
+- `claim_ready_jobs()` returns `ClaimedJob` objects, so inspect `claimed_job.job` for the persisted row
+- the low-level claim/execute helpers are exposed on `dj_queue.api` for scripts and examples
 
 Operational commands:
 
@@ -478,32 +484,26 @@ queue database, including the exception class, message, and traceback.
 
 You can retry and discard failed jobs through Django admin, and any raw job
 detail page can enqueue a fresh copy of that stored job. The failed-job actions
-also stay available directly through the operations layer:
+also stay available through the public API:
 
 ```python
-from dj_queue.operations.jobs import discard_failed_job, retry_failed_job
+from dj_queue.api import (
+  discard_blocked_jobs,
+  discard_failed_job,
+  discard_failed_jobs,
+  discard_ready_jobs,
+  discard_scheduled_jobs,
+  retry_failed_job,
+  retry_failed_jobs,
+)
 
 retry_failed_job(job_id)
 discard_failed_job(job_id)
-```
-
-Model helpers are available too:
-
-```python
-from dj_queue.exceptions import UndiscardableError
-from dj_queue.models import ClaimedExecution, FailedExecution
-
-failed = FailedExecution.objects.get(job_id=job_id)
-failed.retry()
-failed.discard()
-
-FailedExecution.retry_all(FailedExecution.objects.order_by("job_id"))
-FailedExecution.discard_all_in_batches()
-
-try:
-  ClaimedExecution.discard_all_in_batches()
-except UndiscardableError:
-  pass
+retry_failed_jobs(job_ids=[job_id_a, job_id_b], batch_size=2)
+discard_ready_jobs(job_ids=[ready_job_id], batch_size=1)
+discard_failed_jobs(batch_size=500)
+discard_scheduled_jobs(job_ids=[scheduled_job_id], batch_size=1)
+discard_blocked_jobs(job_ids=[blocked_job_id], batch_size=1)
 ```
 
 Failures stay inspectable until you act on them.

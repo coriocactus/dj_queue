@@ -8,7 +8,12 @@ from django.utils import timezone
 
 from dj_queue.config import WorkerConfig
 from dj_queue.models import ClaimedExecution, FailedExecution, Job, Process, ReadyExecution
-from dj_queue.operations.jobs import complete_claimed_job, execute_claimed_job
+from dj_queue.operations.jobs import (
+  ClaimedJob,
+  claim_ready_jobs,
+  complete_claimed_job,
+  execute_claimed_job,
+)
 from dj_queue.runtime.worker import Worker
 from tests.tasks import echo, fail, non_json_result, with_context
 
@@ -137,7 +142,7 @@ def test_worker_claims_highest_priority_first():
 
   claimed_jobs = worker.poll_once()
 
-  assert [job.id for job in claimed_jobs] == [high.id]
+  assert [claimed_job.job.id for claimed_job in claimed_jobs] == [high.id]
   assert ClaimedExecution.objects.filter(job=high).exists() is False
   assert ReadyExecution.objects.filter(job=low).exists() is True
   worker.stop()
@@ -153,7 +158,7 @@ def test_worker_respects_ordered_queue_list():
 
   claimed_jobs = worker.poll_once()
 
-  assert [job.id for job in claimed_jobs] == [alpha.id]
+  assert [claimed_job.job.id for claimed_job in claimed_jobs] == [alpha.id]
   worker.stop()
 
 
@@ -184,11 +189,30 @@ def test_worker_executes_already_claimed_job_object(monkeypatch):
 
   worker.poll_once()
 
-  assert [(claimed_job.id, backend_alias) for claimed_job, backend_alias in seen] == [
+  assert [(claimed_job.job.id, backend_alias) for claimed_job, backend_alias in seen] == [
     (job.id, "default")
   ]
-  assert isinstance(seen[0][0], Job)
+  assert isinstance(seen[0][0], ClaimedJob)
   worker.stop()
+
+
+def test_claim_ready_jobs_returns_claim_metadata():
+  process = Process.objects.create(
+    backend_alias="default",
+    kind="Worker",
+    pid=12345,
+    hostname="localhost",
+    name="worker-claim-metadata",
+    metadata={},
+    last_heartbeat_at=timezone.now(),
+  )
+  job = make_ready_job(args=["claim-metadata"])
+
+  claimed_jobs = claim_ready_jobs(limit=1, process=process)
+
+  assert [claimed_job.job.id for claimed_job in claimed_jobs] == [job.id]
+  assert claimed_jobs[0].claimed_at is not None
+  assert claimed_jobs[0].worker_ids == (process.name,)
 
 
 def test_execute_claimed_job_completes_already_loaded_job_object(monkeypatch):
@@ -211,7 +235,7 @@ def test_execute_claimed_job_completes_already_loaded_job_object(monkeypatch):
 
   monkeypatch.setattr("dj_queue.operations.jobs.complete_claimed_job", complete_job)
 
-  execute_claimed_job(job)
+  execute_claimed_job(ClaimedJob(job=job, claimed_at=timezone.now(), worker_ids=(process.name,)))
 
   assert [
     (claimed_job.id, return_value, backend_alias)

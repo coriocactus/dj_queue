@@ -108,7 +108,7 @@ def test_claim_ready_jobs_retries_transient_database_deadlock(monkeypatch):
 
   claimed_jobs = claim_ready_jobs(limit=1)
 
-  assert [claimed_job.id for claimed_job in claimed_jobs] == [job.id]
+  assert [claimed_job.job.id for claimed_job in claimed_jobs] == [job.id]
   assert calls == 2
 
 
@@ -250,7 +250,7 @@ def test_successful_completion_unblocks_next_waiter():
   claimed_jobs = claim_ready_jobs(limit=1)
   complete_claimed_job(first.id, "done")
 
-  assert [str(job.id) for job in claimed_jobs] == [first.id]
+  assert [str(claimed_job.job.id) for claimed_job in claimed_jobs] == [first.id]
   assert ReadyExecution.objects.filter(job_id=second.id).exists() is True
   assert Semaphore.objects.get(key="account:1").value == 0
 
@@ -579,7 +579,7 @@ def test_queue_resume_restores_claiming():
   pause.delete()
   claimed_jobs = claim_ready_jobs(limit=1, queues=("other",))
 
-  assert [str(job.id) for job in claimed_jobs] == [result.id]
+  assert [str(claimed_job.job.id) for claimed_job in claimed_jobs] == [result.id]
 
 
 @pytest.mark.django_db
@@ -590,7 +590,11 @@ def test_queue_selector_exact_prefix_and_star_ordering():
 
   claimed_jobs = claim_ready_jobs(limit=3, queues=("alpha", "mail*", "*"))
 
-  assert [str(job.id) for job in claimed_jobs] == [alpha.id, mail.id, default.id]
+  assert [str(claimed_job.job.id) for claimed_job in claimed_jobs] == [
+    alpha.id,
+    mail.id,
+    default.id,
+  ]
 
 
 @pytest.mark.django_db
@@ -606,7 +610,11 @@ def test_claim_ready_jobs_bulk_inserts_claimed_rows_for_full_batch():
 
   claimed_jobs = claim_ready_jobs(limit=3)
 
-  assert [job.id for job in claimed_jobs] == [jobs[0].id, jobs[1].id, jobs[2].id]
+  assert [claimed_job.job.id for claimed_job in claimed_jobs] == [
+    jobs[0].id,
+    jobs[1].id,
+    jobs[2].id,
+  ]
   assert ClaimedExecution.objects.count() == 3
   assert ReadyExecution.objects.count() == 0
 

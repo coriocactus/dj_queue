@@ -57,9 +57,6 @@ class Dispatcher(BaseRunner):
         self._last_maintenance_at = timezone.now()
     return promoted_jobs
 
-  def stop(self):
-    return super().stop()
-
   def process_metadata(self):
     return {
       "batch_size": self.config.batch_size,

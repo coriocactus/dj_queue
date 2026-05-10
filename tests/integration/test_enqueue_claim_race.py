@@ -68,7 +68,7 @@ def test_concurrent_enqueue_and_claim_no_lost_jobs():
           continue
         if claimed_jobs:
           with claimed_lock:
-            claimed_ids.extend(str(job.id) for job in claimed_jobs)
+            claimed_ids.extend(str(claimed_job.job.id) for claimed_job in claimed_jobs)
           continue
 
         if producers_done.is_set() and Job.objects.count() == total_jobs:

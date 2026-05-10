@@ -3,10 +3,12 @@ from datetime import timedelta
 import pytest
 from django.utils import timezone
 
-from dj_queue.api import QueueInfo
-from dj_queue.exceptions import UndiscardableError
+from dj_queue.api import (
+  QueueInfo,
+  discard_failed_jobs,
+  retry_failed_jobs,
+)
 from dj_queue.models import (
-  ClaimedExecution,
   FailedExecution,
   Job,
   Pause,
@@ -210,7 +212,7 @@ def test_queue_info_clear():
 def test_failed_execution_retry_all():
   failed_jobs = [make_failed_job() for _ in range(2)]
 
-  retried = FailedExecution.retry_all(FailedExecution.objects.order_by("job_id"))
+  retried = retry_failed_jobs(batch_size=2)
 
   assert retried == 2
   assert FailedExecution.objects.count() == 0
@@ -220,16 +222,10 @@ def test_failed_execution_retry_all():
 def test_failed_execution_discard_all_in_batches():
   failed_jobs = [make_failed_job() for _ in range(3)]
 
-  deleted = FailedExecution.discard_all_in_batches(batch_size=2)
+  deleted = 0
+  while FailedExecution.objects.exists():
+    deleted += discard_failed_jobs(batch_size=2)
 
   assert deleted == 3
   assert Job.objects.filter(pk__in=[job.id for job in failed_jobs]).exists() is False
   assert FailedExecution.objects.count() == 0
-
-
-def test_claimed_execution_discard_raises_undiscardable_error():
-  job = make_job()
-  ClaimedExecution.objects.create(job=job, process=make_process())
-
-  with pytest.raises(UndiscardableError):
-    ClaimedExecution.discard_all_in_batches()

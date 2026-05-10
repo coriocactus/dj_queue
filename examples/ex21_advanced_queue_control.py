@@ -11,8 +11,7 @@ from _example import result, step, takeaway, title
 
 from django.tasks import task
 
-from dj_queue.api import QueueInfo
-from dj_queue.operations.jobs import claim_ready_jobs
+from dj_queue.api import QueueInfo, claim_ready_jobs
 
 
 @task

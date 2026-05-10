@@ -691,6 +691,7 @@ def seed_demo_data():
     )
     ReadyExecution.objects.create(
       job=ready_job,
+      backend_alias=ready_job.backend_alias,
       queue_name=ready_job.queue_name,
       priority=ready_job.priority,
     )
@@ -708,6 +709,7 @@ def seed_demo_data():
     )
     ReadyExecution.objects.create(
       job=ready_job,
+      backend_alias=ready_job.backend_alias,
       queue_name=ready_job.queue_name,
       priority=ready_job.priority,
     )
@@ -721,6 +723,7 @@ def seed_demo_data():
   )
   ScheduledExecution.objects.create(
     job=scheduled_job,
+    backend_alias=scheduled_job.backend_alias,
     queue_name=scheduled_job.queue_name,
     priority=scheduled_job.priority,
     scheduled_at=scheduled_job.scheduled_at,
@@ -735,6 +738,7 @@ def seed_demo_data():
   )
   BlockedExecution.objects.create(
     job=blocked_job,
+    backend_alias=blocked_job.backend_alias,
     queue_name=blocked_job.queue_name,
     priority=blocked_job.priority,
     concurrency_key=blocked_job.concurrency_key,
@@ -774,6 +778,7 @@ def seed_demo_data():
     )
     ReadyExecution.objects.create(
       job=ready_job,
+      backend_alias=ready_job.backend_alias,
       queue_name=ready_job.queue_name,
       priority=ready_job.priority,
     )
@@ -787,6 +792,7 @@ def seed_demo_data():
     )
     ReadyExecution.objects.create(
       job=ready_job,
+      backend_alias=ready_job.backend_alias,
       queue_name=ready_job.queue_name,
       priority=ready_job.priority,
     )
@@ -800,6 +806,7 @@ def seed_demo_data():
   )
   ReadyExecution.objects.create(
     job=critical_ready,
+    backend_alias=critical_ready.backend_alias,
     queue_name=critical_ready.queue_name,
     priority=critical_ready.priority,
   )
@@ -813,6 +820,7 @@ def seed_demo_data():
     )
     ScheduledExecution.objects.create(
       job=scheduled_job,
+      backend_alias=scheduled_job.backend_alias,
       queue_name=scheduled_job.queue_name,
       priority=scheduled_job.priority,
       scheduled_at=scheduled_job.scheduled_at,
@@ -832,6 +840,7 @@ def seed_demo_data():
     )
     BlockedExecution.objects.create(
       job=blocked_job,
+      backend_alias=blocked_job.backend_alias,
       queue_name=blocked_job.queue_name,
       priority=blocked_job.priority,
       concurrency_key=blocked_job.concurrency_key,

@@ -11,7 +11,7 @@ from _example import result, step, takeaway, title
 
 from django.tasks import task
 
-from dj_queue.operations.jobs import claim_ready_jobs
+from dj_queue.api import claim_ready_jobs
 
 
 @task
@@ -28,8 +28,8 @@ work.using(priority=10).enqueue("high")
 result("enqueued labels=low, normal, high")
 
 step(2, "claim the batch and inspect the order")
-jobs = claim_ready_jobs(limit=3)
-for job in jobs:
-  result(f"priority={job.priority:+d} payload={job.payload}")
+claimed_jobs = claim_ready_jobs(limit=3)
+for claimed_job in claimed_jobs:
+  result(f"priority={claimed_job.job.priority:+d} payload={claimed_job.job.payload}")
 
 takeaway("ready jobs are claimed in descending priority order")

@@ -3,10 +3,40 @@ from functools import partial
 from django.db.models.functions import Coalesce
 from django.db import transaction
 from django.utils import timezone
-from django.utils.module_loading import import_string
 
 from dj_queue.db import get_database_alias
 from dj_queue.models import Pause, ReadyExecution
+from dj_queue.operations.jobs import (
+  ClaimedJob,
+  claim_ready_jobs,
+  discard_blocked_jobs,
+  discard_failed_job,
+  discard_failed_jobs,
+  discard_ready_jobs,
+  discard_scheduled_jobs,
+  execute_claimed_job,
+  retry_failed_job,
+  retry_failed_jobs,
+)
+from dj_queue.operations.queues import pause_queue, resume_queue
+from dj_queue.operations.recurring import schedule_recurring_task, unschedule_recurring_task
+
+__all__ = [
+  "ClaimedJob",
+  "QueueInfo",
+  "claim_ready_jobs",
+  "discard_blocked_jobs",
+  "discard_failed_job",
+  "discard_failed_jobs",
+  "discard_ready_jobs",
+  "discard_scheduled_jobs",
+  "enqueue_on_commit",
+  "execute_claimed_job",
+  "retry_failed_job",
+  "retry_failed_jobs",
+  "schedule_recurring_task",
+  "unschedule_recurring_task",
+]
 
 
 class QueueInfo:
@@ -44,11 +74,9 @@ class QueueInfo:
     )
 
   def pause(self):
-    pause_queue = import_string("dj_queue.operations.queues.pause_queue")
     pause_queue(self.queue_name, backend_alias=self.backend_alias)
 
   def resume(self):
-    resume_queue = import_string("dj_queue.operations.queues.resume_queue")
     resume_queue(self.queue_name, backend_alias=self.backend_alias)
 
   def clear(self, *, batch_size=500):
@@ -57,7 +85,7 @@ class QueueInfo:
       job_ids = list(self._ready_queryset().values_list("job_id", flat=True)[:batch_size])
       if not job_ids:
         return deleted
-      deleted += _discard_ready_jobs(
+      deleted += discard_ready_jobs(
         job_ids=job_ids,
         batch_size=batch_size,
         backend_alias=self.backend_alias,
@@ -86,41 +114,5 @@ class QueueInfo:
     )
 
 
-def _discard_ready_jobs(*, job_ids, batch_size, backend_alias):
-  discard_ready_jobs = import_string("dj_queue.operations.jobs.discard_ready_jobs")
-  return discard_ready_jobs(job_ids=job_ids, batch_size=batch_size, backend_alias=backend_alias)
-
-
 def enqueue_on_commit(task, *args, using=None, **kwargs):
   transaction.on_commit(partial(task.enqueue, *args, **kwargs), using=using)
-
-
-def schedule_recurring_task(
-  *,
-  key,
-  task_path,
-  schedule,
-  args=(),
-  kwargs=None,
-  queue_name="default",
-  priority=0,
-  description="",
-  backend_alias="default",
-):
-  operation = import_string("dj_queue.operations.recurring.schedule_recurring_task")
-  return operation(
-    key=key,
-    task_path=task_path,
-    schedule=schedule,
-    args=args,
-    kwargs=kwargs,
-    queue_name=queue_name,
-    priority=priority,
-    description=description,
-    backend_alias=backend_alias,
-  )
-
-
-def unschedule_recurring_task(key, *, backend_alias="default"):
-  operation = import_string("dj_queue.operations.recurring.unschedule_recurring_task")
-  return operation(key, backend_alias=backend_alias)

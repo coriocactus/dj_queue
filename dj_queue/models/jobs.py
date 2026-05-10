@@ -3,10 +3,6 @@ import uuid
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import models
 from django.db.models import Q
-from django.utils.module_loading import import_string
-
-from dj_queue.db import get_database_alias
-from dj_queue.exceptions import UndiscardableError
 
 JOB_STATUS_RELATIONS = (
   ("ready", "ready_execution"),
@@ -140,16 +136,6 @@ class ReadyExecution(models.Model):
       ),
     ]
 
-  @classmethod
-  def discard_all_in_batches(cls, *, batch_size=500, backend_alias="default"):
-    operation = import_string("dj_queue.operations.jobs.discard_ready_jobs")
-    return _discard_jobs_for_state(
-      cls,
-      operation,
-      batch_size=batch_size,
-      backend_alias=backend_alias,
-    )
-
 
 class ScheduledExecution(models.Model):
   job = models.OneToOneField(
@@ -196,10 +182,6 @@ class ClaimedExecution(models.Model):
     db_table = "dj_queue_claimed_executions"
     indexes = [models.Index(fields=["process", "job"])]
 
-  @classmethod
-  def discard_all_in_batches(cls, **_kwargs):
-    raise UndiscardableError("cannot discard in-progress jobs")
-
 
 class BlockedExecution(models.Model):
   job = models.OneToOneField(
@@ -235,16 +217,6 @@ class BlockedExecution(models.Model):
       ),
     ]
 
-  @classmethod
-  def discard_all_in_batches(cls, *, batch_size=500, backend_alias="default"):
-    operation = import_string("dj_queue.operations.jobs.discard_blocked_jobs")
-    return _discard_jobs_for_state(
-      cls,
-      operation,
-      batch_size=batch_size,
-      backend_alias=backend_alias,
-    )
-
 
 class FailedExecution(models.Model):
   job = models.OneToOneField(
@@ -260,56 +232,3 @@ class FailedExecution(models.Model):
   class Meta:
     db_table = "dj_queue_failed_executions"
     indexes = [models.Index(fields=["created_at", "job"])]
-
-  def retry(self):
-    return _retry_failed_job(self.job_id, backend_alias=self.job.backend_alias)
-
-  def discard(self):
-    return _discard_failed_job(self.job_id, backend_alias=self.job.backend_alias)
-
-  @classmethod
-  def retry_all(cls, queryset):
-    retried = 0
-    for execution in queryset.select_related("job"):
-      execution.retry()
-      retried += 1
-    return retried
-
-  @classmethod
-  def discard_all_in_batches(cls, *, batch_size=500, backend_alias="default"):
-    operation = import_string("dj_queue.operations.jobs.discard_failed_jobs")
-    return _discard_jobs_for_state(
-      cls,
-      operation,
-      batch_size=batch_size,
-      backend_alias=backend_alias,
-    )
-
-
-def _retry_failed_job(job_id, *, backend_alias):
-  operation = import_string("dj_queue.operations.jobs.retry_failed_job")
-  return operation(job_id, backend_alias=backend_alias)
-
-
-def _discard_failed_job(job_id, *, backend_alias):
-  operation = import_string("dj_queue.operations.jobs.discard_failed_job")
-  return operation(job_id, backend_alias=backend_alias)
-
-
-def _discard_jobs_for_state(model, operation, *, batch_size, backend_alias):
-  alias = get_database_alias(backend_alias)
-  deleted = 0
-  while True:
-    filter_kwargs = (
-      {"backend_alias": backend_alias}
-      if any(field.name == "backend_alias" for field in model._meta.fields)
-      else {"job__backend_alias": backend_alias}
-    )
-    job_ids = list(
-      model.objects.using(alias)
-      .filter(**filter_kwargs)
-      .values_list("job_id", flat=True)[:batch_size]
-    )
-    if not job_ids:
-      return deleted
-    deleted += operation(job_ids=job_ids, batch_size=batch_size, backend_alias=backend_alias)

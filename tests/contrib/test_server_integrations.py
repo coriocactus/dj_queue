@@ -1,12 +1,9 @@
 import asyncio
-import importlib
 import time
-from datetime import timedelta
 
 import pytest
 from django.core.management import call_command
 from django.tasks import TaskResultStatus
-from django.utils import timezone
 
 from dj_queue.models import Job, Process
 from dj_queue.runtime.supervisor import AsyncSupervisor
@@ -233,41 +230,3 @@ def test_embedded_server_executes_jobs_end_to_end(
     assert Process.objects.using("queue").filter(kind="Worker").exists() is True
 
     supervisor.stop()
-
-
-def test_admin_seed_clears_leftover_runtime_process_rows(settings):
-  settings.TASKS = {
-    **settings.TASKS,
-    "critical": {
-      "BACKEND": "dj_queue.backend.DjQueueBackend",
-      "QUEUES": ["critical-paused", "alerts", "critical-review"],
-      "OPTIONS": {},
-    },
-  }
-  admin_module = importlib.import_module("bin.admin")
-
-  supervisor = Process.objects.create(
-    backend_alias="demo",
-    kind="Supervisor",
-    pid=4236,
-    hostname="localhost",
-    name="supervisor-4236",
-    metadata={"mode": "async"},
-    last_heartbeat_at=timezone.now() - timedelta(minutes=10),
-  )
-  Process.objects.create(
-    backend_alias="demo",
-    kind="Worker",
-    pid=4237,
-    hostname="localhost",
-    name="worker-1",
-    metadata={"queues": ["*"], "threads": 1},
-    supervisor=supervisor,
-    last_heartbeat_at=timezone.now() - timedelta(minutes=10),
-  )
-
-  admin_module.seed_demo_data()
-
-  assert Process.objects.filter(name="worker-1").exists() is False
-  assert Process.objects.filter(name="supervisor-4236").exists() is False
-  assert Process.objects.filter(name="dashboard-supervisor").exists() is True

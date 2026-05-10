@@ -6,10 +6,6 @@ class EnqueueError(DjQueueError):
   pass
 
 
-class UndiscardableError(DjQueueError):
-  pass
-
-
 class AlreadyRecorded(DjQueueError):
   pass
 

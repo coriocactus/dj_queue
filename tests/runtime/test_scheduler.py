@@ -345,6 +345,39 @@ def test_scheduler_reschedules_changed_dynamic_task():
   scheduler.stop()
 
 
+def test_scheduler_does_not_rewind_persisted_next_run_at_when_row_already_advanced():
+  now = fixed_now()
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      recurring={
+        "static-task": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "* * * * *",
+        }
+      }
+    )
+  )
+  scheduler.start()
+  task = RecurringTask.objects.create(
+    backend_alias="default",
+    key="dynamic-task",
+    task_path="tests.tasks.echo",
+    payload={"args": [], "kwargs": {}},
+    schedule="* * * * *",
+    queue_name="default",
+    priority=0,
+    static=False,
+    next_run_at=now,
+  )
+  RecurringTask.objects.filter(pk=task.pk).update(next_run_at=now + timedelta(minutes=10))
+
+  scheduler.poll_once(now=now)
+
+  task.refresh_from_db()
+  assert task.next_run_at == now + timedelta(minutes=10)
+  scheduler.stop()
+
+
 def test_internal_cleanup_runs_without_persisted_internal_recurring_task():
   scheduler = build_scheduler(
     tasks_settings=scheduler_tasks_settings(

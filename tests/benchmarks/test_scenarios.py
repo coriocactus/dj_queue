@@ -26,8 +26,8 @@ def test_worker_drain_seeds_backend_scoped_rows(monkeypatch):
   def assert_seeded_ready_rows_are_claimable(size, **_kwargs):
     jobs = runtime.claim_ready_jobs(limit=size)
     assert len(jobs) == size
-    for job in jobs:
-      runtime.complete_claimed_job(job.id, job.payload["args"][0])
+    for claimed_job in jobs:
+      runtime.complete_claimed_job(claimed_job.job.id, claimed_job.job.payload["args"][0])
 
   monkeypatch.setattr(
     runtime.AsyncSupervisor,

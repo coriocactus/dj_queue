@@ -69,8 +69,8 @@ class Worker(BaseRunner):
         backend_alias=self.backend_alias,
       )
 
-    for job in claimed_jobs:
-      future = self.pool.submit(self._execute_job, job)
+    for claimed_job in claimed_jobs:
+      future = self.pool.submit(self._execute_job, claimed_job)
       future.add_done_callback(self._handle_future)
     return claimed_jobs
 
@@ -106,9 +106,9 @@ class Worker(BaseRunner):
       "polling_interval": self.config.polling_interval,
     }
 
-  def _execute_job(self, job):
+  def _execute_job(self, claimed_job):
     with app_executor():
-      return execute_claimed_job(job, backend_alias=self.backend_alias)
+      return execute_claimed_job(claimed_job, backend_alias=self.backend_alias)
 
   def _handle_future(self, future):
     try:

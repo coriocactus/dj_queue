@@ -9,7 +9,12 @@ from dj_queue.config import load_backend_config
 from dj_queue.db import database_capabilities, get_database_alias, locked_queryset
 from dj_queue.exceptions import EnqueueError
 from dj_queue.log import log_event
-from dj_queue.models import BlockedExecution, ClaimedExecution, Pause, ReadyExecution, Semaphore
+from dj_queue.models import BlockedExecution, ClaimedExecution, ReadyExecution, Semaphore
+from dj_queue.operations._helpers import (
+  _consume_selected_rows,
+  _lock_active_pauses,
+  _task_option,
+)
 from dj_queue.operations._insert import create_ignore_conflicts
 from dj_queue.runtime import notify as runtime_notify
 
@@ -230,29 +235,6 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
   return promoted_jobs
 
 
-def _lock_active_pauses(alias, backend_alias, queue_names):
-  active_queue_names = tuple(queue_name for queue_name in queue_names if queue_name)
-  if not active_queue_names:
-    return None
-
-  list(
-    Pause.objects.using(alias)
-    .select_for_update()
-    .filter(backend_alias=backend_alias, queue_name__in=active_queue_names)
-    .values_list("queue_name", flat=True)
-  )
-  return None
-
-
-def _consume_selected_rows(alias, model, rows):
-  consumed_rows = []
-  for row in rows:
-    deleted, _ = model.objects.using(alias).filter(pk=row.pk).delete()
-    if deleted:
-      consumed_rows.append(row)
-  return consumed_rows
-
-
 def _positive_int_option(value, name):
   try:
     number = int(value)
@@ -262,9 +244,3 @@ def _positive_int_option(value, name):
   if number <= 0:
     raise EnqueueError(f"{name} must be a positive integer")
   return number
-
-
-def _task_option(task, name, default=None):
-  if hasattr(task, name):
-    return getattr(task, name)
-  return getattr(task.func, name, default)

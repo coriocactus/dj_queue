@@ -93,8 +93,8 @@ def concurrency_contention(size):
       if not jobs:
         time.sleep(0.001)
         continue
-      job = jobs[0]
-      complete_claimed_job(job.id, job.payload["args"][0])
+      claimed_job = jobs[0]
+      complete_claimed_job(claimed_job.job.id, claimed_job.job.payload["args"][0])
       completed += 1
 
   finished_count = Job.objects.filter(finished_at__isnull=False).count()

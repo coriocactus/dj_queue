@@ -2,6 +2,7 @@ import inspect
 import json
 import time
 import traceback
+from dataclasses import dataclass
 from datetime import timedelta
 
 from django.db import connections, transaction
@@ -12,7 +13,7 @@ from django.utils import timezone
 from django.utils.module_loading import import_string
 
 from dj_queue.config import load_backend_config
-from dj_queue.db import database_capabilities, get_database_alias, locked_queryset
+from dj_queue.db import get_database_alias, locked_queryset
 from dj_queue.exceptions import EnqueueError
 from dj_queue.log import log_event
 from dj_queue.models import (
@@ -20,10 +21,15 @@ from dj_queue.models import (
   ClaimedExecution,
   FailedExecution,
   Job,
-  Pause,
   ReadyExecution,
   Semaphore,
   ScheduledExecution,
+)
+from dj_queue.operations._helpers import (
+  _consume_selected_rows,
+  _lock_active_pauses,
+  _normalize_payload,
+  _task_option,
 )
 from dj_queue.operations.concurrency import (
   concurrency_settings,
@@ -42,6 +48,13 @@ TRANSIENT_CLAIM_ERROR_MESSAGES = (
   "could not serialize access",
   "database is locked",
 )
+
+
+@dataclass(frozen=True)
+class ClaimedJob:
+  job: Job
+  claimed_at: object
+  worker_ids: tuple[str, ...]
 
 
 def enqueue_job(task, args, kwargs, *, backend_alias="default"):
@@ -233,7 +246,7 @@ def claim_ready_jobs(
 
   for attempt in range(CLAIM_READY_JOBS_RETRY_ATTEMPTS):
     try:
-      jobs = _claim_ready_jobs_once(
+      claimed_jobs = _claim_ready_jobs_once(
         limit=limit,
         queues=queues,
         process=process,
@@ -247,9 +260,14 @@ def claim_ready_jobs(
         raise
       time.sleep(0.01 * (attempt + 1))
 
-  for job in jobs:
-    log_event("job.claimed", job_id=str(job.id), queue_name=job.queue_name, priority=job.priority)
-  return jobs
+  for claimed_job in claimed_jobs:
+    log_event(
+      "job.claimed",
+      job_id=str(claimed_job.job.id),
+      queue_name=claimed_job.job.queue_name,
+      priority=claimed_job.job.priority,
+    )
+  return claimed_jobs
 
 
 def _claim_ready_jobs_once(
@@ -295,33 +313,33 @@ def _claim_ready_jobs_once(
     jobs = [row.job for row in ready_rows]
 
     claimed_at = timezone.now()
+    worker_ids = (process.name,) if process is not None else ()
     _bulk_create(
       alias,
       ClaimedExecution,
       [ClaimedExecution(job=job, process=process, created_at=claimed_at) for job in jobs],
     )
-    _attach_claim_metadata(jobs, process=process, claimed_at=claimed_at)
 
-  return jobs
+  return [ClaimedJob(job=job, claimed_at=claimed_at, worker_ids=worker_ids) for job in jobs]
 
 
 def execute_claimed_job(job, *, backend_alias="default"):
-  if not isinstance(job, Job):
-    alias = get_database_alias(backend_alias)
-    claimed = (
-      ClaimedExecution.objects.using(alias)
-      .select_related("job", "process")
-      .get(job_id=job, job__backend_alias=backend_alias)
-    )
-    job = claimed.job
-    _attach_claim_metadata([job], process=claimed.process, claimed_at=claimed.created_at)
+  claimed_job = None
+  if isinstance(job, ClaimedJob):
+    claimed_job = job
+    job = claimed_job.job
+  elif not isinstance(job, Job):
+    claimed_job = _load_claimed_job(job, backend_alias=backend_alias)
+    job = claimed_job.job
 
   try:
     task = import_string(job.task_path)
     args = list(job.payload.get("args", []))
     kwargs = dict(job.payload.get("kwargs", {}))
     if task.takes_context:
-      context = TaskContext(task_result=_task_result_for_claimed_job(task, job))
+      if claimed_job is None:
+        claimed_job = _load_claimed_job(job.id, backend_alias=job.backend_alias)
+      context = TaskContext(task_result=_task_result_for_claimed_job(task, claimed_job))
       return_value = task.call(context, *args, **kwargs)
     else:
       return_value = task.call(*args, **kwargs)
@@ -339,6 +357,8 @@ def execute_claimed_job(job, *, backend_alias="default"):
 
 def complete_claimed_job(job, return_value, *, backend_alias="default"):
   alias = get_database_alias(backend_alias)
+  if isinstance(job, ClaimedJob):
+    job = job.job
   job_id = job.id if isinstance(job, Job) else job
 
   with transaction.atomic(using=alias):
@@ -366,6 +386,8 @@ def complete_claimed_job(job, return_value, *, backend_alias="default"):
 
 def fail_claimed_job(job, error, *, traceback_text="", backend_alias="default"):
   alias = get_database_alias(backend_alias)
+  if isinstance(job, ClaimedJob):
+    job = job.job
   job_id = job.id if isinstance(job, Job) else job
 
   with transaction.atomic(using=alias):
@@ -507,6 +529,49 @@ def retry_failed_job(job_id, *, backend_alias="default"):
 
   log_event("job.retried", job_id=str(job.id), queue_name=job.queue_name, priority=job.priority)
   return job
+
+
+def retry_failed_jobs(*, job_ids=None, batch_size=500, backend_alias="default"):
+  alias = get_database_alias(backend_alias)
+  config = load_backend_config(backend_alias)
+
+  with transaction.atomic(using=alias):
+    queryset = (
+      FailedExecution.objects.using(alias).filter(job__backend_alias=backend_alias).order_by("id")
+    )
+    if job_ids is not None:
+      queryset = queryset.filter(job_id__in=job_ids)
+    failed_rows = list(
+      locked_queryset(
+        queryset.select_related("job"),
+        use_skip_locked=config.use_skip_locked,
+      )[:batch_size]
+    )
+    if not failed_rows:
+      return 0
+
+    jobs = []
+    ready_queue_names = []
+    for failed in failed_rows:
+      job = failed.job
+      failed.delete(using=alias)
+      job.return_value = None
+      job.finished_at = None
+      job.save(using=alias, update_fields=["return_value", "finished_at", "updated_at"])
+      dispatched_as = _dispatch_existing_job(job)
+      jobs.append(job)
+      if dispatched_as == "ready":
+        ready_queue_names.append(job.queue_name)
+
+  if ready_queue_names:
+    runtime_notify.notify_ready_queues(
+      tuple(dict.fromkeys(ready_queue_names)),
+      backend_alias=backend_alias,
+    )
+
+  for job in jobs:
+    log_event("job.retried", job_id=str(job.id), queue_name=job.queue_name, priority=job.priority)
+  return len(jobs)
 
 
 _KEEP_RUN_AFTER = object()
@@ -795,13 +860,6 @@ def _filter_queue_selectors(queryset, queues):
   return queryset.filter(condition)
 
 
-def _attach_claim_metadata(jobs, *, process, claimed_at):
-  worker_ids = [process.name] if process is not None else []
-  for job in jobs:
-    job._dj_queue_claimed_at = claimed_at
-    job._dj_queue_worker_ids = worker_ids
-
-
 def _select_ready_rows(queryset, *, limit, queues, use_skip_locked):
   if queues in (None, (), "*", ["*"], ("*",)):
     ordered = queryset.order_by("-priority", "id")
@@ -830,13 +888,6 @@ def _is_transient_claim_error(error):
   return any(marker in message for marker in TRANSIENT_CLAIM_ERROR_MESSAGES)
 
 
-def _normalize_payload(args, kwargs):
-  try:
-    return json.loads(json.dumps({"args": list(args), "kwargs": dict(kwargs)}))
-  except (TypeError, ValueError) as exc:
-    raise EnqueueError("payload must be JSON round-trippable") from exc
-
-
 def _normalize_return_value(return_value):
   try:
     return json.loads(json.dumps(return_value))
@@ -844,33 +895,18 @@ def _normalize_return_value(return_value):
     raise ValueError("return value must be JSON round-trippable") from exc
 
 
-def _task_option(task, name, default=None):
-  if hasattr(task, name):
-    return getattr(task, name)
-  return getattr(task.func, name, default)
-
-
-def _lock_active_pauses(alias, backend_alias, queue_names=None):
-  queryset = Pause.objects.using(alias).select_for_update().filter(backend_alias=backend_alias)
-  if queue_names is not None:
-    active_queue_names = tuple(queue_name for queue_name in queue_names if queue_name)
-    if not active_queue_names:
-      return set()
-    queryset = queryset.filter(queue_name__in=active_queue_names)
-  return set(queryset.values_list("queue_name", flat=True))
-
-
-def _consume_selected_rows(alias, model, rows):
-  if not database_capabilities(alias).uses_serialized_writes:
-    model.objects.using(alias).filter(pk__in=[row.pk for row in rows]).delete()
-    return rows
-
-  consumed_rows = []
-  for row in rows:
-    deleted, _ = model.objects.using(alias).filter(pk=row.pk).delete()
-    if deleted:
-      consumed_rows.append(row)
-  return consumed_rows
+def _load_claimed_job(job_id, *, backend_alias):
+  alias = get_database_alias(backend_alias)
+  claimed = (
+    ClaimedExecution.objects.using(alias)
+    .select_related("job", "process")
+    .get(job_id=job_id, job__backend_alias=backend_alias)
+  )
+  return ClaimedJob(
+    job=claimed.job,
+    claimed_at=claimed.created_at,
+    worker_ids=(claimed.process.name,) if claimed.process is not None else (),
+  )
 
 
 def _bulk_create(alias, model, objects):
@@ -889,21 +925,21 @@ def _exception_path(error):
   return f"{error.__class__.__module__}.{error.__class__.__qualname__}"
 
 
-def _task_result_for_claimed_job(task, job):
-  claimed_at = getattr(job, "_dj_queue_claimed_at", timezone.now())
-  worker_ids = getattr(job, "_dj_queue_worker_ids", [])
+def _task_result_for_claimed_job(task, claimed_job):
+  if not isinstance(claimed_job, ClaimedJob):
+    raise RuntimeError("ClaimedJob is required for task context execution")
 
   return TaskResult(
     task=task,
-    id=str(job.id),
+    id=str(claimed_job.job.id),
     status=TaskResultStatus.RUNNING,
-    enqueued_at=job.created_at,
-    started_at=claimed_at,
+    enqueued_at=claimed_job.job.created_at,
+    started_at=claimed_job.claimed_at,
     finished_at=None,
-    last_attempted_at=claimed_at,
-    args=job.payload.get("args", []),
-    kwargs=job.payload.get("kwargs", {}),
-    backend=job.backend_alias,
+    last_attempted_at=claimed_job.claimed_at,
+    args=claimed_job.job.payload.get("args", []),
+    kwargs=claimed_job.job.payload.get("kwargs", {}),
+    backend=claimed_job.job.backend_alias,
     errors=[],
-    worker_ids=worker_ids,
+    worker_ids=list(claimed_job.worker_ids),
   )

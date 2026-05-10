@@ -13,13 +13,14 @@ from dj_queue import observability
 from dj_queue.api import QueueInfo
 from dj_queue.config import load_backend_config
 from dj_queue.db import database_capabilities, get_database_alias
-from dj_queue.models import FailedExecution, Job
+from dj_queue.models import Job
 from dj_queue.operations.jobs import (
   discard_blocked_jobs,
   discard_failed_jobs,
   discard_ready_jobs,
   discard_scheduled_jobs,
   enqueue_job_again,
+  retry_failed_jobs,
 )
 
 QUEUE_STATE_CONFIG = {
@@ -521,13 +522,11 @@ def apply_job_action(*, backend_alias, queue_name, state, action, job_ids):
     return f"discarded {deleted} blocked jobs from {queue_name}"
 
   if state == "failed" and action == "retry":
-    alias = get_database_alias(backend_alias)
-    queryset = FailedExecution.objects.using(alias).filter(
-      job_id__in=job_ids,
-      job__backend_alias=backend_alias,
-      job__queue_name=queue_name,
+    retried = retry_failed_jobs(
+      job_ids=job_ids,
+      batch_size=max(len(job_ids), 1),
+      backend_alias=backend_alias,
     )
-    retried = FailedExecution.retry_all(queryset.select_related("job"))
     return f"retried {retried} failed jobs from {queue_name}"
 
   if state == "failed" and action == "discard":

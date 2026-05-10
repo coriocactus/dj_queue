@@ -41,8 +41,8 @@ from django.core.management import call_command  # noqa: E402
 from django.db import connections  # noqa: E402
 from django.tasks import task  # noqa: E402
 
+from dj_queue.api import claim_ready_jobs  # noqa: E402
 from dj_queue.models import Job, ReadyExecution  # noqa: E402
-from dj_queue.operations.jobs import claim_ready_jobs  # noqa: E402
 
 
 @task
@@ -75,8 +75,8 @@ result(
 )
 
 step(3, "claim ready work through the backend and inspect the queue alias")
-jobs = claim_ready_jobs(limit=1, backend_alias="default")
-result(f"claimed_job_db={jobs[0]._state.db}")
+claimed_jobs = claim_ready_jobs(limit=1, backend_alias="default")
+result(f"claimed_job_db={claimed_jobs[0].job._state.db}")
 result(f"remaining_ready_on_queue={ReadyExecution.objects.using('queue').count()}")
 
 takeaway(

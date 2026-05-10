@@ -11,7 +11,7 @@ from _example import result, status_name, step, takeaway, title
 
 from django.tasks import task
 
-from dj_queue.operations.jobs import claim_ready_jobs, execute_claimed_job
+from dj_queue.api import claim_ready_jobs, execute_claimed_job
 
 
 @task
@@ -28,9 +28,9 @@ result(
 )
 
 step(2, "claim the ready job and execute it")
-jobs = claim_ready_jobs(limit=1)
-execute_claimed_job(jobs[0].id)
-result(f"claimed_job_id={jobs[0].id}")
+claimed_jobs = claim_ready_jobs(limit=1)
+execute_claimed_job(claimed_jobs[0])
+result(f"claimed_job_id={claimed_jobs[0].job.id}")
 result("execution finished without raising an error")
 
 step(3, "read the persisted task result")

@@ -28,7 +28,13 @@ from dj_queue.models import (
   RecurringTask,
   Semaphore,
 )
-from dj_queue.operations.jobs import dispatch_scheduled_job_now, enqueue_job_again
+from dj_queue.operations.jobs import (
+  discard_failed_job,
+  dispatch_scheduled_job_now,
+  enqueue_job_again,
+  retry_failed_job,
+  retry_failed_jobs,
+)
 
 
 class DjQueueFirstAdminSite(admin.AdminSite):
@@ -648,12 +654,12 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
       return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
 
     if action == "retry":
-      obj.failed_execution.retry()
+      retry_failed_job(obj.failed_execution.job_id, backend_alias=obj.backend_alias)
       self.message_user(request, "Retried failed job", level=messages.SUCCESS)
       return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
 
     if action == "discard":
-      obj.failed_execution.discard()
+      discard_failed_job(obj.failed_execution.job_id, backend_alias=obj.backend_alias)
       self.message_user(request, "Discarded failed job", level=messages.SUCCESS)
       return HttpResponseRedirect(self._changelist_url(backend_alias=obj.backend_alias))
 
@@ -676,14 +682,18 @@ class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
 
   @admin.action(description="Retry selected failed jobs")
   def retry_jobs(self, request, queryset):
-    retried = FailedExecution.retry_all(queryset)
+    retried = retry_failed_jobs(
+      job_ids=list(queryset.values_list("job_id", flat=True)),
+      batch_size=queryset.count() or 1,
+      backend_alias=self._backend_alias(request),
+    )
     self.message_user(request, f"Retried {retried} failed jobs", level=messages.SUCCESS)
 
   @admin.action(description="Discard selected failed jobs")
   def discard_jobs(self, request, queryset):
     discarded = 0
     for execution in queryset.select_related("job"):
-      discarded += execution.discard()
+      discarded += discard_failed_job(execution.job_id, backend_alias=execution.job.backend_alias)
     self.message_user(request, f"Discarded {discarded} failed jobs", level=messages.SUCCESS)
 
   @admin.display(description="created at", ordering="created_at")
@@ -707,13 +717,13 @@ class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
 
     if action == "retry":
       job_id = obj.job_id
-      obj.retry()
+      retry_failed_job(job_id, backend_alias=backend_alias)
       self.message_user(request, "Retried failed job", level=messages.SUCCESS)
       url = reverse("admin:dj_queue_job_change", args=[job_id])
       return HttpResponseRedirect(f"{url}?{urlencode({'backend': backend_alias})}")
 
     if action == "discard":
-      obj.discard()
+      discard_failed_job(obj.job_id, backend_alias=backend_alias)
       self.message_user(request, "Discarded failed job", level=messages.SUCCESS)
       return HttpResponseRedirect(self._changelist_url(backend_alias=backend_alias))
 

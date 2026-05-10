@@ -11,7 +11,7 @@ from _example import result, step, takeaway, title
 
 from django.tasks import task
 
-from dj_queue.operations.jobs import claim_ready_jobs
+from dj_queue.api import claim_ready_jobs
 
 
 @task
@@ -29,12 +29,12 @@ result("queued labels=welcome, receipt, csv")
 
 step(2, "claim only the email queue")
 email_jobs = claim_ready_jobs(limit=10, queues=["email"])
-for job in email_jobs:
-  result(f"queue={job.queue_name} payload={job.payload}")
+for claimed_job in email_jobs:
+  result(f"queue={claimed_job.job.queue_name} payload={claimed_job.job.payload}")
 
 step(3, "claim only the export queue")
 export_jobs = claim_ready_jobs(limit=10, queues=["export"])
-for job in export_jobs:
-  result(f"queue={job.queue_name} payload={job.payload}")
+for claimed_job in export_jobs:
+  result(f"queue={claimed_job.job.queue_name} payload={claimed_job.job.payload}")
 
 takeaway("queue selectors let one worker pool ignore work that belongs to another queue")
