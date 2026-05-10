@@ -347,6 +347,24 @@ def test_expired_semaphore_cleanup_preserves_active_claimed_key():
 
 
 @pytest.mark.django_db
+def test_expired_semaphore_cleanup_preserves_ready_key_with_reserved_slot():
+  first = limited.enqueue(1, value="first")
+  second = limited.enqueue(1, value="second")
+  Semaphore.objects.filter(key="account:1").update(
+    expires_at=timezone.now() - timedelta(seconds=1)
+  )
+
+  assert cleanup_expired_semaphores() == 0
+
+  third = limited.enqueue(1, value="third")
+
+  assert ReadyExecution.objects.filter(job_id=first.id).exists() is True
+  assert BlockedExecution.objects.filter(job_id=second.id).exists() is True
+  assert BlockedExecution.objects.filter(job_id=third.id).exists() is True
+  assert Semaphore.objects.get(key="account:1").value == 0
+
+
+@pytest.mark.django_db
 def test_promote_expired_blocked_jobs_reuses_task_import_for_shared_task_path(monkeypatch):
   imported = []
 
@@ -691,3 +709,44 @@ def test_cleanup_expired_semaphores():
   assert deleted == 1
   assert Semaphore.objects.filter(key="expired").exists() is False
   assert Semaphore.objects.filter(key="fresh").exists() is True
+
+
+@pytest.mark.skipif(
+  os.environ.get("DB_BACKEND", "sqlite") not in {"mysql", "mariadb"},
+  reason="requires DB_BACKEND=mysql or DB_BACKEND=mariadb",
+)
+@pytest.mark.django_db(transaction=True)
+def test_mysql_family_semaphore_acquire_uses_single_upsert_statement(monkeypatch):
+  executed_sql = []
+  real_cursor = connections["default"].cursor
+
+  class RecordingCursor:
+    def __init__(self, wrapped):
+      self._wrapped = wrapped
+
+    def __enter__(self):
+      self._wrapped.__enter__()
+      return self
+
+    def __exit__(self, exc_type, exc, tb):
+      return self._wrapped.__exit__(exc_type, exc, tb)
+
+    def execute(self, sql, params=None):
+      executed_sql.append(sql)
+      return self._wrapped.execute(sql, params)
+
+    def __getattr__(self, name):
+      return getattr(self._wrapped, name)
+
+  def recording_cursor(*args, **kwargs):
+    return RecordingCursor(real_cursor(*args, **kwargs))
+
+  monkeypatch.setattr(connections["default"], "cursor", recording_cursor)
+
+  assert semaphore_acquire("account:mysql-upsert", limit=1, duration_seconds=60) is True
+  assert semaphore_acquire("account:mysql-upsert", limit=1, duration_seconds=60) is False
+
+  insert_statements = [sql for sql in executed_sql if "INSERT INTO" in sql]
+  assert len(insert_statements) == 2
+  assert all("ON DUPLICATE KEY UPDATE" in sql for sql in insert_statements)
+  assert all(" UPDATE " not in sql for sql in executed_sql)

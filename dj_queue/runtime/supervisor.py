@@ -278,8 +278,10 @@ class AsyncSupervisor(Supervisor):
 
         # runner crashed — fail its claimed jobs, then stop and replace
         self._fail_crashed_runner_jobs(runner)
-        runner.stop()
+        drained = runner.stop()
         if self._stop_event.is_set():
+          return
+        if drained is False and not self._wait_for_runner_stop(runner):
           return
         log_event(
           "process.replaced",
@@ -296,6 +298,11 @@ class AsyncSupervisor(Supervisor):
     finally:
       if not self._stop_event.is_set():
         runner.stop()
+
+  def _wait_for_runner_stop(self, runner):
+    while runner.process is not None and not self._stop_event.is_set():
+      time.sleep(0.01)
+    return runner.process is None
 
   def _replace_runner(self, current, replacement):
     try:

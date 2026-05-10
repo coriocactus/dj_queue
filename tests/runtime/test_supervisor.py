@@ -424,6 +424,53 @@ def test_async_supervisor_stop_does_not_restart_runner_after_stop_request():
   assert Process.objects.filter(supervisor=process, kind="Worker").exists() is False
 
 
+def test_async_supervisor_waits_for_undrained_crashed_runner_before_replacement():
+  supervisor = build_async_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[]),
+  )
+  process = supervisor.start()
+
+  try:
+    wait_until(lambda: Process.objects.filter(supervisor=process, kind="Worker").count() == 1)
+
+    worker = supervisor.runners[0]
+    original_process_pk = worker.process.pk
+    original_stop = worker.stop
+    allow_runner_stop = threading.Event()
+
+    def crashing_poll():
+      raise RuntimeError("simulated worker crash")
+
+    def gated_stop(*, timeout=None):
+      drained = original_stop(timeout=0)
+      if drained is False:
+        allow_runner_stop.wait(timeout=1)
+      return drained
+
+    worker.poll_once = crashing_poll
+    worker.stop = gated_stop
+
+    wait_until(
+      lambda: worker.process is not None and worker.process.pk == original_process_pk,
+      timeout=2,
+    )
+    assert Process.objects.filter(pk=original_process_pk).exists() is True
+
+    allow_runner_stop.set()
+    wait_until(
+      lambda: (
+        supervisor.runners[0] is not worker
+        and supervisor.runners[0].process is not None
+        and supervisor.runners[0].process.pk != original_process_pk
+        and not Process.objects.filter(pk=original_process_pk).exists()
+      ),
+      timeout=2,
+    )
+  finally:
+    allow_runner_stop.set()
+    supervisor.stop()
+
+
 def test_async_mode_ignores_processes_greater_than_one():
   with pytest.warns(UserWarning, match="ignores worker processes > 1"):
     supervisor = build_async_supervisor(

@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from django.db import transaction
+from django.db import connections, transaction
 from django.db.models import F
 from django.utils import timezone
 from django.utils.module_loading import import_string
@@ -29,6 +29,16 @@ def semaphore_acquire(
   alias = get_database_alias(backend_alias)
   now = timezone.now()
   expires_at = now + timedelta(seconds=duration_seconds)
+  backend_family = database_capabilities(alias).backend_family
+
+  if backend_family in {"mysql", "mariadb"}:
+    return _mysql_family_semaphore_acquire(
+      alias,
+      key,
+      limit=limit,
+      expires_at=expires_at,
+      now=now,
+    )
 
   with transaction.atomic(using=alias):
     if create_ignore_conflicts(
@@ -41,7 +51,6 @@ def semaphore_acquire(
     ):
       return True
 
-  # mysql-family backends can deadlock if a skipped insert and row lock happen in one tx
   with transaction.atomic(using=alias):
     updated = (
       Semaphore.objects.using(alias)
@@ -53,6 +62,43 @@ def semaphore_acquire(
       )
     )
   return updated > 0
+
+
+def _mysql_family_semaphore_acquire(alias, key, *, limit, expires_at, now):
+  connection = connections[alias]
+  table = connection.ops.quote_name(Semaphore._meta.db_table)
+  key_column = connection.ops.quote_name("key")
+  value_column = connection.ops.quote_name("value")
+  limit_column = connection.ops.quote_name("limit")
+  expires_at_column = connection.ops.quote_name("expires_at")
+  created_at_column = connection.ops.quote_name("created_at")
+  updated_at_column = connection.ops.quote_name("updated_at")
+
+  # one upsert avoids mysql-family deadlocks from mixing ignored inserts and follow-up updates
+  with connection.cursor() as cursor:
+    cursor.execute(
+      f"""
+      INSERT INTO {table} (
+        {key_column},
+        {value_column},
+        {limit_column},
+        {expires_at_column},
+        {created_at_column},
+        {updated_at_column}
+      )
+      VALUES (%s, %s, %s, %s, %s, %s)
+      ON DUPLICATE KEY UPDATE
+        {expires_at_column} = IF({value_column} > 0, %s, {expires_at_column}),
+        {updated_at_column} = IF({value_column} > 0, %s, {updated_at_column}),
+        {value_column} = IF(
+          {value_column} > 0,
+          LAST_INSERT_ID({value_column}) - 1,
+          LAST_INSERT_ID(0) + {value_column}
+        )
+      """,
+      [key, limit - 1, limit, expires_at, now, now, expires_at, now],
+    )
+    return cursor.lastrowid != 0
 
 
 def semaphore_release(key, *, duration_seconds, backend_alias="default"):
@@ -144,8 +190,14 @@ def unblock_next_blocked_job(
 
 def cleanup_expired_semaphores(*, backend_alias="default"):
   alias = get_database_alias(backend_alias)
-  active_concurrency_keys = (
+  claimed_concurrency_keys = (
     ClaimedExecution.objects.using(alias)
+    .exclude(job__concurrency_key__isnull=True)
+    .exclude(job__concurrency_key="")
+    .values_list("job__concurrency_key", flat=True)
+  )
+  ready_concurrency_keys = (
+    ReadyExecution.objects.using(alias)
     .exclude(job__concurrency_key__isnull=True)
     .exclude(job__concurrency_key="")
     .values_list("job__concurrency_key", flat=True)
@@ -153,7 +205,8 @@ def cleanup_expired_semaphores(*, backend_alias="default"):
   queryset = (
     Semaphore.objects.using(alias)
     .filter(expires_at__lte=timezone.now())
-    .exclude(key__in=active_concurrency_keys)
+    .exclude(key__in=claimed_concurrency_keys)
+    .exclude(key__in=ready_concurrency_keys)
   )
   deleted = queryset.count()
   if not deleted:
