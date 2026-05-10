@@ -596,7 +596,13 @@ def enqueue_job_again(job_id, *, backend_alias="default", run_after=_KEEP_RUN_AF
 
 
 def _discard_state_jobs(
-  model, reason, *, job_ids=None, batch_size=500, backend_alias="default", release_concurrency=False
+  model,
+  reason,
+  *,
+  job_ids=None,
+  batch_size=500,
+  backend_alias="default",
+  release_concurrency=False,
 ):
   alias = get_database_alias(backend_alias)
   config = load_backend_config(backend_alias)
