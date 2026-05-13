@@ -1,10 +1,8 @@
-from datetime import timedelta
-
-from croniter import croniter
 from django.db import transaction
 from django.db.models import Q
 from django.utils.module_loading import import_string
 
+from dj_queue.cron import next_cron_run
 from dj_queue.db import get_database_alias
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import RecurringExecution, RecurringTask
@@ -171,7 +169,7 @@ def fire_recurring_task(recurring_task, run_at, *, backend_alias="default"):
 
 
 def _next_run_after(schedule, run_at):
-  return croniter(schedule, run_at + timedelta(seconds=1)).get_next(type(run_at))
+  return next_cron_run(schedule, run_at)
 
 
 def _advance_next_run_at(recurring_task, next_run_at, *, using):

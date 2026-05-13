@@ -1,12 +1,11 @@
 import os
 import socket
-from datetime import timedelta
 
-from croniter import croniter
 from django.db.models import Q
 from django.utils import timezone
 
 from dj_queue.config import load_backend_config
+from dj_queue.cron import latest_cron_run
 from dj_queue.db import get_database_alias
 from dj_queue.models import RecurringTask
 from dj_queue.operations.cleanup import (
@@ -155,5 +154,4 @@ class Scheduler(BaseRunner):
 
 
 def _latest_run_at(schedule, now):
-  iterator = croniter(schedule, now + timedelta(seconds=1))
-  return iterator.get_prev(type(now))
+  return latest_cron_run(schedule, now)

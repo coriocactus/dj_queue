@@ -181,7 +181,7 @@ def test_skip_recurring_flag_suppresses_scheduler_even_when_configured(monkeypat
   assert config.scheduler is None
 
 
-def test_dj_queue_command_uses_selected_backend_yaml_overlay(monkeypatch, settings, tmp_path):
+def test_dj_queue_command_uses_selected_backend_toml_overlay(monkeypatch, settings, tmp_path):
   settings.TASKS = {
     "default": {
       "BACKEND": "dj_queue.backend.DjQueueBackend",
@@ -198,16 +198,15 @@ def test_dj_queue_command_uses_selected_backend_yaml_overlay(monkeypatch, settin
       },
     },
   }
-  config_path = tmp_path / "dj_queue.yaml"
+  config_path = tmp_path / "dj_queue.toml"
   config_path.write_text(
     "\n".join(
       (
-        "backends:",
-        "  default:",
-        "    mode: async",
-        "  secondary:",
-        "    mode: fork",
-        "    database_alias: queue_secondary",
+        "[backends.default]",
+        'mode = "async"',
+        "[backends.secondary]",
+        'mode = "fork"',
+        'database_alias = "queue_secondary"',
       )
     ),
     encoding="utf-8",

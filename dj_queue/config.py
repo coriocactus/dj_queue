@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import tomllib
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
@@ -8,11 +9,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import yaml
-from croniter import croniter
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.utils.module_loading import import_string
+
+from dj_queue.cron import is_valid_cron
 
 DEFAULT_WORKER = {
   "queues": "*",
@@ -319,7 +320,7 @@ def _resolved_options(
   resolved_options.update(settings_options)
 
   config_path = cli_overrides.get("config") or env.get("DJ_QUEUE_CONFIG")
-  resolved_options.update(_load_yaml_options(config_path, backend_alias=backend_alias))
+  resolved_options.update(_load_toml_options(config_path, backend_alias=backend_alias))
 
   env_mode = env.get("DJ_QUEUE_MODE")
   if env_mode is not None:
@@ -332,15 +333,16 @@ def _resolved_options(
   return resolved_options
 
 
-def _load_yaml_options(config_path: Any, *, backend_alias: str) -> dict[str, Any]:
+def _load_toml_options(config_path: Any, *, backend_alias: str) -> dict[str, Any]:
   if not config_path:
     return {}
 
-  config_payload = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
-  if config_payload is None:
-    return {}
+  try:
+    config_payload = tomllib.loads(Path(config_path).read_text(encoding="utf-8"))
+  except tomllib.TOMLDecodeError as exc:
+    raise ImproperlyConfigured(f"DJ_QUEUE_CONFIG TOML is invalid: {exc}") from exc
   if not isinstance(config_payload, dict):
-    raise ImproperlyConfigured("DJ_QUEUE_CONFIG must point to a YAML mapping")
+    raise ImproperlyConfigured("DJ_QUEUE_CONFIG must point to a TOML mapping")
 
   raw_backends = config_payload.get("backends")
   if raw_backends is None:
@@ -519,7 +521,7 @@ def _build_recurring_config(raw_recurring: Any) -> dict[str, RecurringTaskConfig
     schedule = raw_entry.get("schedule")
     if not task_path or not schedule:
       raise ImproperlyConfigured(f"recurring task {key!r} requires task_path and schedule")
-    if not croniter.is_valid(str(schedule)):
+    if not is_valid_cron(str(schedule)):
       raise ImproperlyConfigured(f"recurring task {key!r} has an invalid cron schedule")
 
     recurring[str(key)] = RecurringTaskConfig(

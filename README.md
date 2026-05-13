@@ -380,15 +380,18 @@ unschedule_recurring_task("tenant_42_report")
 
 Dynamic recurring tasks require
 `TASKS[backend_alias]["OPTIONS"]["scheduler"]["dynamic_tasks_enabled"] = True`
-or the equivalent `scheduler.dynamic_tasks_enabled: true` in the optional YAML
+or the equivalent `scheduler.dynamic_tasks_enabled = true` in the optional TOML
 config.
 
-The scheduler is part of the normal `dj_queue` runtime. You do not run a
-separate recurring service.
+The scheduler is part of the normal `dj_queue` runtime. You do not run a separate recurring service.
 
 Notes:
 
-- schedules are cron expressions
+- schedules are [Fugit](https://github.com/floraison/fugit#fugitcron)-style cron or cronish natural-language expressions
+- cron supports five fields or an optional leading seconds field, presets like `@daily`, optional timezone suffixes, wraparound ranges, `L`/`last` and negative monthdays, weekday `#` and `%` extensions, and normal day-of-month/day-of-week OR semantics
+- add `&` to either day field to require day-of-month and day-of-week to both match
+- natural-language schedules support `every`, `at`, `on`, and `from` forms such as `every day at noon`, `every weekday at five`, `every 5 minutes`, `every month on day 2 at 10:00`, `from monday to friday at 9`, and `at minute 5`
+- natural-language schedules that expand to multiple cron expressions, such as `every day at 16:15 and 18:30`, are treated as the union of those schedules
 - recurring task keys are scoped per backend alias
 - only dynamic tasks can be unscheduled at runtime; unscheduling a static task returns `0`
 - Django admin exposes the same unschedule operation on recurring-task list and detail views
@@ -782,83 +785,83 @@ Configuration precedence is explicit:
 
 - CLI overrides
 - environment variables
-- YAML file pointed to by `DJ_QUEUE_CONFIG`
+- TOML file pointed to by `DJ_QUEUE_CONFIG`
 - Django `TASKS` settings
 
-### YAML file config
+### TOML file config
 
 ```bash
 # via cli
-python manage.py dj_queue --config /etc/dj_queue.yml
+python manage.py dj_queue --config /etc/dj_queue.toml
 
 # or via environment variable
-DJ_QUEUE_CONFIG=/etc/dj_queue.yml python manage.py dj_queue
+DJ_QUEUE_CONFIG=/etc/dj_queue.toml python manage.py dj_queue
 ```
 
-The YAML file is an overlay on `TASKS[backend_alias]["OPTIONS"]`. It supports
+The TOML file is an overlay on `TASKS[backend_alias]["OPTIONS"]`. It supports
 two shapes:
 
 - a flat mapping of option values for the selected backend alias
 - a `backends` mapping keyed by backend alias, where only the selected alias is applied
 
+TOML has no `null` value. Omit optional settings to keep their existing defaults.
+
 Flat mapping example:
 
-```yaml
-mode: async
-database_alias: queue
-preserve_finished_jobs: true
-clear_finished_jobs_after: 86400
-clear_failed_jobs_after: null
-clear_recurring_executions_after: null
-listen_notify: true
-silence_polling: true
+```toml
+mode = "async"
+database_alias = "queue"
+preserve_finished_jobs = true
+clear_finished_jobs_after = 86400
+listen_notify = true
+silence_polling = true
 
-workers:
-  - queues: ["default", "email*"]
-    threads: 8
-    processes: 1
-    polling_interval: 0.1
+[[workers]]
+queues = ["default", "email*"]
+threads = 8
+processes = 1
+polling_interval = 0.1
 
-dispatchers:
-  - batch_size: 500
-    polling_interval: 1
-    concurrency_maintenance: true
-    concurrency_maintenance_interval: 600
+[[dispatchers]]
+batch_size = 500
+polling_interval = 1
+concurrency_maintenance = true
+concurrency_maintenance_interval = 600
 
-scheduler:
-  dynamic_tasks_enabled: true
-  polling_interval: 5
+[scheduler]
+dynamic_tasks_enabled = true
+polling_interval = 5
 
-recurring:
-  nightly_cleanup:
-    task_path: myapp.tasks.cleanup
-    schedule: "0 3 * * *"
-    queue_name: maintenance
-    priority: -5
-    description: nightly cleanup
+[recurring.nightly_cleanup]
+task_path = "myapp.tasks.cleanup"
+schedule = "0 3 * * *"
+queue_name = "maintenance"
+priority = -5
+description = "nightly cleanup"
 ```
 
 Multi-backend overlay example:
 
-```yaml
-backends:
-  default:
-    mode: async
-    database_alias: default
-    workers:
-      - queues: ["default", "email*"]
-        threads: 8
-        processes: 1
-        polling_interval: 0.1
+```toml
+[backends.default]
+mode = "async"
+database_alias = "default"
 
-  critical:
-    mode: fork
-    database_alias: queue
-    workers:
-      - queues: ["alerts", "critical-review"]
-        threads: 2
-        processes: 1
-        polling_interval: 0.05
+[[backends.default.workers]]
+queues = ["default", "email*"]
+threads = 8
+processes = 1
+polling_interval = 0.1
+
+[backends.critical]
+mode = "fork"
+database_alias = "queue"
+
+[[backends.critical.workers]]
+queues = ["alerts", "critical-review"]
+threads = 2
+processes = 1
+polling_interval = 0.05
 ```
 
 Environment overrides currently supported by `dj_queue` itself:

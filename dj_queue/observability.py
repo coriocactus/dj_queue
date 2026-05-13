@@ -3,7 +3,6 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import timedelta
 
-from croniter import croniter
 from django.conf import settings
 from django.db.models import Count, Max, Min
 from django.db.models.functions import Coalesce
@@ -11,6 +10,7 @@ from django.utils import timezone
 
 from dj_queue.config import configured_backend_aliases as configured_dj_queue_backend_aliases
 from dj_queue.config import load_backend_config
+from dj_queue.cron import next_cron_run
 from dj_queue.db import get_database_alias
 from dj_queue.models import (
   BlockedExecution,
@@ -431,7 +431,7 @@ def queue_state_counts(*, backend_alias, queue_name):
 
 
 def next_run_at(schedule, now):
-  return croniter(schedule, now).get_next(type(now))
+  return next_cron_run(schedule, now)
 
 
 def queue_matches_selectors(queue_name, selectors):

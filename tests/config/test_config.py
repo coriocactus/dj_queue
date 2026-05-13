@@ -125,7 +125,7 @@ def test_failed_or_recurring_cleanup_keeps_scheduler_enabled(settings):
   assert config.scheduler == SchedulerConfig()
 
 
-def test_config_precedence_cli_over_env_over_yaml_over_settings(settings, tmp_path):
+def test_config_precedence_cli_over_env_over_toml_over_settings(settings, tmp_path):
   settings.TASKS = {
     "default": {
       "BACKEND": "dj_queue.backend.DjQueueBackend",
@@ -136,11 +136,11 @@ def test_config_precedence_cli_over_env_over_yaml_over_settings(settings, tmp_pa
       },
     },
   }
-  env_config_path = tmp_path / "env.yaml"
-  env_config_path.write_text("mode: fork\nsilence_polling: false\n", encoding="utf-8")
-  cli_config_path = tmp_path / "cli.yaml"
+  env_config_path = tmp_path / "env.toml"
+  env_config_path.write_text('mode = "fork"\nsilence_polling = false\n', encoding="utf-8")
+  cli_config_path = tmp_path / "cli.toml"
   cli_config_path.write_text(
-    "mode: fork\nlisten_notify: true\nsilence_polling: true\n", encoding="utf-8"
+    'mode = "fork"\nlisten_notify = true\nsilence_polling = true\n', encoding="utf-8"
   )
 
   env_config = load_backend_config(
@@ -167,7 +167,7 @@ def test_config_precedence_cli_over_env_over_yaml_over_settings(settings, tmp_pa
   assert cli_config.silence_polling is True
 
 
-def test_multi_backend_yaml_selects_requested_alias(settings, tmp_path):
+def test_multi_backend_toml_selects_requested_alias(settings, tmp_path):
   settings.TASKS = {
     "default": {
       "BACKEND": "dj_queue.backend.DjQueueBackend",
@@ -184,17 +184,16 @@ def test_multi_backend_yaml_selects_requested_alias(settings, tmp_path):
       },
     },
   }
-  config_path = tmp_path / "dj_queue.yaml"
+  config_path = tmp_path / "dj_queue.toml"
   config_path.write_text(
     "\n".join(
       (
-        "backends:",
-        "  default:",
-        "    mode: async",
-        "    database_alias: queue_default",
-        "  critical:",
-        "    mode: fork",
-        "    database_alias: queue_critical",
+        "[backends.default]",
+        'mode = "async"',
+        'database_alias = "queue_default"',
+        "[backends.critical]",
+        'mode = "fork"',
+        'database_alias = "queue_critical"',
       )
     ),
     encoding="utf-8",
@@ -218,7 +217,7 @@ def test_multi_backend_yaml_selects_requested_alias(settings, tmp_path):
   assert critical_config.database_alias == "queue_critical"
 
 
-def test_multi_backend_yaml_missing_alias_falls_back_to_tasks(settings, tmp_path):
+def test_multi_backend_toml_missing_alias_falls_back_to_tasks(settings, tmp_path):
   settings.TASKS = {
     "secondary": {
       "BACKEND": "dj_queue.backend.DjQueueBackend",
@@ -228,13 +227,12 @@ def test_multi_backend_yaml_missing_alias_falls_back_to_tasks(settings, tmp_path
       },
     }
   }
-  config_path = tmp_path / "dj_queue.yaml"
+  config_path = tmp_path / "dj_queue.toml"
   config_path.write_text(
     "\n".join(
       (
-        "backends:",
-        "  default:",
-        "    mode: fork",
+        "[backends.default]",
+        'mode = "fork"',
       )
     ),
     encoding="utf-8",
@@ -251,15 +249,15 @@ def test_multi_backend_yaml_missing_alias_falls_back_to_tasks(settings, tmp_path
   assert config.database_alias == "queue_secondary"
 
 
-def test_multi_backend_yaml_rejects_non_mapping_backends(settings, tmp_path):
+def test_multi_backend_toml_rejects_non_mapping_backends(settings, tmp_path):
   settings.TASKS = {
     "default": {
       "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {},
     }
   }
-  config_path = tmp_path / "dj_queue.yaml"
-  config_path.write_text("backends: []\n", encoding="utf-8")
+  config_path = tmp_path / "dj_queue.toml"
+  config_path.write_text("backends = []\n", encoding="utf-8")
 
   with pytest.raises(ImproperlyConfigured, match="'backends' must be a mapping"):
     load_backend_config(
@@ -269,23 +267,15 @@ def test_multi_backend_yaml_rejects_non_mapping_backends(settings, tmp_path):
     )
 
 
-def test_multi_backend_yaml_rejects_non_mapping_backend_entry(settings, tmp_path):
+def test_multi_backend_toml_rejects_non_mapping_backend_entry(settings, tmp_path):
   settings.TASKS = {
     "default": {
       "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {},
     }
   }
-  config_path = tmp_path / "dj_queue.yaml"
-  config_path.write_text(
-    "\n".join(
-      (
-        "backends:",
-        "  default: true",
-      )
-    ),
-    encoding="utf-8",
-  )
+  config_path = tmp_path / "dj_queue.toml"
+  config_path.write_text("backends = { default = true }\n", encoding="utf-8")
 
   with pytest.raises(ImproperlyConfigured, match=r"backends\['default'\] must be a mapping"):
     load_backend_config(
@@ -295,21 +285,20 @@ def test_multi_backend_yaml_rejects_non_mapping_backend_entry(settings, tmp_path
     )
 
 
-def test_multi_backend_yaml_rejects_mixed_shapes(settings, tmp_path):
+def test_multi_backend_toml_rejects_mixed_shapes(settings, tmp_path):
   settings.TASKS = {
     "default": {
       "BACKEND": "dj_queue.backend.DjQueueBackend",
       "OPTIONS": {},
     }
   }
-  config_path = tmp_path / "dj_queue.yaml"
+  config_path = tmp_path / "dj_queue.toml"
   config_path.write_text(
     "\n".join(
       (
-        "mode: async",
-        "backends:",
-        "  default:",
-        "    database_alias: queue",
+        'mode = "async"',
+        "[backends.default]",
+        'database_alias = "queue"',
       )
     ),
     encoding="utf-8",
@@ -632,17 +621,17 @@ def test_load_backend_config_caches_repeated_inputs(settings, monkeypatch):
   }
   calls = []
 
-  def fake_load_yaml_options(path, *, backend_alias):
+  def fake_load_toml_options(path, *, backend_alias):
     calls.append((path, backend_alias))
     return {}
 
-  monkeypatch.setattr("dj_queue.config._load_yaml_options", fake_load_yaml_options)
+  monkeypatch.setattr("dj_queue.config._load_toml_options", fake_load_toml_options)
 
-  first = load_backend_config(env={"DJ_QUEUE_CONFIG": "/tmp/dj-queue.yaml"})
-  second = load_backend_config(env={"DJ_QUEUE_CONFIG": "/tmp/dj-queue.yaml"})
+  first = load_backend_config(env={"DJ_QUEUE_CONFIG": "/tmp/dj-queue.toml"})
+  second = load_backend_config(env={"DJ_QUEUE_CONFIG": "/tmp/dj-queue.toml"})
 
   assert first == second
-  assert calls == [("/tmp/dj-queue.yaml", "default")]
+  assert calls == [("/tmp/dj-queue.toml", "default")]
 
 
 def test_load_backend_config_cache_invalidates_when_settings_change(settings):

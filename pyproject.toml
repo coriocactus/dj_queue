@@ -22,9 +22,7 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-  "croniter>=6.2.2",
   "django>=6.0.0",
-  "pyyaml>=6.0.3",
 ]
 
 [project.urls]
