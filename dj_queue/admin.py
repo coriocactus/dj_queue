@@ -35,6 +35,7 @@ from dj_queue.operations.jobs import (
   retry_failed_job,
   retry_failed_jobs,
 )
+from dj_queue.queue_state import status_rank_expression
 
 
 class DjQueueFirstAdminSite(admin.AdminSite):
@@ -503,18 +504,7 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
 
   def get_queryset(self, request):
     queryset = super().get_queryset(request)
-    return queryset.annotate(
-      status_rank=Case(
-        When(ready_execution__isnull=False, then=Value(0)),
-        When(scheduled_execution__isnull=False, then=Value(1)),
-        When(claimed_execution__isnull=False, then=Value(2)),
-        When(blocked_execution__isnull=False, then=Value(3)),
-        When(failed_execution__isnull=False, then=Value(4)),
-        When(finished_at__isnull=False, then=Value(5)),
-        default=Value(99),
-        output_field=IntegerField(),
-      )
-    )
+    return queryset.annotate(status_rank=status_rank_expression())
 
   @admin.display(description="status", ordering="status_rank")
   def display_status(self, obj):

@@ -25,6 +25,7 @@ from dj_queue.models import (
   ScheduledExecution,
   Semaphore,
 )
+from dj_queue.queue_state import queue_state_counts
 
 
 @dataclass(frozen=True, slots=True)
@@ -412,22 +413,6 @@ def semaphore_rows_for_backend(*, backend_alias):
     }
     for semaphore in Semaphore.objects.using(alias).order_by("key")
   ]
-
-
-def queue_state_counts(*, backend_alias, queue_name):
-  alias = get_database_alias(backend_alias)
-  base_queryset = Job.objects.using(alias).filter(
-    backend_alias=backend_alias,
-    queue_name=queue_name,
-  )
-  return {
-    "ready": base_queryset.filter(ready_execution__isnull=False).count(),
-    "claimed": base_queryset.filter(claimed_execution__isnull=False).count(),
-    "scheduled": base_queryset.filter(scheduled_execution__isnull=False).count(),
-    "blocked": base_queryset.filter(blocked_execution__isnull=False).count(),
-    "failed": base_queryset.filter(failed_execution__isnull=False).count(),
-    "finished": base_queryset.filter(finished_at__isnull=False).count(),
-  }
 
 
 def next_run_at(schedule, now):

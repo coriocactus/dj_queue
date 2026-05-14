@@ -22,51 +22,20 @@ from dj_queue.operations.jobs import (
   enqueue_job_again,
   retry_failed_jobs,
 )
+from dj_queue.queue_state import QUEUE_STATE_LABELS, QUEUE_STATES, queue_state_queryset
 
-QUEUE_STATE_CONFIG = {
-  "ready": {
-    "label": "ready",
-    "job_actions": ({"name": "discard", "label": "discard selected"},),
-    "query_filter": {"ready_execution__isnull": False},
-    "query_order": ("-priority", "ready_execution__id"),
-  },
-  "claimed": {
-    "label": "claimed",
-    "job_actions": (),
-    "query_filter": {"claimed_execution__isnull": False},
-    "query_order": ("claimed_execution__created_at", "id"),
-  },
-  "scheduled": {
-    "label": "scheduled",
-    "job_actions": ({"name": "discard", "label": "discard selected"},),
-    "query_filter": {"scheduled_execution__isnull": False},
-    "query_order": ("scheduled_execution__scheduled_at", "-priority", "scheduled_execution__id"),
-  },
-  "blocked": {
-    "label": "blocked",
-    "job_actions": ({"name": "discard", "label": "discard selected"},),
-    "query_filter": {"blocked_execution__isnull": False},
-    "query_order": ("blocked_execution__expires_at", "-priority", "blocked_execution__id"),
-  },
-  "failed": {
-    "label": "failed",
-    "job_actions": (
-      {"name": "retry", "label": "retry selected"},
-      {"name": "discard", "label": "discard selected"},
-    ),
-    "query_filter": {"failed_execution__isnull": False},
-    "query_order": ("-failed_execution__created_at", "id"),
-  },
-  "finished": {
-    "label": "finished",
-    "job_actions": ({"name": "enqueue", "label": "enqueue selected again"},),
-    "query_filter": {"finished_at__isnull": False},
-    "query_order": ("-finished_at", "id"),
-  },
+
+QUEUE_JOB_ACTIONS = {
+  "ready": ({"name": "discard", "label": "discard selected"},),
+  "claimed": (),
+  "scheduled": ({"name": "discard", "label": "discard selected"},),
+  "blocked": ({"name": "discard", "label": "discard selected"},),
+  "failed": (
+    {"name": "retry", "label": "retry selected"},
+    {"name": "discard", "label": "discard selected"},
+  ),
+  "finished": ({"name": "enqueue", "label": "enqueue selected again"},),
 }
-
-QUEUE_STATES = tuple((state, config["label"]) for state, config in QUEUE_STATE_CONFIG.items())
-QUEUE_STATE_LABELS = {state: config["label"] for state, config in QUEUE_STATE_CONFIG.items()}
 PAGE_SIZE = 100
 OVERVIEW_PAGE_SIZES = {
   "queues": 18,
@@ -555,7 +524,7 @@ def apply_job_action(*, backend_alias, queue_name, state, action, job_ids):
 
 
 def job_actions_for_state(state):
-  return QUEUE_STATE_CONFIG[state]["job_actions"]
+  return QUEUE_JOB_ACTIONS[state]
 
 
 def _summary_cards(*, backend_alias, queue_rows, process_rows, recurring_rows, semaphore_rows):
@@ -1181,20 +1150,7 @@ def _failed_execution_changelist_url(backend_alias, **filters):
 
 
 def _jobs_for_queue_state(*, backend_alias, queue_name, state):
-  alias = get_database_alias(backend_alias)
-  queryset = (
-    Job.objects.using(alias)
-    .filter(backend_alias=backend_alias, queue_name=queue_name)
-    .select_related(
-      "ready_execution",
-      "scheduled_execution",
-      "claimed_execution__process",
-      "blocked_execution",
-      "failed_execution",
-    )
-  )
-  state_config = QUEUE_STATE_CONFIG[state]
-  return queryset.filter(**state_config["query_filter"]).order_by(*state_config["query_order"])
+  return queue_state_queryset(backend_alias=backend_alias, queue_name=queue_name, state=state)
 
 
 def _next_run_at(schedule, now):
