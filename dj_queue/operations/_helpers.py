@@ -2,7 +2,7 @@ import json
 
 from dj_queue.db import database_capabilities
 from dj_queue.exceptions import EnqueueError
-from dj_queue.models import Pause
+from dj_queue.models import BlockedExecution, Pause, ReadyExecution, ScheduledExecution
 
 
 def _normalize_payload(args, kwargs):
@@ -26,6 +26,155 @@ def _lock_active_pauses(alias, backend_alias, queue_names=None):
       return set()
     queryset = queryset.filter(queue_name__in=active_queue_names)
   return set(queryset.values_list("queue_name", flat=True))
+
+
+def _ready_execution_row(
+  job,
+  *,
+  backend_alias,
+  queue_name=None,
+  priority=None,
+  ready_at=None,
+  created_at=None,
+):
+  return ReadyExecution(
+    **_ready_execution_fields(
+      job,
+      backend_alias=backend_alias,
+      queue_name=queue_name,
+      priority=priority,
+      ready_at=ready_at,
+      created_at=created_at,
+    )
+  )
+
+
+def _create_ready_execution(
+  alias,
+  job,
+  *,
+  backend_alias,
+  queue_name=None,
+  priority=None,
+  ready_at=None,
+  created_at=None,
+):
+  queue_name = _execution_queue_name(job, queue_name)
+  _lock_active_pauses(alias, backend_alias, {queue_name})
+  return ReadyExecution.objects.using(alias).create(
+    **_ready_execution_fields(
+      job,
+      backend_alias=backend_alias,
+      queue_name=queue_name,
+      priority=priority,
+      ready_at=ready_at,
+      created_at=created_at,
+    )
+  )
+
+
+def _scheduled_execution_row(job, *, backend_alias, scheduled_at=None, created_at=None):
+  return ScheduledExecution(
+    **_scheduled_execution_fields(
+      job,
+      backend_alias=backend_alias,
+      scheduled_at=scheduled_at,
+      created_at=created_at,
+    )
+  )
+
+
+def _create_scheduled_execution(alias, job, *, backend_alias, scheduled_at=None):
+  return ScheduledExecution.objects.using(alias).create(
+    **_scheduled_execution_fields(
+      job,
+      backend_alias=backend_alias,
+      scheduled_at=scheduled_at,
+    )
+  )
+
+
+def _create_blocked_execution(
+  alias,
+  job,
+  *,
+  backend_alias,
+  concurrency_key=None,
+  expires_at,
+  queue_name=None,
+  priority=None,
+):
+  return BlockedExecution.objects.using(alias).create(
+    **_blocked_execution_fields(
+      job,
+      backend_alias=backend_alias,
+      concurrency_key=concurrency_key,
+      expires_at=expires_at,
+      queue_name=queue_name,
+      priority=priority,
+    )
+  )
+
+
+def _ready_execution_fields(
+  job,
+  *,
+  backend_alias,
+  queue_name=None,
+  priority=None,
+  ready_at=None,
+  created_at=None,
+):
+  fields = {
+    "job": job,
+    "backend_alias": backend_alias,
+    "queue_name": _execution_queue_name(job, queue_name),
+    "priority": _execution_priority(job, priority),
+    "latency_started_at": ready_at,
+  }
+  if created_at is not None:
+    fields["created_at"] = created_at
+  return fields
+
+
+def _scheduled_execution_fields(job, *, backend_alias, scheduled_at=None, created_at=None):
+  fields = {
+    "job": job,
+    "backend_alias": backend_alias,
+    "queue_name": job.queue_name,
+    "priority": job.priority,
+    "scheduled_at": scheduled_at if scheduled_at is not None else job.scheduled_at,
+  }
+  if created_at is not None:
+    fields["created_at"] = created_at
+  return fields
+
+
+def _blocked_execution_fields(
+  job,
+  *,
+  backend_alias,
+  concurrency_key=None,
+  expires_at,
+  queue_name=None,
+  priority=None,
+):
+  return {
+    "job": job,
+    "backend_alias": backend_alias,
+    "queue_name": _execution_queue_name(job, queue_name),
+    "priority": _execution_priority(job, priority),
+    "concurrency_key": concurrency_key if concurrency_key is not None else job.concurrency_key,
+    "expires_at": expires_at,
+  }
+
+
+def _execution_queue_name(job, queue_name):
+  return job.queue_name if queue_name is None else queue_name
+
+
+def _execution_priority(job, priority):
+  return job.priority if priority is None else priority
 
 
 def _consume_selected_rows(alias, model, rows):

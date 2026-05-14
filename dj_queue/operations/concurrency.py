@@ -12,7 +12,8 @@ from dj_queue.log import log_event
 from dj_queue.models import BlockedExecution, ClaimedExecution, ReadyExecution, Semaphore
 from dj_queue.operations._helpers import (
   _consume_selected_rows,
-  _lock_active_pauses,
+  _create_blocked_execution,
+  _create_ready_execution,
   _task_option,
 )
 from dj_queue.operations._insert import create_ignore_conflicts
@@ -170,13 +171,13 @@ def unblock_next_blocked_job(
     queue_name = blocked.queue_name
     priority = blocked.priority
     blocked.delete(using=alias)
-    _lock_active_pauses(alias, backend_alias, {queue_name})
-    ReadyExecution.objects.using(alias).create(
+    _create_ready_execution(
+      alias,
       job=job,
       backend_alias=backend_alias,
       queue_name=queue_name,
       priority=priority,
-      latency_started_at=now,
+      ready_at=now,
     )
 
   log_event(
@@ -258,20 +259,21 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
         priority = blocked.priority
         if not uses_serialized_writes:
           blocked.delete(using=alias)
-        _lock_active_pauses(alias, backend_alias, {queue_name})
-        ReadyExecution.objects.using(alias).create(
+        _create_ready_execution(
+          alias,
           job=job,
           backend_alias=backend_alias,
           queue_name=queue_name,
           priority=priority,
-          latency_started_at=now,
+          ready_at=now,
         )
         promoted_jobs.append(job)
       else:
         expires_at = now + timedelta(seconds=duration_seconds)
         if uses_serialized_writes:
-          BlockedExecution.objects.using(alias).create(
-            job=job,
+          _create_blocked_execution(
+            alias,
+            job,
             backend_alias=backend_alias,
             queue_name=blocked.queue_name,
             priority=blocked.priority,

@@ -27,8 +27,13 @@ from dj_queue.models import (
 )
 from dj_queue.operations._helpers import (
   _consume_selected_rows,
+  _create_blocked_execution,
+  _create_ready_execution,
+  _create_scheduled_execution,
   _lock_active_pauses,
   _normalize_payload,
+  _ready_execution_row,
+  _scheduled_execution_row,
   _task_option,
 )
 from dj_queue.operations.concurrency import (
@@ -134,13 +139,11 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
         alias,
         ReadyExecution,
         [
-          ReadyExecution(
+          _ready_execution_row(
             job=job,
             backend_alias=backend_alias,
-            queue_name=job.queue_name,
-            priority=job.priority,
             created_at=job.created_at,
-            latency_started_at=job.created_at,
+            ready_at=job.created_at,
           )
           for job in jobs
         ],
@@ -174,11 +177,9 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
       job = entry["job"]
       if job.scheduled_at is not None and job.scheduled_at > now:
         scheduled_rows.append(
-          ScheduledExecution(
+          _scheduled_execution_row(
             job=job,
             backend_alias=backend_alias,
-            queue_name=job.queue_name,
-            priority=job.priority,
             scheduled_at=job.scheduled_at,
             created_at=job.created_at,
           )
@@ -188,13 +189,11 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
 
       if not job.concurrency_key:
         ready_rows.append(
-          ReadyExecution(
+          _ready_execution_row(
             job=job,
             backend_alias=backend_alias,
-            queue_name=job.queue_name,
-            priority=job.priority,
             created_at=job.created_at,
-            latency_started_at=job.created_at,
+            ready_at=job.created_at,
           )
         )
         ready_queue_names.append(job.queue_name)
@@ -446,13 +445,11 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
         alias,
         ReadyExecution,
         [
-          ReadyExecution(
+          _ready_execution_row(
             job=job,
             backend_alias=backend_alias,
-            queue_name=job.queue_name,
-            priority=job.priority,
             created_at=now,
-            latency_started_at=now,
+            ready_at=now,
           )
           for job in direct_jobs
         ],
@@ -687,23 +684,20 @@ def _dispatch_job(job, *, task, backend_alias, now=None):
     now = timezone.now()
 
   if job.scheduled_at is not None and job.scheduled_at > now:
-    ScheduledExecution.objects.using(alias).create(
+    _create_scheduled_execution(
+      alias,
       job=job,
       backend_alias=backend_alias,
-      queue_name=job.queue_name,
-      priority=job.priority,
       scheduled_at=job.scheduled_at,
     )
     return "scheduled"
 
   if not job.concurrency_key:
-    _lock_active_pauses(alias, backend_alias, {job.queue_name})
-    ReadyExecution.objects.using(alias).create(
+    _create_ready_execution(
+      alias,
       job=job,
       backend_alias=backend_alias,
-      queue_name=job.queue_name,
-      priority=job.priority,
-      latency_started_at=now,
+      ready_at=now,
     )
     return "ready"
 
@@ -714,13 +708,11 @@ def _dispatch_job(job, *, task, backend_alias, now=None):
     duration_seconds=duration_seconds,
     backend_alias=backend_alias,
   ):
-    _lock_active_pauses(alias, backend_alias, {job.queue_name})
-    ReadyExecution.objects.using(alias).create(
+    _create_ready_execution(
+      alias,
       job=job,
       backend_alias=backend_alias,
-      queue_name=job.queue_name,
-      priority=job.priority,
-      latency_started_at=now,
+      ready_at=now,
     )
     return "ready"
 
@@ -730,11 +722,10 @@ def _dispatch_job(job, *, task, backend_alias, now=None):
     job.save(using=alias, update_fields=["finished_at", "return_value", "updated_at"])
     return "discarded"
 
-  BlockedExecution.objects.using(alias).create(
+  _create_blocked_execution(
+    alias,
     job=job,
     backend_alias=backend_alias,
-    queue_name=job.queue_name,
-    priority=job.priority,
     concurrency_key=job.concurrency_key,
     expires_at=now + timedelta(seconds=duration_seconds),
   )
