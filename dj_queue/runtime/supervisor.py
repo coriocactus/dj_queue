@@ -19,11 +19,9 @@ from dj_queue.operations.jobs import (
 )
 from dj_queue.runtime.base import BaseRunner, app_executor
 from dj_queue.runtime.connection_budget import warn_if_persistent_connection_budget_is_tight
-from dj_queue.runtime.dispatcher import Dispatcher
 from dj_queue.runtime.errors import handle_thread_error
 from dj_queue.runtime.pidfile import PidFile
-from dj_queue.runtime.scheduler import Scheduler
-from dj_queue.runtime.worker import Worker
+from dj_queue.runtime.topology import runner_definitions
 
 
 class Supervisor(BaseRunner):
@@ -306,47 +304,17 @@ class AsyncSupervisor(Supervisor):
     return runner.__class__(**kwargs)
 
   def _build_runners(self):
-    runners = []
-
-    for index, worker_config in enumerate(self.config.workers, start=1):
-      for process_index in range(worker_config.processes):
-        suffix = index if worker_config.processes == 1 else f"{index}-{process_index + 1}"
-        runners.append(
-          Worker(
-            worker_config,
-            backend_alias=self.backend_alias,
-            name=f"worker-{suffix}",
-            pid=self.pid,
-            hostname=self.hostname,
-            supervisor=self.process,
-          )
-        )
-
-    for index, dispatcher_config in enumerate(self.config.dispatchers, start=1):
-      runners.append(
-        Dispatcher(
-          dispatcher_config,
-          backend_alias=self.backend_alias,
-          name=f"dispatcher-{index}",
-          pid=self.pid,
-          hostname=self.hostname,
-          supervisor=self.process,
-        )
+    return [
+      definition.runner_class(
+        definition.config,
+        backend_alias=self.backend_alias,
+        name=definition.name,
+        pid=self.pid,
+        hostname=self.hostname,
+        supervisor=self.process,
       )
-
-    if self.config.scheduler is not None:
-      runners.append(
-        Scheduler(
-          self.config,
-          backend_alias=self.backend_alias,
-          name="scheduler-1",
-          pid=self.pid,
-          hostname=self.hostname,
-          supervisor=self.process,
-        )
-      )
-
-    return runners
+      for definition in runner_definitions(self.config)
+    ]
 
 
 class ForkSupervisor(Supervisor):
@@ -508,47 +476,15 @@ class ForkSupervisor(Supervisor):
     specs = []
     supervisor_id = self.process.pk if self.process else None
 
-    for index, worker_config in enumerate(self.config.workers, start=1):
-      for process_index in range(worker_config.processes):
-        suffix = index if worker_config.processes == 1 else f"{index}-{process_index + 1}"
-        specs.append(
-          {
-            "kind": "worker",
-            "runner_class": Worker,
-            "kwargs": {
-              "config": worker_config,
-              "backend_alias": self.backend_alias,
-              "name": f"worker-{suffix}",
-              "hostname": self.hostname,
-              "supervisor": supervisor_id,
-            },
-          }
-        )
-
-    for index, dispatcher_config in enumerate(self.config.dispatchers, start=1):
+    for definition in runner_definitions(self.config):
       specs.append(
         {
-          "kind": "dispatcher",
-          "runner_class": Dispatcher,
+          "kind": definition.kind,
+          "runner_class": definition.runner_class,
           "kwargs": {
-            "config": dispatcher_config,
+            "config": definition.config,
             "backend_alias": self.backend_alias,
-            "name": f"dispatcher-{index}",
-            "hostname": self.hostname,
-            "supervisor": supervisor_id,
-          },
-        }
-      )
-
-    if self.config.scheduler is not None:
-      specs.append(
-        {
-          "kind": "scheduler",
-          "runner_class": Scheduler,
-          "kwargs": {
-            "config": self.config,
-            "backend_alias": self.backend_alias,
-            "name": "scheduler-1",
+            "name": definition.name,
             "hostname": self.hostname,
             "supervisor": supervisor_id,
           },
