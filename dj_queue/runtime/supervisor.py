@@ -9,11 +9,14 @@ from django.utils import timezone
 from datetime import timedelta
 
 from dj_queue.config import load_backend_config
-from dj_queue.db import get_database_alias
 from dj_queue.exceptions import ProcessExitError, ProcessMissingError, ProcessPrunedError
 from dj_queue.log import log_event
-from dj_queue.models import ClaimedExecution, Process
-from dj_queue.operations.jobs import fail_claimed_job
+from dj_queue.operations.jobs import (
+  fail_claimed_jobs_for_pid,
+  fail_claimed_jobs_for_process,
+  fail_orphaned_claimed_jobs,
+  prune_stale_processes,
+)
 from dj_queue.runtime.base import BaseRunner, app_executor
 from dj_queue.runtime.connection_budget import warn_if_persistent_connection_budget_is_tight
 from dj_queue.runtime.dispatcher import Dispatcher
@@ -143,56 +146,25 @@ class Supervisor(BaseRunner):
       self.pidfile = None
 
   def fail_startup_orphaned_jobs(self):
-    alias = get_database_alias(self.backend_alias)
-    orphaned_job_ids = list(
-      ClaimedExecution.objects.using(alias)
-      .filter(process__isnull=True, job__backend_alias=self.backend_alias)
-      .values_list("job_id", flat=True)
-    )
-    failed_jobs = []
     with app_executor():
-      for job_id in orphaned_job_ids:
-        failed_jobs.append(
-          fail_claimed_job(
-            job_id,
-            ProcessMissingError("process no longer registered at supervisor startup"),
-            traceback_text="process no longer registered at supervisor startup",
-            backend_alias=self.backend_alias,
-          )
-        )
-    return failed_jobs
+      return fail_orphaned_claimed_jobs(
+        ProcessMissingError("process no longer registered at supervisor startup"),
+        traceback_text="process no longer registered at supervisor startup",
+        backend_alias=self.backend_alias,
+      )
 
   def prune_stale_process_rows(self, *, now=None):
     if now is None:
       now = timezone.now()
-    alias = get_database_alias(self.backend_alias)
     cutoff = now - timedelta(seconds=self.config.process_alive_threshold)
-    queryset = Process.objects.using(alias).filter(
-      backend_alias=self.backend_alias,
-      last_heartbeat_at__lt=cutoff,
-    )
-    if self.process is not None:
-      queryset = queryset.exclude(pk=self.process.pk)
-
-    stale_processes = list(queryset.order_by("last_heartbeat_at", "id"))
-    pruned_processes = []
-    for process in stale_processes:
-      claimed_job_ids = list(
-        ClaimedExecution.objects.using(alias)
-        .filter(process=process)
-        .values_list("job_id", flat=True)
+    with app_executor():
+      return prune_stale_processes(
+        cutoff=cutoff,
+        error=ProcessPrunedError("process heartbeat expired"),
+        traceback_text="process heartbeat expired",
+        backend_alias=self.backend_alias,
+        exclude_process=self.process,
       )
-      with app_executor():
-        for job_id in claimed_job_ids:
-          fail_claimed_job(
-            job_id,
-            ProcessPrunedError("process heartbeat expired"),
-            traceback_text="process heartbeat expired",
-            backend_alias=self.backend_alias,
-          )
-      process.delete()
-      pruned_processes.append(process)
-    return pruned_processes
 
 
 class AsyncSupervisor(Supervisor):
@@ -314,20 +286,13 @@ class AsyncSupervisor(Supervisor):
   def _fail_crashed_runner_jobs(self, runner):
     if runner.process is None:
       return
-    alias = get_database_alias(self.backend_alias)
-    claimed_job_ids = list(
-      ClaimedExecution.objects.using(alias)
-      .filter(process=runner.process)
-      .values_list("job_id", flat=True)
-    )
     with app_executor():
-      for job_id in claimed_job_ids:
-        fail_claimed_job(
-          job_id,
-          ProcessExitError("runner thread crashed"),
-          traceback_text="runner thread crashed",
-          backend_alias=self.backend_alias,
-        )
+      fail_claimed_jobs_for_process(
+        runner.process,
+        ProcessExitError("runner thread crashed"),
+        traceback_text="runner thread crashed",
+        backend_alias=self.backend_alias,
+      )
 
   def _rebuild_runner(self, runner):
     kwargs = {
@@ -531,31 +496,13 @@ class ForkSupervisor(Supervisor):
     return self.check_children()
 
   def _fail_claimed_jobs_for_pid(self, pid):
-    alias = get_database_alias(self.backend_alias)
-    process = (
-      Process.objects.using(alias).filter(pid=pid, backend_alias=self.backend_alias).first()
-    )
-    if process is None:
-      return []
-
-    claimed_job_ids = list(
-      ClaimedExecution.objects.using(alias)
-      .filter(process=process)
-      .values_list("job_id", flat=True)
-    )
-    failed_jobs = []
     with app_executor():
-      for job_id in claimed_job_ids:
-        failed_jobs.append(
-          fail_claimed_job(
-            job_id,
-            ProcessExitError("child process exited"),
-            traceback_text="child process exited",
-            backend_alias=self.backend_alias,
-          )
-        )
-    process.delete()
-    return failed_jobs
+      return fail_claimed_jobs_for_pid(
+        pid,
+        ProcessExitError("child process exited"),
+        traceback_text="child process exited",
+        backend_alias=self.backend_alias,
+      )
 
   def _build_runner_specs(self):
     specs = []

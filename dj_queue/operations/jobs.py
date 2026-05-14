@@ -21,6 +21,7 @@ from dj_queue.models import (
   ClaimedExecution,
   FailedExecution,
   Job,
+  Process,
   ReadyExecution,
   Semaphore,
   ScheduledExecution,
@@ -412,6 +413,87 @@ def fail_claimed_job(job, error, *, traceback_text="", backend_alias="default"):
     message=str(error),
   )
   return job
+
+
+def fail_orphaned_claimed_jobs(error, *, traceback_text="", backend_alias="default"):
+  alias = get_database_alias(backend_alias)
+  job_ids = list(
+    ClaimedExecution.objects.using(alias)
+    .filter(process__isnull=True, job__backend_alias=backend_alias)
+    .values_list("job_id", flat=True)
+  )
+  return _fail_claimed_job_ids(
+    job_ids,
+    error,
+    traceback_text=traceback_text,
+    backend_alias=backend_alias,
+  )
+
+
+def fail_claimed_jobs_for_process(
+  process,
+  error,
+  *,
+  traceback_text="",
+  backend_alias="default",
+  delete_process=False,
+):
+  if process is None:
+    return []
+
+  alias = get_database_alias(backend_alias)
+  job_ids = list(
+    ClaimedExecution.objects.using(alias).filter(process=process).values_list("job_id", flat=True)
+  )
+  failed_jobs = _fail_claimed_job_ids(
+    job_ids,
+    error,
+    traceback_text=traceback_text,
+    backend_alias=backend_alias,
+  )
+  if delete_process:
+    process.delete(using=alias)
+  return failed_jobs
+
+
+def fail_claimed_jobs_for_pid(pid, error, *, traceback_text="", backend_alias="default"):
+  alias = get_database_alias(backend_alias)
+  process = Process.objects.using(alias).filter(pid=pid, backend_alias=backend_alias).first()
+  return fail_claimed_jobs_for_process(
+    process,
+    error,
+    traceback_text=traceback_text,
+    backend_alias=backend_alias,
+    delete_process=True,
+  )
+
+
+def prune_stale_processes(
+  *,
+  cutoff,
+  error,
+  traceback_text="",
+  backend_alias="default",
+  exclude_process=None,
+):
+  alias = get_database_alias(backend_alias)
+  queryset = Process.objects.using(alias).filter(
+    backend_alias=backend_alias,
+    last_heartbeat_at__lt=cutoff,
+  )
+  if exclude_process is not None:
+    queryset = queryset.exclude(pk=exclude_process.pk)
+
+  stale_processes = list(queryset.order_by("last_heartbeat_at", "id"))
+  for process in stale_processes:
+    fail_claimed_jobs_for_process(
+      process,
+      error,
+      traceback_text=traceback_text,
+      backend_alias=backend_alias,
+      delete_process=True,
+    )
+  return stale_processes
 
 
 def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_locked=None):
@@ -882,6 +964,20 @@ def _bulk_create(alias, model, objects):
     batch_size = len(objects)
   model.objects.using(alias).bulk_create(objects, batch_size=batch_size)
   return None
+
+
+def _fail_claimed_job_ids(job_ids, error, *, traceback_text, backend_alias):
+  failed_jobs = []
+  for job_id in job_ids:
+    failed_jobs.append(
+      fail_claimed_job(
+        job_id,
+        error,
+        traceback_text=traceback_text,
+        backend_alias=backend_alias,
+      )
+    )
+  return failed_jobs
 
 
 def _exception_path(error):
