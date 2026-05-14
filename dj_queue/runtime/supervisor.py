@@ -19,7 +19,6 @@ from dj_queue.operations.jobs import (
 )
 from dj_queue.runtime.base import BaseRunner, app_executor
 from dj_queue.runtime.connection_budget import warn_if_persistent_connection_budget_is_tight
-from dj_queue.runtime.errors import handle_thread_error
 from dj_queue.runtime.pidfile import PidFile
 from dj_queue.runtime.topology import runner_definitions
 
@@ -230,26 +229,14 @@ class AsyncSupervisor(Supervisor):
 
   def _run_managed_runner(self, runner):
     try:
-      while not self._stop_event.is_set():
-        while not runner._stop_event.is_set() and not self._stop_event.is_set():
-          try:
-            runner.poll_once()
-            runner.sleeper.sleep(runner.polling_interval)
-          except Exception as error:
-            handle_thread_error(
-              error,
-              context=f"{runner.hook_prefix}.run",
-              backend_alias=self.backend_alias,
-            )
-            break
-
-        if self._stop_event.is_set():
+      while not self.stop_requested():
+        if runner.run_managed_poll_loop(host_stop_requested=self.stop_requested):
           return
 
         # runner crashed — fail its claimed jobs, then stop and replace
         self._fail_crashed_runner_jobs(runner)
         drained = runner.stop()
-        if self._stop_event.is_set():
+        if self.stop_requested():
           return
         if drained is False and not self._wait_for_runner_stop(runner):
           return
@@ -261,16 +248,16 @@ class AsyncSupervisor(Supervisor):
         )
         replacement = self._rebuild_runner(runner)
         self._replace_runner(runner, replacement)
-        if self._stop_event.is_set():
+        if self.stop_requested():
           return
         runner = replacement
         runner.start()
     finally:
-      if not self._stop_event.is_set():
+      if not self.stop_requested():
         runner.stop()
 
   def _wait_for_runner_stop(self, runner):
-    while runner.process is not None and not self._stop_event.is_set():
+    while runner.process is not None and not self.stop_requested():
       time.sleep(0.01)
     return runner.process is None
 

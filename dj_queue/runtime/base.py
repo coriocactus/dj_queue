@@ -110,23 +110,28 @@ class BaseRunner:
   def run(self):
     self.start()
     try:
-      while self.should_continue():
-        try:
-          self.poll_once()
-        except Exception as error:
-          handle_thread_error(
-            error,
-            context=f"{self.hook_prefix}.run",
-            backend_alias=self.backend_alias,
-          )
-          break
-
-        if not self.should_continue():
-          break
-        self.sleeper.sleep(self.polling_interval)
+      self.run_poll_loop()
     finally:
       self.stop()
       close_old_connections()
+
+  def run_poll_loop(self):
+    while self.should_continue():
+      if not self._poll_once_handled():
+        return False
+      if not self.should_continue():
+        break
+      self.sleeper.sleep(self.polling_interval)
+    return True
+
+  def run_managed_poll_loop(self, *, host_stop_requested):
+    while not self.stop_requested() and not host_stop_requested():
+      if not self._poll_once_handled():
+        return False
+      if self.stop_requested() or host_stop_requested():
+        break
+      self.sleeper.sleep(self.polling_interval)
+    return host_stop_requested()
 
   def stop(self):
     process = self._begin_stop()
@@ -140,6 +145,9 @@ class BaseRunner:
     wake_up = getattr(self.sleeper, "wake_up", None)
     if callable(wake_up):
       wake_up()
+
+  def stop_requested(self):
+    return self._stop_event.is_set()
 
   def should_continue(self):
     if self._stop_event.is_set():
@@ -156,6 +164,18 @@ class BaseRunner:
 
   def poll_once(self):
     raise NotImplementedError
+
+  def _poll_once_handled(self):
+    try:
+      self.poll_once()
+    except Exception as error:
+      handle_thread_error(
+        error,
+        context=f"{self.hook_prefix}.run",
+        backend_alias=self.backend_alias,
+      )
+      return False
+    return True
 
   def process_metadata(self):
     return {}
