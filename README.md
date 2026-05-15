@@ -754,26 +754,70 @@ concurrency-maintenance throughput.
 
 The main configuration lives in `TASKS[backend_alias]["OPTIONS"]`.
 
-Start with these options:
+No top-level `OPTIONS` key is required. Omit a key to use its default. Static
+`recurring` entries are the exception: each named recurring task requires
+`task_path` and `schedule`.
 
-- `mode`: `"fork"` or `"async"`
-- `workers`: queue selectors, thread counts, and process counts
-- `dispatchers`: scheduled promotion and concurrency maintenance settings
-- `scheduler`: dynamic recurring polling settings
-- `database_alias`: database alias for queue tables and runtime activity
-- `preserve_finished_jobs` and `clear_finished_jobs_after`: successful result retention and cleanup
-- `clear_failed_jobs_after`: optional failed-job retention window
-- `clear_recurring_executions_after`: optional recurring reservation retention window
+Global options:
 
-Additional operational tuning is available when needed:
+| Option | Default | Meaning |
+|---|---|---|
+| `mode` | `"fork"` | standalone runtime mode, either `"fork"` or `"async"` |
+| `workers` | `[{"queues": "*", "threads": 3, "processes": 1, "polling_interval": 0.1}]` | worker topology and queue selectors |
+| `dispatchers` | `[{"batch_size": 500, "polling_interval": 1, "concurrency_maintenance": true, "concurrency_maintenance_interval": 600}]` | scheduled promotion and concurrency maintenance |
+| `scheduler` | `{"dynamic_tasks_enabled": false, "polling_interval": 5}` | dynamic recurring polling; the scheduler only starts when recurring or cleanup work exists |
+| `recurring` | `{}` | static recurring task definitions keyed by name |
+| `database_alias` | `"default"` | database alias for queue tables and runtime activity |
+| `preserve_finished_jobs` | `true` | keep successful jobs for result lookup and retention cleanup |
+| `clear_finished_jobs_after` | `86400` | seconds before finished successful jobs are cleaned up |
+| `clear_failed_jobs_after` | `null` | optional failed-job retention window in seconds |
+| `clear_recurring_executions_after` | `null` | optional recurring reservation retention window in seconds |
+| `default_concurrency_duration` | `180` | default semaphore TTL in seconds |
+| `use_skip_locked` | `true` | use `SKIP LOCKED` when the active backend supports it |
+| `listen_notify` | `true` | PostgreSQL-only worker wakeup optimization layered on top of polling |
+| `silence_polling` | `true` | suppress `dj_queue`'s own poll-cycle noise without mutating Django's global SQL logger |
+| `process_heartbeat_interval` | `60` | seconds between process heartbeat writes |
+| `process_alive_threshold` | `300` | seconds before a process row is stale |
+| `shutdown_timeout` | `5` | graceful drain window before standalone shutdown gives up on waiting |
+| `supervisor_pidfile` | `null` | optional pidfile guard for standalone supervisors |
+| `on_thread_error` | `null` | dotted callback path for runtime infrastructure exceptions |
 
-- `use_skip_locked`: use `SKIP LOCKED` when the active backend supports it
-- `listen_notify`: PostgreSQL-only worker wakeup optimization layered on top of polling
-- `silence_polling`: suppress `dj_queue`'s own poll-cycle noise without mutating Django's global SQL logger
-- `process_heartbeat_interval` and `process_alive_threshold`: process liveness reporting and stale-runner detection
-- `shutdown_timeout`: graceful drain window before standalone shutdown gives up on waiting
-- `supervisor_pidfile`: optional pidfile guard for standalone supervisors
-- `on_thread_error`: dotted callback path for runtime infrastructure exceptions
+Worker entry options:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `queues` | `"*"` | queue selector or selectors; `"*"` means all queues |
+| `threads` | `3` | worker threads per worker process |
+| `processes` | `1` | worker processes in `fork` mode; normalized to `1` in `async` mode |
+| `polling_interval` | `0.1` | seconds between worker polls |
+
+Dispatcher entry options:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `batch_size` | `500` | maximum scheduled or blocked rows to promote per batch |
+| `polling_interval` | `1` | seconds between dispatcher polls |
+| `concurrency_maintenance` | `true` | run expired semaphore and blocked-job maintenance |
+| `concurrency_maintenance_interval` | `600` | seconds between maintenance passes; `0` means every poll |
+
+Scheduler entry options:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `dynamic_tasks_enabled` | `false` | load dynamic recurring tasks from the database |
+| `polling_interval` | `5` | seconds between scheduler polls |
+
+Recurring entry options:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `task_path` | none | required dotted import path for the task to enqueue |
+| `schedule` | none | required cron or supported Fugit-style cronish schedule |
+| `args` | `[]` | positional arguments for the task |
+| `kwargs` | `{}` | keyword arguments for the task |
+| `queue_name` | `"default"` | queue used for jobs created from this recurring task |
+| `priority` | `0` | priority used for jobs created from this recurring task |
+| `description` | `""` | operator-facing description |
 
 On PostgreSQL, `listen_notify` uses the same Django PostgreSQL driver
 configuration as the main database connection. Install a compatible driver in
