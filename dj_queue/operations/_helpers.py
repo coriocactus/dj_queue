@@ -28,6 +28,13 @@ def _lock_active_pauses(alias, backend_alias, queue_names=None):
   return set(queryset.values_list("queue_name", flat=True))
 
 
+def _exclude_active_pauses(queryset, alias, backend_alias):
+  paused_queue_names = (
+    Pause.objects.using(alias).filter(backend_alias=backend_alias).values("queue_name")
+  )
+  return queryset.exclude(queue_name__in=paused_queue_names)
+
+
 def _ready_execution_row(
   job,
   *,

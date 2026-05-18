@@ -84,6 +84,14 @@ def assert_no_claimed_execution_select(queries):
   assert offending_queries == []
 
 
+def standalone_pause_queries(queries):
+  return [
+    query["sql"]
+    for query in queries
+    if "dj_queue_pauses" in query["sql"] and "dj_queue_ready_executions" not in query["sql"]
+  ]
+
+
 @pytest.mark.django_db
 def test_semaphore_acquire_release_cycle():
   assert semaphore_acquire("account:1", limit=1, duration_seconds=60) is True
@@ -529,6 +537,22 @@ def test_claim_rechecks_pause_created_during_claim(monkeypatch):
   assert claimed_jobs == []
   assert ReadyExecution.objects.filter(job=job).exists() is True
   assert ClaimedExecution.objects.filter(job=job).exists() is False
+
+
+@pytest.mark.django_db
+def test_claim_ready_jobs_uses_ready_query_for_initial_pause_filter():
+  job = make_job()
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+
+  with CaptureQueriesContext(connection) as queries:
+    claim_ready_jobs(limit=1)
+
+  assert len(standalone_pause_queries(queries)) == 1
 
 
 @pytest.mark.skipif(

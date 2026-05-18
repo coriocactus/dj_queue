@@ -31,6 +31,7 @@ from dj_queue.operations._helpers import (
   _create_blocked_execution,
   _create_ready_execution,
   _create_scheduled_execution,
+  _exclude_active_pauses,
   _lock_active_pauses,
   _normalize_payload,
   _ready_execution_row,
@@ -300,12 +301,10 @@ def _claim_ready_jobs_once(
 ):
 
   with transaction.atomic(using=alias):
-    paused_queue_names = _lock_active_pauses(alias, backend_alias)
     queryset = (
       ReadyExecution.objects.using(alias).select_related("job").filter(backend_alias=backend_alias)
     )
-    if paused_queue_names:
-      queryset = queryset.exclude(queue_name__in=paused_queue_names)
+    queryset = _exclude_active_pauses(queryset, alias, backend_alias)
     ready_rows = _select_ready_rows(
       queryset,
       limit=limit,
