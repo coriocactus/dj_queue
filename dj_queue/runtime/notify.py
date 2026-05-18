@@ -69,7 +69,9 @@ class NotifyWakeupBackend:
         return
 
       for notification in notifications:
-        if any_queue_matches_selectors(_queue_names_from_payload(notification.payload), self.queues):
+        if any_queue_matches_selectors(
+          _queue_names_from_payload(notification.payload), self.queues
+        ):
           self.wake_up()
 
   def _open_connection(self):
@@ -134,4 +136,3 @@ def _queue_names_from_payload(payload):
   if not isinstance(queue_names, list):
     return None
   return tuple(str(queue_name) for queue_name in queue_names)
-

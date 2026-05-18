@@ -36,7 +36,12 @@ from dj_queue.operations.jobs import (
   retry_failed_job,
   retry_failed_jobs,
 )
-from dj_queue.queue_state import QUEUE_STATES, filter_queue_state, is_queue_state, status_rank_expression
+from dj_queue.queue_state import (
+  QUEUE_STATES,
+  filter_queue_state,
+  is_queue_state,
+  status_rank_expression,
+)
 
 
 class DjQueueFirstAdminSite(admin.AdminSite):
@@ -574,7 +579,9 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   def handle_change_action(self, request, obj, action):
     if action == "run_now":
       try:
-        _job, dispatch_outcome = dispatch_scheduled_job_now(obj.pk, backend_alias=obj.backend_alias)
+        _job, dispatch_outcome = dispatch_scheduled_job_now(
+          obj.pk, backend_alias=obj.backend_alias
+        )
       except (EnqueueError, ImportError, AttributeError) as exc:
         self.message_user(request, f"Could not dispatch job now: {exc}", level=messages.ERROR)
         return self._current_object_redirect(obj, backend_alias=obj.backend_alias)

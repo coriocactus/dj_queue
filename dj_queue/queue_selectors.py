@@ -16,7 +16,10 @@ def normalize_queue_selectors(selectors):
 def queue_matches_selectors(queue_name, selectors):
   if selectors_match_all(selectors):
     return True
-  return any(_queue_matches_selector(queue_name, selector) for selector in normalize_queue_selectors(selectors))
+  return any(
+    _queue_matches_selector(queue_name, selector)
+    for selector in normalize_queue_selectors(selectors)
+  )
 
 
 def any_queue_matches_selectors(queue_names, selectors):

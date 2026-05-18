@@ -214,7 +214,9 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
         entry["dispatch_outcome"] = DispatchOutcome.READY
         continue
 
-      dispatch_outcome = _dispatch_job(job, task=entry["task"], backend_alias=backend_alias, now=now)
+      dispatch_outcome = _dispatch_job(
+        job, task=entry["task"], backend_alias=backend_alias, now=now
+      )
       if dispatch_outcome.should_notify:
         ready_queue_names.append(job.queue_name)
       entry["dispatch_outcome"] = dispatch_outcome

@@ -87,7 +87,9 @@ def queue_state_count_key(state):
 
 
 def queue_state_count_fields(counts):
-  return {definition.count_key: counts.get(definition.name, 0) for definition in QUEUE_STATE_DEFINITIONS}
+  return {
+    definition.count_key: counts.get(definition.name, 0) for definition in QUEUE_STATE_DEFINITIONS
+  }
 
 
 def filter_queue_state(queryset, state):
