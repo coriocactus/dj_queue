@@ -4,6 +4,7 @@ import time
 import traceback
 from dataclasses import dataclass
 from datetime import timedelta
+from enum import StrEnum
 
 from django.db import connections, transaction
 from django.db.utils import OperationalError
@@ -56,6 +57,17 @@ TRANSIENT_CLAIM_ERROR_MESSAGES = (
 )
 
 
+class DispatchOutcome(StrEnum):
+  READY = "ready"
+  SCHEDULED = "scheduled"
+  BLOCKED = "blocked"
+  DISCARDED = "discarded"
+
+  @property
+  def should_notify(self):
+    return self is DispatchOutcome.READY
+
+
 @dataclass(frozen=True)
 class ClaimedJob:
   job: Job
@@ -84,9 +96,9 @@ def enqueue_job_with_dispatch(task, args, kwargs, *, backend_alias="default"):
       scheduled_at=task.run_after,
       concurrency_key=concurrency_key,
     )
-    dispatched_as = _dispatch_job(job, task=task, backend_alias=backend_alias)
+    dispatch_outcome = _dispatch_job(job, task=task, backend_alias=backend_alias)
 
-  if dispatched_as == "ready":
+  if dispatch_outcome.should_notify:
     runtime_notify.notify_ready_queues((job.queue_name,), backend_alias=backend_alias)
 
   log_event(
@@ -96,7 +108,7 @@ def enqueue_job_with_dispatch(task, args, kwargs, *, backend_alias="default"):
     queue_name=job.queue_name,
     priority=job.priority,
   )
-  return job, dispatched_as
+  return job, dispatch_outcome
 
 
 def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
@@ -164,7 +176,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
         priority=job.priority,
       )
 
-    return [(entry["job"], entry["task"], "ready") for entry in prepared]
+    return [(entry["job"], entry["task"], DispatchOutcome.READY) for entry in prepared]
 
   ready_rows = []
   scheduled_rows = []
@@ -185,7 +197,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
             created_at=job.created_at,
           )
         )
-        entry["dispatched_as"] = "scheduled"
+        entry["dispatch_outcome"] = DispatchOutcome.SCHEDULED
         continue
 
       if not job.concurrency_key:
@@ -198,13 +210,13 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
           )
         )
         ready_queue_names.append(job.queue_name)
-        entry["dispatched_as"] = "ready"
+        entry["dispatch_outcome"] = DispatchOutcome.READY
         continue
 
-      dispatched_as = _dispatch_job(job, task=entry["task"], backend_alias=backend_alias, now=now)
-      if dispatched_as == "ready":
+      dispatch_outcome = _dispatch_job(job, task=entry["task"], backend_alias=backend_alias, now=now)
+      if dispatch_outcome.should_notify:
         ready_queue_names.append(job.queue_name)
-      entry["dispatched_as"] = dispatched_as
+      entry["dispatch_outcome"] = dispatch_outcome
 
     _lock_active_pauses(alias, backend_alias, {row.queue_name for row in ready_rows})
     _bulk_create(alias, ReadyExecution, ready_rows)
@@ -226,7 +238,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
       priority=job.priority,
     )
 
-  return [(entry["job"], entry["task"], entry["dispatched_as"]) for entry in prepared]
+  return [(entry["job"], entry["task"], entry["dispatch_outcome"]) for entry in prepared]
 
 
 def claim_ready_jobs(
@@ -542,8 +554,8 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
     for job in jobs:
       if job.pk in direct_job_ids:
         continue
-      dispatched_as = _dispatch_existing_job(job)
-      if dispatched_as == "ready":
+      dispatch_outcome = _dispatch_existing_job(job)
+      if dispatch_outcome.should_notify:
         ready_queue_names.append(job.queue_name)
 
   if ready_queue_names:
@@ -571,9 +583,9 @@ def dispatch_scheduled_job_now(job_id, *, backend_alias="default"):
     scheduled.delete(using=alias)
     job.scheduled_at = None
     job.save(using=alias, update_fields=["scheduled_at", "updated_at"])
-    dispatched_as = _dispatch_existing_job(job)
+    dispatch_outcome = _dispatch_existing_job(job)
 
-  if dispatched_as == "ready":
+  if dispatch_outcome.should_notify:
     runtime_notify.notify_ready_queues((job.queue_name,), backend_alias=backend_alias)
 
   log_event(
@@ -581,9 +593,9 @@ def dispatch_scheduled_job_now(job_id, *, backend_alias="default"):
     job_id=str(job.id),
     queue_name=job.queue_name,
     priority=job.priority,
-    dispatched_as=dispatched_as,
+    dispatched_as=dispatch_outcome.value,
   )
-  return job, dispatched_as
+  return job, dispatch_outcome
 
 
 def retry_failed_job(job_id, *, backend_alias="default"):
@@ -601,9 +613,9 @@ def retry_failed_job(job_id, *, backend_alias="default"):
     job.return_value = None
     job.finished_at = None
     job.save(using=alias, update_fields=["return_value", "finished_at", "updated_at"])
-    dispatched_as = _dispatch_existing_job(job)
+    dispatch_outcome = _dispatch_existing_job(job)
 
-  if dispatched_as == "ready":
+  if dispatch_outcome.should_notify:
     runtime_notify.notify_ready_queues((job.queue_name,), backend_alias=backend_alias)
 
   log_event("job.retried", job_id=str(job.id), queue_name=job.queue_name, priority=job.priority)
@@ -637,9 +649,9 @@ def retry_failed_jobs(*, job_ids=None, batch_size=500, backend_alias="default"):
       job.return_value = None
       job.finished_at = None
       job.save(using=alias, update_fields=["return_value", "finished_at", "updated_at"])
-      dispatched_as = _dispatch_existing_job(job)
+      dispatch_outcome = _dispatch_existing_job(job)
       jobs.append(job)
-      if dispatched_as == "ready":
+      if dispatch_outcome.should_notify:
         ready_queue_names.append(job.queue_name)
 
   if ready_queue_names:
@@ -772,7 +784,7 @@ def _dispatch_job(job, *, task, backend_alias, now=None):
       backend_alias=backend_alias,
       scheduled_at=job.scheduled_at,
     )
-    return "scheduled"
+    return DispatchOutcome.SCHEDULED
 
   if not job.concurrency_key:
     _create_ready_execution(
@@ -781,7 +793,7 @@ def _dispatch_job(job, *, task, backend_alias, now=None):
       backend_alias=backend_alias,
       ready_at=now,
     )
-    return "ready"
+    return DispatchOutcome.READY
 
   limit, duration_seconds, on_conflict = concurrency_settings(task, backend_alias=backend_alias)
   if semaphore_acquire(
@@ -796,13 +808,13 @@ def _dispatch_job(job, *, task, backend_alias, now=None):
       backend_alias=backend_alias,
       ready_at=now,
     )
-    return "ready"
+    return DispatchOutcome.READY
 
   if on_conflict == "discard":
     job.finished_at = now
     job.return_value = None
     job.save(using=alias, update_fields=["finished_at", "return_value", "updated_at"])
-    return "discarded"
+    return DispatchOutcome.DISCARDED
 
   _create_blocked_execution(
     alias,
@@ -811,7 +823,7 @@ def _dispatch_job(job, *, task, backend_alias, now=None):
     concurrency_key=job.concurrency_key,
     expires_at=now + timedelta(seconds=duration_seconds),
   )
-  return "blocked"
+  return DispatchOutcome.BLOCKED
 
 
 def _release_concurrency_slot(job):

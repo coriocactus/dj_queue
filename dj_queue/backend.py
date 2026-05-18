@@ -9,6 +9,7 @@ from django.utils.module_loading import import_string
 from dj_queue.db import get_database_alias
 from dj_queue.models import Job
 from dj_queue.operations.jobs import (
+  DispatchOutcome,
   enqueue_job_with_dispatch,
   enqueue_jobs_bulk,
   validate_queue_allowed,
@@ -27,8 +28,8 @@ class DjQueueBackend(BaseTaskBackend):
 
   def enqueue(self, task, args, kwargs):
     self.validate_task(task)
-    job, dispatched_as = enqueue_job_with_dispatch(task, args, kwargs, backend_alias=self.alias)
-    return _task_result_from_enqueued_job(job, task, dispatched_as)
+    job, dispatch_outcome = enqueue_job_with_dispatch(task, args, kwargs, backend_alias=self.alias)
+    return _task_result_from_enqueued_job(job, task, dispatch_outcome)
 
   async def aenqueue(self, task, args, kwargs):
     return await sync_to_async(_async_backend_call, thread_sensitive=True)(
@@ -46,8 +47,8 @@ class DjQueueBackend(BaseTaskBackend):
 
     created_jobs = enqueue_jobs_bulk(jobs, backend_alias=self.alias)
     return [
-      _task_result_from_enqueued_job(job, task, dispatched_as)
-      for job, task, dispatched_as in created_jobs
+      _task_result_from_enqueued_job(job, task, dispatch_outcome)
+      for job, task, dispatch_outcome in created_jobs
     ]
 
   def get_result(self, result_id):
@@ -139,7 +140,7 @@ def _task_result_from_job(job):
   return result
 
 
-def _task_result_from_enqueued_job(job, task, dispatched_as):
+def _task_result_from_enqueued_job(job, task, dispatch_outcome):
   if hasattr(task, "using"):
     task = task.using(
       priority=job.priority,
@@ -148,7 +149,11 @@ def _task_result_from_enqueued_job(job, task, dispatched_as):
       backend=job.backend_alias,
     )
 
-  status = TaskResultStatus.SUCCESSFUL if dispatched_as == "discarded" else TaskResultStatus.READY
+  status = (
+    TaskResultStatus.SUCCESSFUL
+    if dispatch_outcome is DispatchOutcome.DISCARDED
+    else TaskResultStatus.READY
+  )
   finished_at = job.finished_at if status == TaskResultStatus.SUCCESSFUL else None
 
   result = TaskResult(

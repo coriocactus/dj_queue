@@ -29,6 +29,7 @@ from dj_queue.models import (
   Semaphore,
 )
 from dj_queue.operations.jobs import (
+  DispatchOutcome,
   discard_failed_job,
   dispatch_scheduled_job_now,
   enqueue_job_again,
@@ -590,15 +591,15 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   def handle_change_action(self, request, obj, action):
     if action == "run_now":
       try:
-        _job, dispatched_as = dispatch_scheduled_job_now(obj.pk, backend_alias=obj.backend_alias)
+        _job, dispatch_outcome = dispatch_scheduled_job_now(obj.pk, backend_alias=obj.backend_alias)
       except (EnqueueError, ImportError, AttributeError) as exc:
         self.message_user(request, f"Could not dispatch job now: {exc}", level=messages.ERROR)
         return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
 
       message = "Dispatched scheduled job for immediate execution"
-      if dispatched_as == "blocked":
+      if dispatch_outcome is DispatchOutcome.BLOCKED:
         message = "Dispatched scheduled job immediately and it is now blocked"
-      if dispatched_as == "discarded":
+      if dispatch_outcome is DispatchOutcome.DISCARDED:
         message = "Dispatched scheduled job immediately and it was discarded"
       self.message_user(request, message, level=messages.SUCCESS)
       return self._current_object_redirect(obj, backend_alias=obj.backend_alias)

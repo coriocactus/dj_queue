@@ -30,9 +30,11 @@ from dj_queue.operations.cleanup import (
   clear_recurring_executions,
 )
 from dj_queue.operations.jobs import (
+  DispatchOutcome,
   discard_failed_job,
   discard_ready_jobs,
   discard_scheduled_jobs,
+  enqueue_job_with_dispatch,
   promote_scheduled_jobs,
   retry_failed_job,
 )
@@ -106,6 +108,14 @@ def test_enqueue_immediate_uses_ready_path():
   assert result.kwargs == {}
   assert ReadyExecution.objects.filter(job=job).exists() is True
   assert ScheduledExecution.objects.exists() is False
+
+
+@pytest.mark.django_db
+def test_enqueue_job_with_dispatch_returns_explicit_outcome():
+  job, dispatch_outcome = enqueue_job_with_dispatch(echo, ("ready"), {}, backend_alias="default")
+
+  assert dispatch_outcome is DispatchOutcome.READY
+  assert ReadyExecution.objects.filter(job=job).exists() is True
 
 
 @pytest.mark.django_db
