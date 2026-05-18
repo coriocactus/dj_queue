@@ -8,7 +8,7 @@ from enum import StrEnum
 
 from django.db import connections, transaction
 from django.db.utils import OperationalError
-from django.tasks import TaskContext, TaskResult, TaskResultStatus
+from django.tasks import TaskContext
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
@@ -45,6 +45,7 @@ from dj_queue.operations.concurrency import (
 )
 from dj_queue.queue_selectors import filter_by_queue_selectors, selectors_match_all
 from dj_queue.runtime import notify as runtime_notify
+from dj_queue.task_results import task_result_for_claimed_job
 
 
 CLAIM_READY_JOBS_RETRY_ATTEMPTS = 3
@@ -351,7 +352,9 @@ def execute_claimed_job(job, *, backend_alias="default"):
     if task.takes_context:
       if claimed_job is None:
         claimed_job = _load_claimed_job(job.id, backend_alias=job.backend_alias)
-      context = TaskContext(task_result=_task_result_for_claimed_job(task, claimed_job))
+      if not isinstance(claimed_job, ClaimedJob):
+        raise RuntimeError("ClaimedJob is required for task context execution")
+      context = TaskContext(task_result=task_result_for_claimed_job(task, claimed_job))
       return_value = task.call(context, *args, **kwargs)
     else:
       return_value = task.call(*args, **kwargs)
@@ -979,23 +982,3 @@ def _fail_claimed_job_ids(job_ids, error, *, traceback_text, backend_alias):
 
 def _exception_path(error):
   return f"{error.__class__.__module__}.{error.__class__.__qualname__}"
-
-
-def _task_result_for_claimed_job(task, claimed_job):
-  if not isinstance(claimed_job, ClaimedJob):
-    raise RuntimeError("ClaimedJob is required for task context execution")
-
-  return TaskResult(
-    task=task,
-    id=str(claimed_job.job.id),
-    status=TaskResultStatus.RUNNING,
-    enqueued_at=claimed_job.job.created_at,
-    started_at=claimed_job.claimed_at,
-    finished_at=None,
-    last_attempted_at=claimed_job.claimed_at,
-    args=claimed_job.job.payload.get("args", []),
-    kwargs=claimed_job.job.payload.get("kwargs", {}),
-    backend=claimed_job.job.backend_alias,
-    errors=[],
-    worker_ids=list(claimed_job.worker_ids),
-  )
