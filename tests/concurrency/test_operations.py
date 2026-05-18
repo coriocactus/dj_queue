@@ -75,6 +75,15 @@ def assert_no_backend_scoping_join(queries, state_table):
   assert offending_queries == []
 
 
+def assert_no_claimed_execution_select(queries):
+  offending_queries = [
+    query["sql"]
+    for query in queries
+    if "dj_queue_claimed_executions" in query["sql"] and "SELECT" in query["sql"]
+  ]
+  assert offending_queries == []
+
+
 @pytest.mark.django_db
 def test_semaphore_acquire_release_cycle():
   assert semaphore_acquire("account:1", limit=1, duration_seconds=60) is True
@@ -134,6 +143,30 @@ def test_semaphore_release_uses_single_update_query():
   assert len(semaphore_queries) == 1
   assert "UPDATE" in semaphore_queries[0]
   assert "SELECT" not in semaphore_queries[0]
+
+
+@pytest.mark.django_db
+def test_complete_claimed_job_deletes_claimed_row_without_select():
+  job = make_job(args=["done"])
+  ClaimedExecution.objects.create(job=job)
+
+  with CaptureQueriesContext(connection) as queries:
+    complete_claimed_job(job.id, "done")
+
+  assert_no_claimed_execution_select(queries)
+  assert ClaimedExecution.objects.filter(job=job).exists() is False
+
+
+@pytest.mark.django_db
+def test_fail_claimed_job_deletes_claimed_row_without_select():
+  job = make_job(args=["failed"])
+  ClaimedExecution.objects.create(job=job)
+
+  with CaptureQueriesContext(connection) as queries:
+    fail_claimed_job(job.id, ValueError("boom"), traceback_text="traceback")
+
+  assert_no_claimed_execution_select(queries)
+  assert ClaimedExecution.objects.filter(job=job).exists() is False
 
 
 @pytest.mark.skipif(

@@ -380,15 +380,10 @@ def complete_claimed_job(job, return_value, *, backend_alias="default"):
   alias = get_database_alias(backend_alias)
   if isinstance(job, ClaimedJob):
     job = job.job
-  job_id = job.id if isinstance(job, Job) else job
+  job = _resolve_claimed_job(job, alias=alias, backend_alias=backend_alias)
 
   with transaction.atomic(using=alias):
-    queryset = ClaimedExecution.objects.using(alias).select_for_update()
-    if isinstance(job, Job):
-      claimed = queryset.get(job_id=job_id, job__backend_alias=backend_alias)
-    else:
-      claimed = queryset.select_related("job").get(job_id=job_id, job__backend_alias=backend_alias)
-      job = claimed.job
+    _delete_claimed_execution(alias, job.id)
     now = timezone.now()
     config = load_backend_config(job.backend_alias)
 
@@ -396,7 +391,6 @@ def complete_claimed_job(job, return_value, *, backend_alias="default"):
       job.finished_at = now
       job.return_value = return_value
       job.save(using=alias, update_fields=["finished_at", "return_value", "updated_at"])
-      claimed.delete(using=alias)
     else:
       job.delete(using=alias)
 
@@ -410,16 +404,10 @@ def fail_claimed_job(job, error, *, traceback_text="", backend_alias="default"):
   alias = get_database_alias(backend_alias)
   if isinstance(job, ClaimedJob):
     job = job.job
-  job_id = job.id if isinstance(job, Job) else job
+  job = _resolve_claimed_job(job, alias=alias, backend_alias=backend_alias)
 
   with transaction.atomic(using=alias):
-    queryset = ClaimedExecution.objects.using(alias).select_for_update()
-    if isinstance(job, Job):
-      claimed = queryset.get(job_id=job_id, job__backend_alias=backend_alias)
-    else:
-      claimed = queryset.select_related("job").get(job_id=job_id, job__backend_alias=backend_alias)
-      job = claimed.job
-    claimed.delete(using=alias)
+    _delete_claimed_execution(alias, job.id)
     FailedExecution.objects.using(alias).create(
       job=job,
       exception_class=_exception_path(error),
@@ -967,6 +955,24 @@ def _load_claimed_job(job_id, *, backend_alias):
     claimed_at=claimed.created_at,
     worker_ids=(claimed.process.name,) if claimed.process is not None else (),
   )
+
+
+def _resolve_claimed_job(job, *, alias, backend_alias):
+  if isinstance(job, Job):
+    if job.backend_alias != backend_alias:
+      raise ClaimedExecution.DoesNotExist
+    return job
+
+  try:
+    return Job.objects.using(alias).get(pk=job, backend_alias=backend_alias)
+  except Job.DoesNotExist as exc:
+    raise ClaimedExecution.DoesNotExist from exc
+
+
+def _delete_claimed_execution(alias, job_id):
+  deleted, _ = ClaimedExecution.objects.using(alias).filter(job_id=job_id).delete()
+  if not deleted:
+    raise ClaimedExecution.DoesNotExist
 
 
 def _bulk_create(alias, model, objects):
