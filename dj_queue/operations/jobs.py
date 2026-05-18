@@ -15,7 +15,7 @@ from django.utils.module_loading import import_string
 from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias, locked_queryset
 from dj_queue.exceptions import EnqueueError
-from dj_queue.log import log_event
+from dj_queue.log import event_logging_enabled, log_event
 from dj_queue.models import (
   BlockedExecution,
   ClaimedExecution,
@@ -102,13 +102,14 @@ def enqueue_job_with_dispatch(task, args, kwargs, *, backend_alias="default"):
   if dispatch_outcome.should_notify:
     runtime_notify.notify_ready_queues((job.queue_name,), backend_alias=backend_alias)
 
-  log_event(
-    "job.enqueued",
-    job_id=str(job.id),
-    task_path=job.task_path,
-    queue_name=job.queue_name,
-    priority=job.priority,
-  )
+  if event_logging_enabled(backend_alias=backend_alias):
+    log_event(
+      "job.enqueued",
+      job_id=str(job.id),
+      task_path=job.task_path,
+      queue_name=job.queue_name,
+      priority=job.priority,
+    )
   return job, dispatch_outcome
 
 
@@ -167,15 +168,16 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
     if ready_queue_names:
       runtime_notify.notify_ready_queues(ready_queue_names, backend_alias=backend_alias)
 
-    for entry in prepared:
-      job = entry["job"]
-      log_event(
-        "job.enqueued",
-        job_id=str(job.id),
-        task_path=job.task_path,
-        queue_name=job.queue_name,
-        priority=job.priority,
-      )
+    if event_logging_enabled(backend_alias=backend_alias):
+      for entry in prepared:
+        job = entry["job"]
+        log_event(
+          "job.enqueued",
+          job_id=str(job.id),
+          task_path=job.task_path,
+          queue_name=job.queue_name,
+          priority=job.priority,
+        )
 
     return [(entry["job"], entry["task"], DispatchOutcome.READY) for entry in prepared]
 
@@ -231,15 +233,16 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
       backend_alias=backend_alias,
     )
 
-  for entry in prepared:
-    job = entry["job"]
-    log_event(
-      "job.enqueued",
-      job_id=str(job.id),
-      task_path=job.task_path,
-      queue_name=job.queue_name,
-      priority=job.priority,
-    )
+  if event_logging_enabled(backend_alias=backend_alias):
+    for entry in prepared:
+      job = entry["job"]
+      log_event(
+        "job.enqueued",
+        job_id=str(job.id),
+        task_path=job.task_path,
+        queue_name=job.queue_name,
+        priority=job.priority,
+      )
 
   return [(entry["job"], entry["task"], entry["dispatch_outcome"]) for entry in prepared]
 
@@ -275,13 +278,14 @@ def claim_ready_jobs(
         raise
       time.sleep(0.01 * (attempt + 1))
 
-  for claimed_job in claimed_jobs:
-    log_event(
-      "job.claimed",
-      job_id=str(claimed_job.job.id),
-      queue_name=claimed_job.job.queue_name,
-      priority=claimed_job.job.priority,
-    )
+  if event_logging_enabled(backend_alias=backend_alias):
+    for claimed_job in claimed_jobs:
+      log_event(
+        "job.claimed",
+        job_id=str(claimed_job.job.id),
+        queue_name=claimed_job.job.queue_name,
+        priority=claimed_job.job.priority,
+      )
   return claimed_jobs
 
 
@@ -397,7 +401,8 @@ def complete_claimed_job(job, return_value, *, backend_alias="default"):
       job.delete(using=alias)
 
   _release_concurrency_slot(job)
-  log_event("job.executed", job_id=str(job.id), status="success")
+  if event_logging_enabled(backend_alias=backend_alias):
+    log_event("job.executed", job_id=str(job.id), status="success")
   return job
 
 
@@ -423,12 +428,13 @@ def fail_claimed_job(job, error, *, traceback_text="", backend_alias="default"):
     )
 
   _release_concurrency_slot(job)
-  log_event(
-    "job.failed",
-    job_id=str(job.id),
-    exception_class=_exception_path(error),
-    message=str(error),
-  )
+  if event_logging_enabled(backend_alias=backend_alias):
+    log_event(
+      "job.failed",
+      job_id=str(job.id),
+      exception_class=_exception_path(error),
+      message=str(error),
+    )
   return job
 
 
@@ -593,13 +599,14 @@ def dispatch_scheduled_job_now(job_id, *, backend_alias="default"):
   if dispatch_outcome.should_notify:
     runtime_notify.notify_ready_queues((job.queue_name,), backend_alias=backend_alias)
 
-  log_event(
-    "job.dispatched_now",
-    job_id=str(job.id),
-    queue_name=job.queue_name,
-    priority=job.priority,
-    dispatched_as=dispatch_outcome.value,
-  )
+  if event_logging_enabled(backend_alias=backend_alias):
+    log_event(
+      "job.dispatched_now",
+      job_id=str(job.id),
+      queue_name=job.queue_name,
+      priority=job.priority,
+      dispatched_as=dispatch_outcome.value,
+    )
   return job, dispatch_outcome
 
 
@@ -623,7 +630,8 @@ def retry_failed_job(job_id, *, backend_alias="default"):
   if dispatch_outcome.should_notify:
     runtime_notify.notify_ready_queues((job.queue_name,), backend_alias=backend_alias)
 
-  log_event("job.retried", job_id=str(job.id), queue_name=job.queue_name, priority=job.priority)
+  if event_logging_enabled(backend_alias=backend_alias):
+    log_event("job.retried", job_id=str(job.id), queue_name=job.queue_name, priority=job.priority)
   return job
 
 
@@ -665,8 +673,11 @@ def retry_failed_jobs(*, job_ids=None, batch_size=500, backend_alias="default"):
       backend_alias=backend_alias,
     )
 
-  for job in jobs:
-    log_event("job.retried", job_id=str(job.id), queue_name=job.queue_name, priority=job.priority)
+  if event_logging_enabled(backend_alias=backend_alias):
+    for job in jobs:
+      log_event(
+        "job.retried", job_id=str(job.id), queue_name=job.queue_name, priority=job.priority
+      )
   return len(jobs)
 
 
@@ -720,10 +731,12 @@ def _discard_state_jobs(
     jobs = [jobs_by_id[job_id] for job_id in row_job_ids]
     Job.objects.using(alias).filter(pk__in=row_job_ids).delete()
 
+  should_log = event_logging_enabled(backend_alias=backend_alias)
   for job in jobs:
     if release_concurrency:
       _release_concurrency_slot(job)
-    log_event("job.discarded", job_id=str(job.id), reason=reason)
+    if should_log:
+      log_event("job.discarded", job_id=str(job.id), reason=reason)
   return len(jobs)
 
 

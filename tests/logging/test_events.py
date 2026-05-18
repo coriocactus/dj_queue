@@ -1,6 +1,6 @@
 import logging
 
-from dj_queue.log import log_event
+from dj_queue.log import event_logging_enabled, log_event
 
 
 def assert_event_record(record, *, event, level, payload):
@@ -82,3 +82,15 @@ def test_structured_event_process_replaced(caplog):
     level=logging.INFO,
     payload=payload,
   )
+
+
+def test_event_logging_enabled_respects_logger_level():
+  logger = logging.getLogger("dj_queue")
+  original_level = logger.level
+  try:
+    logger.setLevel(logging.WARNING)
+
+    assert event_logging_enabled(logging.INFO) is False
+    assert event_logging_enabled(logging.WARNING) is True
+  finally:
+    logger.setLevel(original_level)
