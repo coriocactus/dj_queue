@@ -1,7 +1,7 @@
 from datetime import timedelta
 
 from django.db import connections, transaction
-from django.db.models import F
+from django.db.models import Case, F, IntegerField, When
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
@@ -104,17 +104,23 @@ def _mysql_family_semaphore_acquire(alias, key, *, limit, expires_at, now):
 
 def semaphore_release(key, *, duration_seconds, backend_alias="default"):
   alias = get_database_alias(backend_alias)
-  expires_at = timezone.now() + timedelta(seconds=duration_seconds)
+  now = timezone.now()
+  expires_at = now + timedelta(seconds=duration_seconds)
 
-  with transaction.atomic(using=alias):
-    semaphore = Semaphore.objects.using(alias).select_for_update().filter(key=key).first()
-    if semaphore is None:
-      return False
-
-    semaphore.value = min(semaphore.limit, semaphore.value + 1)
-    semaphore.expires_at = expires_at
-    semaphore.save(using=alias, update_fields=["value", "expires_at", "updated_at"])
-    return True
+  updated = (
+    Semaphore.objects.using(alias)
+    .filter(key=key)
+    .update(
+      value=Case(
+        When(value__gte=F("limit"), then=F("limit")),
+        default=F("value") + 1,
+        output_field=IntegerField(),
+      ),
+      expires_at=expires_at,
+      updated_at=now,
+    )
+  )
+  return updated > 0
 
 
 def concurrency_settings(task, *, backend_alias):

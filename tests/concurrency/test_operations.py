@@ -123,6 +123,19 @@ def test_semaphore_signal_caps_at_limit():
   assert semaphore.value == semaphore.limit == 2
 
 
+@pytest.mark.django_db
+def test_semaphore_release_uses_single_update_query():
+  semaphore_acquire("account:1", limit=1, duration_seconds=60)
+
+  with CaptureQueriesContext(connection) as queries:
+    assert semaphore_release("account:1", duration_seconds=60) is True
+
+  semaphore_queries = [query["sql"] for query in queries if "dj_queue_semaphores" in query["sql"]]
+  assert len(semaphore_queries) == 1
+  assert "UPDATE" in semaphore_queries[0]
+  assert "SELECT" not in semaphore_queries[0]
+
+
 @pytest.mark.skipif(
   os.environ.get("DB_BACKEND", "sqlite") == "sqlite",
   reason="requires a shared test database across threads",
