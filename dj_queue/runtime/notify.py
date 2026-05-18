@@ -5,6 +5,7 @@ from django.db import connections
 
 from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias, supports_listen_notify
+from dj_queue.queue_selectors import any_queue_matches_selectors
 from dj_queue.runtime.errors import handle_thread_error
 
 READY_CHANNEL = "dj_queue_ready"
@@ -68,7 +69,7 @@ class NotifyWakeupBackend:
         return
 
       for notification in notifications:
-        if _matches_queue_selectors(_queue_names_from_payload(notification.payload), self.queues):
+        if any_queue_matches_selectors(_queue_names_from_payload(notification.payload), self.queues):
           self.wake_up()
 
   def _open_connection(self):
@@ -134,19 +135,3 @@ def _queue_names_from_payload(payload):
     return None
   return tuple(str(queue_name) for queue_name in queue_names)
 
-
-def _matches_queue_selectors(queue_names, selectors):
-  if queue_names is None:
-    return True
-  if selectors in (None, (), "*", ["*"], ("*",)):
-    return True
-
-  for selector in (selectors,) if isinstance(selectors, str) else tuple(selectors):
-    if selector == "*":
-      return True
-    for queue_name in queue_names:
-      if selector.endswith("*") and queue_name.startswith(selector[:-1]):
-        return True
-      if queue_name == selector:
-        return True
-  return False

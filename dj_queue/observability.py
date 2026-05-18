@@ -25,6 +25,7 @@ from dj_queue.models import (
   ScheduledExecution,
   Semaphore,
 )
+from dj_queue.queue_selectors import queue_matches_selectors
 from dj_queue.queue_state import queue_state_counts
 
 
@@ -309,7 +310,7 @@ def queue_snapshot(
     "live_worker_count": sum(
       1
       for worker in live_workers
-      if queue_matches_selectors(queue_name, worker.metadata.get("queues", []))
+      if queue_matches_selectors(queue_name, worker.metadata.get("queues") or ("*",))
     ),
   }
 
@@ -417,21 +418,6 @@ def semaphore_rows_for_backend(*, backend_alias):
 
 def next_run_at(schedule, now):
   return next_cron_run(schedule, now)
-
-
-def queue_matches_selectors(queue_name, selectors):
-  normalized = tuple(selectors or ())
-  if normalized in ((), ("*",)):
-    return True
-
-  for selector in normalized:
-    if selector == "*":
-      return True
-    if selector.endswith("*") and queue_name.startswith(selector[:-1]):
-      return True
-    if selector == queue_name:
-      return True
-  return False
 
 
 def _live_processes_for_backend(*, alias, backend_alias, kind, process_cutoff):

@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from django.db import connections, transaction
-from django.db.models import Q
 from django.db.utils import OperationalError
 from django.tasks import TaskContext, TaskResult, TaskResultStatus
 from django.utils import timezone
@@ -43,6 +42,7 @@ from dj_queue.operations.concurrency import (
   semaphore_release,
   unblock_next_blocked_job,
 )
+from dj_queue.queue_selectors import filter_by_queue_selectors, selectors_match_all
 from dj_queue.runtime import notify as runtime_notify
 
 
@@ -887,26 +887,11 @@ def _bound_arguments(task, args, kwargs):
 
 
 def _filter_queue_selectors(queryset, queues):
-  if queues in (None, (), "*", ["*"], ("*",)):
-    return queryset
-
-  selectors = (queues,) if isinstance(queues, str) else tuple(queues)
-  condition = Q()
-  for selector in selectors:
-    if selector == "*":
-      return queryset
-    if selector.endswith("*"):
-      condition |= Q(queue_name__startswith=selector[:-1])
-    else:
-      condition |= Q(queue_name=selector)
-
-  if not condition:
-    return queryset.none()
-  return queryset.filter(condition)
+  return filter_by_queue_selectors(queryset, queues)
 
 
 def _select_ready_rows(queryset, *, limit, queues, use_skip_locked):
-  if queues in (None, (), "*", ["*"], ("*",)):
+  if selectors_match_all(queues):
     ordered = queryset.order_by("-priority", "id")
     return list(locked_queryset(ordered, use_skip_locked=use_skip_locked)[:limit])
 
