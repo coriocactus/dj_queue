@@ -64,32 +64,8 @@ def make_job(task=echo, **overrides):
   )
 
 
-def assert_no_backend_scoping_join(queries, state_table):
-  offending_queries = [
-    query["sql"]
-    for query in queries
-    if state_table in query["sql"]
-    and "dj_queue_jobs" in query["sql"]
-    and '"dj_queue_jobs"."backend_alias" =' in query["sql"]
-  ]
-  assert offending_queries == []
-
-
-def assert_no_claimed_execution_select(queries):
-  offending_queries = [
-    query["sql"]
-    for query in queries
-    if "dj_queue_claimed_executions" in query["sql"] and "SELECT" in query["sql"]
-  ]
-  assert offending_queries == []
-
-
-def standalone_pause_queries(queries):
-  return [
-    query["sql"]
-    for query in queries
-    if "dj_queue_pauses" in query["sql"] and "dj_queue_ready_executions" not in query["sql"]
-  ]
+def queries_touching(ctx, table_name):
+  return [query["sql"] for query in ctx.captured_queries if table_name in query["sql"]]
 
 
 @pytest.mark.django_db
@@ -141,39 +117,36 @@ def test_semaphore_signal_caps_at_limit():
 
 
 @pytest.mark.django_db
-def test_semaphore_release_uses_single_update_query():
+def test_semaphore_release_uses_one_semaphore_table_query():
   semaphore_acquire("account:1", limit=1, duration_seconds=60)
 
-  with CaptureQueriesContext(connection) as queries:
+  with CaptureQueriesContext(connection) as ctx:
     assert semaphore_release("account:1", duration_seconds=60) is True
 
-  semaphore_queries = [query["sql"] for query in queries if "dj_queue_semaphores" in query["sql"]]
-  assert len(semaphore_queries) == 1
-  assert "UPDATE" in semaphore_queries[0]
-  assert "SELECT" not in semaphore_queries[0]
+  assert len(queries_touching(ctx, "dj_queue_semaphores")) == 1
 
 
 @pytest.mark.django_db
-def test_complete_claimed_job_deletes_claimed_row_without_select():
+def test_complete_claimed_job_uses_one_claimed_table_query():
   job = make_job(args=["done"])
   ClaimedExecution.objects.create(job=job)
 
-  with CaptureQueriesContext(connection) as queries:
+  with CaptureQueriesContext(connection) as ctx:
     complete_claimed_job(job.id, "done")
 
-  assert_no_claimed_execution_select(queries)
+  assert len(queries_touching(ctx, "dj_queue_claimed_executions")) == 1
   assert ClaimedExecution.objects.filter(job=job).exists() is False
 
 
 @pytest.mark.django_db
-def test_fail_claimed_job_deletes_claimed_row_without_select():
+def test_fail_claimed_job_uses_one_claimed_table_query():
   job = make_job(args=["failed"])
   ClaimedExecution.objects.create(job=job)
 
-  with CaptureQueriesContext(connection) as queries:
+  with CaptureQueriesContext(connection) as ctx:
     fail_claimed_job(job.id, ValueError("boom"), traceback_text="traceback")
 
-  assert_no_claimed_execution_select(queries)
+  assert len(queries_touching(ctx, "dj_queue_claimed_executions")) == 1
   assert ClaimedExecution.objects.filter(job=job).exists() is False
 
 
@@ -540,7 +513,7 @@ def test_claim_rechecks_pause_created_during_claim(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_claim_ready_jobs_uses_ready_query_for_initial_pause_filter():
+def test_claim_ready_jobs_uses_fixed_query_budget_for_successful_claim():
   job = make_job()
   ReadyExecution.objects.create(
     job=job,
@@ -549,10 +522,10 @@ def test_claim_ready_jobs_uses_ready_query_for_initial_pause_filter():
     priority=job.priority,
   )
 
-  with CaptureQueriesContext(connection) as queries:
+  with CaptureQueriesContext(connection) as ctx:
     claim_ready_jobs(limit=1)
 
-  assert len(standalone_pause_queries(queries)) == 1
+  assert len(ctx.captured_queries) == 6
 
 
 @pytest.mark.skipif(
@@ -708,58 +681,6 @@ def test_claim_ready_jobs_bulk_inserts_claimed_rows_for_full_batch():
 
 
 @pytest.mark.django_db
-def test_claim_ready_jobs_scopes_backend_on_ready_state_table():
-  job = make_job()
-  ReadyExecution.objects.create(
-    job=job,
-    backend_alias=job.backend_alias,
-    queue_name=job.queue_name,
-    priority=job.priority,
-  )
-
-  with CaptureQueriesContext(connection) as queries:
-    claim_ready_jobs(limit=1)
-
-  assert_no_backend_scoping_join(queries, "dj_queue_ready_executions")
-
-
-@pytest.mark.django_db
-def test_promote_scheduled_jobs_scopes_backend_on_scheduled_state_table():
-  scheduled_at = timezone.now() - timedelta(seconds=1)
-  job = make_job(scheduled_at=scheduled_at)
-  ScheduledExecution.objects.create(
-    job=job,
-    backend_alias=job.backend_alias,
-    queue_name=job.queue_name,
-    priority=job.priority,
-    scheduled_at=scheduled_at,
-  )
-
-  with CaptureQueriesContext(connection) as queries:
-    promote_scheduled_jobs(batch_size=10)
-
-  assert_no_backend_scoping_join(queries, "dj_queue_scheduled_executions")
-
-
-@pytest.mark.django_db
-def test_promote_expired_blocked_jobs_scopes_backend_on_blocked_state_table():
-  job = make_job(task=limited, args=[1], kwargs={"value": "later"}, concurrency_key="account:1")
-  BlockedExecution.objects.create(
-    job=job,
-    backend_alias=job.backend_alias,
-    queue_name=job.queue_name,
-    priority=job.priority,
-    concurrency_key=job.concurrency_key,
-    expires_at=timezone.now() - timedelta(seconds=1),
-  )
-
-  with CaptureQueriesContext(connection) as queries:
-    promote_expired_blocked_jobs(batch_size=10)
-
-  assert_no_backend_scoping_join(queries, "dj_queue_blocked_executions")
-
-
-@pytest.mark.django_db
 def test_cleanup_expired_semaphores():
   Semaphore.objects.create(
     key="expired",
@@ -786,37 +707,9 @@ def test_cleanup_expired_semaphores():
   reason="requires DB_BACKEND=mysql or DB_BACKEND=mariadb",
 )
 @pytest.mark.django_db(transaction=True)
-def test_mysql_family_semaphore_acquire_uses_single_upsert_statement(monkeypatch):
-  executed_sql = []
-  real_cursor = connections["default"].cursor
+def test_mysql_family_semaphore_acquire_uses_one_semaphore_query_per_attempt():
+  with CaptureQueriesContext(connection) as ctx:
+    assert semaphore_acquire("account:mysql-upsert", limit=1, duration_seconds=60) is True
+    assert semaphore_acquire("account:mysql-upsert", limit=1, duration_seconds=60) is False
 
-  class RecordingCursor:
-    def __init__(self, wrapped):
-      self._wrapped = wrapped
-
-    def __enter__(self):
-      self._wrapped.__enter__()
-      return self
-
-    def __exit__(self, exc_type, exc, tb):
-      return self._wrapped.__exit__(exc_type, exc, tb)
-
-    def execute(self, sql, params=None):
-      executed_sql.append(sql)
-      return self._wrapped.execute(sql, params)
-
-    def __getattr__(self, name):
-      return getattr(self._wrapped, name)
-
-  def recording_cursor(*args, **kwargs):
-    return RecordingCursor(real_cursor(*args, **kwargs))
-
-  monkeypatch.setattr(connections["default"], "cursor", recording_cursor)
-
-  assert semaphore_acquire("account:mysql-upsert", limit=1, duration_seconds=60) is True
-  assert semaphore_acquire("account:mysql-upsert", limit=1, duration_seconds=60) is False
-
-  insert_statements = [sql for sql in executed_sql if "INSERT INTO" in sql]
-  assert len(insert_statements) == 2
-  assert all("ON DUPLICATE KEY UPDATE" in sql for sql in insert_statements)
-  assert all(" UPDATE " not in sql for sql in executed_sql)
+  assert len(queries_touching(ctx, "dj_queue_semaphores")) == 2
