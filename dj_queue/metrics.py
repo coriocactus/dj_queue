@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from dj_queue import observability
+from dj_queue.queue_state import QUEUE_STATE_DEFINITIONS
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,11 +39,11 @@ def metric_families(*, snapshots=None):
     runner_metrics = snapshot["runner_metrics"]
 
     for queue in snapshot["queue_rows"]:
-      for state in ("ready", "claimed", "scheduled", "blocked", "failed", "finished"):
+      for definition in QUEUE_STATE_DEFINITIONS:
         queue_jobs.append(
           MetricSample(
-            labels=(backend_alias, queue["name"], state),
-            value=queue[f"{state}_count"],
+            labels=(backend_alias, queue["name"], definition.name),
+            value=queue[definition.count_key],
           )
         )
       queue_paused.append(

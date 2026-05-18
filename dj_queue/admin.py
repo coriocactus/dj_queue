@@ -36,7 +36,7 @@ from dj_queue.operations.jobs import (
   retry_failed_job,
   retry_failed_jobs,
 )
-from dj_queue.queue_state import status_rank_expression
+from dj_queue.queue_state import QUEUE_STATES, filter_queue_state, is_queue_state, status_rank_expression
 
 
 class DjQueueFirstAdminSite(admin.AdminSite):
@@ -329,29 +329,12 @@ class JobStatusListFilter(admin.SimpleListFilter):
   parameter_name = "status"
 
   def lookups(self, request, model_admin):
-    return (
-      ("ready", "ready"),
-      ("scheduled", "scheduled"),
-      ("claimed", "claimed"),
-      ("blocked", "blocked"),
-      ("failed", "failed"),
-      ("finished", "finished"),
-    )
+    return QUEUE_STATES
 
   def queryset(self, request, queryset):
     value = self.value()
-    if value == "ready":
-      return queryset.ready()
-    if value == "scheduled":
-      return queryset.scheduled()
-    if value == "claimed":
-      return queryset.claimed()
-    if value == "blocked":
-      return queryset.blocked()
-    if value == "failed":
-      return queryset.failed()
-    if value == "finished":
-      return queryset.finished()
+    if is_queue_state(value):
+      return filter_queue_state(queryset, value)
     return queryset
 
 

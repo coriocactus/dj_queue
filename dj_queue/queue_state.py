@@ -14,6 +14,10 @@ class QueueStateDefinition:
   query_order: tuple[str, ...]
   rank: int
 
+  @property
+  def count_key(self):
+    return f"{self.name}_count"
+
 
 QUEUE_STATE_DEFINITIONS = (
   QueueStateDefinition(
@@ -67,10 +71,28 @@ QUEUE_STATE_DEFINITIONS = (
 QUEUE_STATE_BY_NAME = {definition.name: definition for definition in QUEUE_STATE_DEFINITIONS}
 QUEUE_STATES = tuple((definition.name, definition.label) for definition in QUEUE_STATE_DEFINITIONS)
 QUEUE_STATE_LABELS = {definition.name: definition.label for definition in QUEUE_STATE_DEFINITIONS}
+QUEUE_STATE_COUNT_KEYS = tuple(definition.count_key for definition in QUEUE_STATE_DEFINITIONS)
 
 
 def queue_state_definition(state):
   return QUEUE_STATE_BY_NAME[state]
+
+
+def is_queue_state(state):
+  return state in QUEUE_STATE_BY_NAME
+
+
+def queue_state_count_key(state):
+  return queue_state_definition(state).count_key
+
+
+def queue_state_count_fields(counts):
+  return {definition.count_key: counts.get(definition.name, 0) for definition in QUEUE_STATE_DEFINITIONS}
+
+
+def filter_queue_state(queryset, state):
+  definition = queue_state_definition(state)
+  return queryset.filter(**definition.query_filter)
 
 
 def queue_state_queryset(*, backend_alias, queue_name, state):
@@ -98,12 +120,8 @@ def queue_state_counts(*, backend_alias, queue_name):
     queue_name=queue_name,
   )
   return {
-    "ready": base_queryset.filter(ready_execution__isnull=False).count(),
-    "claimed": base_queryset.filter(claimed_execution__isnull=False).count(),
-    "scheduled": base_queryset.filter(scheduled_execution__isnull=False).count(),
-    "blocked": base_queryset.filter(blocked_execution__isnull=False).count(),
-    "failed": base_queryset.filter(failed_execution__isnull=False).count(),
-    "finished": base_queryset.filter(finished_at__isnull=False).count(),
+    definition.name: base_queryset.filter(**definition.query_filter).count()
+    for definition in QUEUE_STATE_DEFINITIONS
   }
 
 

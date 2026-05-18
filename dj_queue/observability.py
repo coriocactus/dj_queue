@@ -26,7 +26,7 @@ from dj_queue.models import (
   Semaphore,
 )
 from dj_queue.queue_selectors import queue_matches_selectors
-from dj_queue.queue_state import queue_state_counts
+from dj_queue.queue_state import queue_state_count_fields, queue_state_counts
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,14 +295,20 @@ def queue_snapshot(
   if oldest_ready_at is not None and paused is False:
     latency_seconds = max((now - oldest_ready_at).total_seconds(), 0.0)
 
+  state_count_fields = queue_state_count_fields(
+    {
+      "ready": ready_count,
+      "claimed": claimed_count,
+      "scheduled": scheduled_count,
+      "blocked": blocked_count,
+      "failed": failed_count,
+      "finished": finished_count,
+    }
+  )
+
   return {
     "name": queue_name,
-    "ready_count": ready_count,
-    "claimed_count": claimed_count,
-    "scheduled_count": scheduled_count,
-    "blocked_count": blocked_count,
-    "failed_count": failed_count,
-    "finished_count": finished_count,
+    **state_count_fields,
     "paused": paused,
     "latency_seconds": latency_seconds,
     "oldest_scheduled_at": oldest_scheduled_at,

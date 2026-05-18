@@ -22,7 +22,13 @@ from dj_queue.operations.jobs import (
   enqueue_job_again,
   retry_failed_jobs,
 )
-from dj_queue.queue_state import QUEUE_STATE_LABELS, QUEUE_STATES, queue_state_queryset
+from dj_queue.queue_state import (
+  QUEUE_STATE_DEFINITIONS,
+  QUEUE_STATE_LABELS,
+  QUEUE_STATES,
+  queue_state_count_key,
+  queue_state_queryset,
+)
 
 
 QUEUE_JOB_ACTIONS = {
@@ -56,12 +62,14 @@ OVERVIEW_SORTS = {
     "default": "name",
     "fields": {
       "name": {"label": "name", "key": "name", "default_desc": False, "css_class": "djq-col-name"},
-      "ready": {"label": "ready", "key": "ready_count", "default_desc": True},
-      "claimed": {"label": "claimed", "key": "claimed_count", "default_desc": True},
-      "scheduled": {"label": "scheduled", "key": "scheduled_count", "default_desc": True},
-      "blocked": {"label": "blocked", "key": "blocked_count", "default_desc": True},
-      "failed": {"label": "failed", "key": "failed_count", "default_desc": True},
-      "finished": {"label": "finished", "key": "finished_count", "default_desc": True},
+      **{
+        definition.name: {
+          "label": definition.label,
+          "key": definition.count_key,
+          "default_desc": True,
+        }
+        for definition in QUEUE_STATE_DEFINITIONS
+      },
       "paused": {"label": "paused", "key": "paused", "default_desc": True},
       "latency": {"label": "latency", "key": "latency_seconds", "default_desc": True},
       "workers": {"label": "workers", "key": "live_worker_count", "default_desc": True},
@@ -368,7 +376,7 @@ def queue_page_context(*, backend_alias, queue_name, state, page_number, query_p
   )
   queue_info = QueueInfo(queue_name, backend_alias=backend_alias)
   state_counts = {
-    state_name: queue_row[f"{state_name}_count"] for state_name, _label in QUEUE_STATES
+    definition.name: queue_row[definition.count_key] for definition in QUEUE_STATE_DEFINITIONS
   }
   state_tabs = [
     {
@@ -529,10 +537,10 @@ def job_actions_for_state(state):
 
 def _summary_cards(*, backend_alias, queue_rows, process_rows, recurring_rows, semaphore_rows):
   paused_count = sum(1 for row in queue_rows if row["paused"])
-  ready_count = sum(row["ready_count"] for row in queue_rows)
-  scheduled_count = sum(row["scheduled_count"] for row in queue_rows)
-  failed_count = sum(row["failed_count"] for row in queue_rows)
-  blocked_count = sum(row["blocked_count"] for row in queue_rows)
+  ready_count = sum(row[queue_state_count_key("ready")] for row in queue_rows)
+  scheduled_count = sum(row[queue_state_count_key("scheduled")] for row in queue_rows)
+  failed_count = sum(row[queue_state_count_key("failed")] for row in queue_rows)
+  blocked_count = sum(row[queue_state_count_key("blocked")] for row in queue_rows)
   live_processes = sum(1 for row in process_rows if row["is_live"])
   stale_processes = len(process_rows) - live_processes
 
