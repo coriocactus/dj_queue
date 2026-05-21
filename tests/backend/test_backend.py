@@ -81,6 +81,12 @@ def task_on_queue(task, queue_name):
   return queued_task
 
 
+def task_with_priority(task, priority):
+  queued_task = copy.copy(task)
+  object.__setattr__(queued_task, "priority", priority)
+  return queued_task
+
+
 def snapshot_jobs():
   return [
     (
@@ -151,6 +157,32 @@ def test_enqueue_all_rejects_queue_outside_backend_allow_list_atomically(setting
       [
         (echo, ("accepted",), {}),
         (task_on_queue(echo, "other"), ("rejected",), {}),
+      ]
+    )
+
+  assert Job.objects.count() == 0
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("priority", (-101, 101, "1", True))
+def test_enqueue_rejects_invalid_priority(priority):
+  job_count = Job.objects.count()
+
+  with pytest.raises(EnqueueError, match="priority must be an integer from -100 to 100"):
+    echo.get_backend().enqueue(task_with_priority(echo, priority), ("rejected",), {})
+
+  assert Job.objects.count() == job_count
+
+
+@pytest.mark.django_db
+def test_enqueue_all_rejects_invalid_priority_atomically():
+  backend = echo.get_backend()
+
+  with pytest.raises(EnqueueError, match="priority must be an integer from -100 to 100"):
+    backend.enqueue_all(
+      [
+        (echo, ("accepted",), {}),
+        (task_with_priority(echo, 101), ("rejected",), {}),
       ]
     )
 
@@ -284,6 +316,23 @@ def test_get_result_failed():
   assert fetched.errors[0].traceback == "traceback"
   with pytest.raises(ValueError, match="Task failed"):
     _ = fetched.return_value
+
+
+@pytest.mark.django_db
+def test_get_result_failed_does_not_require_task_import():
+  job = make_job(task_path="tests.tasks.missing_result_task")
+  FailedExecution.objects.create(
+    job=job,
+    exception_class="builtins.ImportError",
+    message="missing",
+    traceback="traceback",
+  )
+
+  fetched = echo.get_backend().get_result(str(job.id))
+
+  assert fetched.status == TaskResultStatus.FAILED
+  assert fetched.task.module_path == job.task_path
+  assert fetched.errors[0].exception_class_path == "builtins.ImportError"
 
 
 @pytest.mark.django_db
@@ -510,6 +559,36 @@ def test_clear_failed_jobs_stays_backend_scoped_on_shared_queue_db():
   assert deleted == 1
   assert Job.objects.filter(pk=default_job.pk).exists() is False
   assert Job.objects.filter(pk=secondary_job.pk).exists() is True
+
+
+@pytest.mark.django_db
+def test_clear_failed_jobs_locks_failed_rows(monkeypatch):
+  import dj_queue.operations.cleanup as cleanup_operations
+
+  job = make_job(task=echo)
+  failed = FailedExecution.objects.create(
+    job=job,
+    exception_class="ValueError",
+    message="old",
+    traceback="old",
+  )
+  FailedExecution.objects.filter(pk=failed.pk).update(
+    created_at=timezone.now() - timedelta(minutes=10)
+  )
+  calls = []
+  original_locked_queryset = cleanup_operations.locked_queryset
+
+  def locked(queryset, *, use_skip_locked):
+    calls.append(use_skip_locked)
+    return original_locked_queryset(queryset, use_skip_locked=use_skip_locked)
+
+  monkeypatch.setattr(cleanup_operations, "locked_queryset", locked)
+
+  deleted = clear_failed_jobs(older_than=60, batch_size=10)
+
+  assert deleted == 1
+  assert calls == [True]
+  assert Job.objects.filter(pk=job.pk).exists() is False
 
 
 @pytest.mark.django_db

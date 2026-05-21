@@ -8,7 +8,7 @@ from dj_queue.exceptions import EnqueueError
 from dj_queue.models import RecurringExecution, RecurringTask
 from dj_queue.operations._helpers import _normalize_payload
 from dj_queue.operations._insert import create_ignore_conflicts
-from dj_queue.operations.jobs import enqueue_job, validate_queue_allowed
+from dj_queue.operations.jobs import enqueue_job, validate_priority, validate_queue_allowed
 
 
 def upsert_static_recurring_tasks(recurring_configs, *, backend_alias="default"):
@@ -86,6 +86,7 @@ def schedule_recurring_task(
   if not hasattr(task, "using"):
     raise EnqueueError("task_path must reference a Django task")
   validate_queue_allowed(queue_name, backend_alias=backend_alias)
+  validate_priority(priority)
   payload = _normalize_payload(args, kwargs)
 
   previous_schedule = (

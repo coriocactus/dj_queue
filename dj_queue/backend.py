@@ -9,6 +9,7 @@ from dj_queue.operations.jobs import (
   DispatchOutcome,
   enqueue_job_with_dispatch,
   enqueue_jobs_bulk,
+  validate_priority,
   validate_queue_allowed,
 )
 from dj_queue.task_results import task_result_from_enqueued_job, task_result_from_job
@@ -22,6 +23,7 @@ class DjQueueBackend(BaseTaskBackend):
 
   def validate_task(self, task):
     validate_queue_allowed(task.queue_name, backend_alias=self.alias)
+    validate_priority(task.priority)
     return super().validate_task(task)
 
   def enqueue(self, task, args, kwargs):

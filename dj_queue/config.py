@@ -531,7 +531,7 @@ def _build_recurring_config(raw_recurring: Any) -> dict[str, RecurringTaskConfig
       args=tuple(raw_entry.get("args", [])),
       kwargs=dict(raw_entry.get("kwargs", {})),
       queue_name=str(raw_entry.get("queue_name", "default")),
-      priority=int(raw_entry.get("priority", 0)),
+      priority=_priority_int(raw_entry.get("priority", 0), f"recurring task {key!r} priority"),
       description=str(raw_entry.get("description", "")),
     )
   return recurring
@@ -615,6 +615,21 @@ def _positive_int(value: Any, setting_name: str) -> int:
   if number <= 0:
     raise ImproperlyConfigured(
       f"dj_queue {setting_name} must be a positive integer, got {value!r}"
+    )
+  return number
+
+
+def _priority_int(value: Any, setting_name: str) -> int:
+  try:
+    number = int(value)
+  except (TypeError, ValueError, OverflowError) as exc:
+    raise ImproperlyConfigured(
+      f"dj_queue {setting_name} must be an integer from -100 to 100, got {value!r}"
+    ) from exc
+
+  if number < -100 or number > 100:
+    raise ImproperlyConfigured(
+      f"dj_queue {setting_name} must be an integer from -100 to 100, got {value!r}"
     )
   return number
 

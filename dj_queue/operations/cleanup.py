@@ -1,9 +1,10 @@
 from datetime import timedelta
 
+from django.db import transaction
 from django.utils import timezone
 
 from dj_queue.config import load_backend_config
-from dj_queue.db import get_database_alias
+from dj_queue.db import get_database_alias, locked_queryset
 from dj_queue.models import FailedExecution, Job, RecurringExecution
 
 
@@ -59,19 +60,25 @@ def clear_failed_jobs(
   if now is None:
     now = timezone.now()
   cutoff = now - timedelta(seconds=older_than)
-  queryset = (
-    FailedExecution.objects.using(alias)
-    .filter(job__backend_alias=backend_alias, created_at__lt=cutoff)
-    .order_by("created_at", "job_id")
-  )
-  if task_path is not None:
-    queryset = queryset.filter(job__task_path=task_path)
 
-  job_ids = list(queryset.values_list("job_id", flat=True)[:batch_size])
-  if not job_ids:
-    return 0
+  with transaction.atomic(using=alias):
+    queryset = (
+      FailedExecution.objects.using(alias)
+      .filter(job__backend_alias=backend_alias, created_at__lt=cutoff)
+      .order_by("created_at", "job_id")
+    )
+    if task_path is not None:
+      queryset = queryset.filter(job__task_path=task_path)
 
-  Job.objects.using(alias).filter(backend_alias=backend_alias, pk__in=job_ids).delete()
+    failed_rows = list(
+      locked_queryset(queryset, use_skip_locked=config.use_skip_locked)[:batch_size]
+    )
+    if not failed_rows:
+      return 0
+
+    job_ids = [failed.job_id for failed in failed_rows]
+    Job.objects.using(alias).filter(backend_alias=backend_alias, pk__in=job_ids).delete()
+
   return len(job_ids)
 
 

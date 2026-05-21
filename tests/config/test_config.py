@@ -125,6 +125,26 @@ def test_failed_or_recurring_cleanup_keeps_scheduler_enabled(settings):
   assert config.scheduler == SchedulerConfig()
 
 
+def test_static_recurring_priority_must_be_in_range(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {
+        "recurring": {
+          "too-important": {
+            "task_path": "tests.tasks.echo",
+            "schedule": "* * * * *",
+            "priority": 101,
+          }
+        }
+      },
+    }
+  }
+
+  with pytest.raises(ImproperlyConfigured, match="priority"):
+    load_backend_config()
+
+
 def test_config_precedence_cli_over_env_over_toml_over_settings(settings, tmp_path):
   settings.TASKS = {
     "default": {

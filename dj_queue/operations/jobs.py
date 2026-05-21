@@ -84,6 +84,7 @@ def enqueue_job(task, args, kwargs, *, backend_alias="default"):
 
 def enqueue_job_with_dispatch(task, args, kwargs, *, backend_alias="default"):
   validate_queue_allowed(task.queue_name, backend_alias=backend_alias)
+  validate_priority(task.priority)
   alias = get_database_alias(backend_alias)
   payload = _normalize_payload(args, kwargs)
   concurrency_key = _resolve_concurrency_key(task, args, kwargs)
@@ -121,6 +122,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
 
   for index, (task, args, kwargs) in enumerate(task_calls):
     validate_queue_allowed(task.queue_name, backend_alias=backend_alias)
+    validate_priority(task.priority)
     payload = _normalize_payload(args, kwargs)
     concurrency_key = _resolve_concurrency_key(task, args, kwargs)
     created_at = now + timedelta(microseconds=index)
@@ -838,7 +840,7 @@ def _release_concurrency_slot(job):
   try:
     task = import_string(job.task_path)
     limit, duration_seconds, _ = concurrency_settings(task, backend_alias=job.backend_alias)
-  except ImportError:
+  except (AttributeError, EnqueueError, ImportError):
     limit = _semaphore_limit(job) or 1
     duration_seconds = load_backend_config(job.backend_alias).default_concurrency_duration
 
@@ -870,6 +872,11 @@ def validate_queue_allowed(queue_name, *, backend_alias="default"):
   allowed_queues = load_backend_config(backend_alias).allowed_queues
   if allowed_queues and queue_name not in allowed_queues:
     raise EnqueueError(f"queue {queue_name!r} is not allowed for backend {backend_alias!r}")
+
+
+def validate_priority(priority):
+  if type(priority) is not int or priority < -100 or priority > 100:
+    raise EnqueueError("priority must be an integer from -100 to 100")
 
 
 def _resolve_concurrency_key(task, args, kwargs):

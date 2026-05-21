@@ -1,5 +1,5 @@
 from django.tasks import TaskResult, TaskResultStatus
-from django.tasks.base import TaskError
+from django.tasks.base import Task, TaskError
 from django.utils.module_loading import import_string
 
 
@@ -63,7 +63,11 @@ def task_result_for_claimed_job(task, claimed_job):
 
 
 def task_for_job(job):
-  return bind_task_to_job(import_string(job.task_path), job)
+  try:
+    task = import_string(job.task_path)
+  except (AttributeError, ImportError):
+    task = _unavailable_task_for_job(job)
+  return bind_task_to_job(task, job)
 
 
 def bind_task_to_job(task, job):
@@ -75,6 +79,23 @@ def bind_task_to_job(task, job):
       backend=job.backend_alias,
     )
   return task
+
+
+def _unavailable_task_for_job(job):
+  module, _separator, name = job.task_path.rpartition(".")
+
+  def unavailable_task(*_args, **_kwargs):
+    raise ImportError(f"task {job.task_path!r} is not importable")
+
+  unavailable_task.__module__ = module or job.task_path
+  unavailable_task.__qualname__ = name or "unavailable_task"
+  return Task(
+    priority=job.priority,
+    func=unavailable_task,
+    backend=job.backend_alias,
+    queue_name=job.queue_name,
+    run_after=job.scheduled_at,
+  )
 
 
 def build_task_result(

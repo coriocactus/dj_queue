@@ -335,6 +335,20 @@ def test_missing_concurrency_task_path_releases_slot_and_unblocks_next_waiter():
 
 
 @pytest.mark.django_db
+def test_invalid_concurrency_settings_after_claim_do_not_leak_slot(monkeypatch):
+  first = limited.enqueue(1, value="first")
+  second = limited.enqueue(1, value="second")
+  claim_ready_jobs(limit=1)
+  monkeypatch.setattr(limited.func, "concurrency_limit", "many")
+
+  complete_claimed_job(first.id, "done")
+
+  assert ReadyExecution.objects.filter(job_id=second.id).exists() is True
+  assert BlockedExecution.objects.filter(job_id=second.id).exists() is False
+  assert Semaphore.objects.get(key="account:1").value == 0
+
+
+@pytest.mark.django_db
 def test_dispatcher_promotes_expired_blocked_jobs():
   job = make_job(task=limited, args=[1], kwargs={"value": "later"}, concurrency_key="account:1")
   BlockedExecution.objects.create(

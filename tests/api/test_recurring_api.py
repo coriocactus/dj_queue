@@ -3,6 +3,7 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 
 from dj_queue.api import schedule_recurring_task, unschedule_recurring_task
+from dj_queue.exceptions import EnqueueError
 from dj_queue.models import RecurringTask
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -110,6 +111,18 @@ def test_invalid_cron_is_rejected():
       task_path="tests.tasks.echo",
       schedule="not a cron",
     )
+
+
+def test_schedule_recurring_task_rejects_invalid_priority():
+  with pytest.raises(EnqueueError, match="priority must be an integer from -100 to 100"):
+    schedule_recurring_task(
+      key="invalid-priority",
+      task_path="tests.tasks.echo",
+      schedule="* * * * *",
+      priority=101,
+    )
+
+  assert RecurringTask.objects.filter(key="invalid-priority").exists() is False
 
 
 def test_missing_recurring_task_path_is_rejected_without_persisting():
