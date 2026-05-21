@@ -1,5 +1,6 @@
 import threading
 
+from dj_queue.runtime.errors import handle_thread_error
 from dj_queue.runtime.supervisor import AsyncSupervisor
 
 
@@ -19,7 +20,14 @@ def post_fork(_server, worker):
   def poll_supervisor():
     stop_event = worker._dj_queue_supervisor_poll_stop
     while stop_event.wait(supervisor.polling_interval) is False:
-      supervisor.poll_once()
+      try:
+        supervisor.poll_once()
+      except Exception as error:
+        handle_thread_error(
+          error,
+          context="supervisor.run",
+          backend_alias=supervisor.backend_alias,
+        )
 
   poll_thread = threading.Thread(target=poll_supervisor, daemon=True)
   worker._dj_queue_supervisor_poll_thread = poll_thread

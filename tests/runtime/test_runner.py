@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 import time
 from types import SimpleNamespace
 from uuid import uuid4
@@ -68,6 +69,26 @@ def test_runner_deleted_process_row_stops_cleanly():
   assert runner.should_continue() is False
   runner.stop()
   assert runner.process is None
+
+
+def test_runner_liveness_check_uses_app_executor(monkeypatch):
+  entered = []
+
+  @contextmanager
+  def executor():
+    entered.append(True)
+    yield
+
+  monkeypatch.setattr("dj_queue.runtime.base.app_executor", executor)
+  runner = DummyRunner()
+  runner.start()
+
+  try:
+    assert runner.should_continue() is True
+  finally:
+    runner.stop()
+
+  assert entered == [True]
 
 
 def test_managed_poll_loop_reports_runner_stop_as_failure():

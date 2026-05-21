@@ -82,14 +82,18 @@ class Supervisor(BaseRunner):
     )
 
   def start(self):
-    self._acquire_pidfile()
-    process = super().start()
-    warn_if_persistent_connection_budget_is_tight(
-      self.config,
-      backend_alias=self.backend_alias,
-    )
-    self.fail_startup_orphaned_jobs()
-    return process
+    try:
+      self._acquire_pidfile()
+      process = super().start()
+      warn_if_persistent_connection_budget_is_tight(
+        self.config,
+        backend_alias=self.backend_alias,
+      )
+      self.fail_startup_orphaned_jobs()
+      return process
+    except Exception:
+      self.stop()
+      raise
 
   def poll_once(self):
     pruned_processes = []
@@ -174,9 +178,13 @@ class AsyncSupervisor(Supervisor):
 
   def start(self):
     process = super().start()
-    if self.standalone:
-      self.register_signal_handlers()
-    self.start_runners()
+    try:
+      if self.standalone:
+        self.register_signal_handlers()
+      self.start_runners()
+    except Exception:
+      self.stop()
+      raise
     return process
 
   def stop(self):
@@ -360,9 +368,13 @@ class ForkSupervisor(Supervisor):
 
   def start(self):
     process = super().start()
-    if self.standalone:
-      self.register_signal_handlers()
-    self.start_children()
+    try:
+      if self.standalone:
+        self.register_signal_handlers()
+      self.start_children()
+    except Exception:
+      self.stop()
+      raise
     return process
 
   def stop(self):
@@ -417,7 +429,9 @@ class ForkSupervisor(Supervisor):
     if not pid:
       return None
 
-    spec = self.children.pop(pid)
+    spec = self.children.pop(pid, None)
+    if spec is None:
+      return None
     self._fail_claimed_jobs_for_pid(pid)
     replacement_pid = self._launcher(spec)
     self.children[replacement_pid] = spec

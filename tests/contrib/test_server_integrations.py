@@ -1,4 +1,5 @@
 import asyncio
+import threading
 import time
 
 import pytest
@@ -104,6 +105,50 @@ def test_gunicorn_post_fork_starts_one_embedded_supervisor(monkeypatch):
   assert worker_one._dj_queue_supervisor is None
 
 
+def test_gunicorn_embedded_supervisor_poll_survives_errors(monkeypatch):
+  errors = []
+  polled_after_error = threading.Event()
+
+  class StubSupervisor:
+    polling_interval = 0.01
+    backend_alias = "default"
+
+    def __init__(self):
+      self.poll_count = 0
+
+    def start(self):
+      return None
+
+    def poll_once(self):
+      self.poll_count += 1
+      if self.poll_count == 1:
+        raise RuntimeError("poll failed")
+      polled_after_error.set()
+
+    def stop(self):
+      return None
+
+  monkeypatch.setattr(
+    "dj_queue.contrib.gunicorn.build_supervisor",
+    lambda backend_alias="default": StubSupervisor(),
+  )
+
+  from dj_queue.contrib import gunicorn
+
+  monkeypatch.setattr(gunicorn, "handle_thread_error", lambda error, **kwargs: errors.append(error))
+  worker = type("Worker", (), {"age": 1})()
+
+  supervisor = gunicorn.post_fork(object(), worker)
+
+  try:
+    assert polled_after_error.wait(timeout=1) is True
+  finally:
+    gunicorn.worker_exit(object(), worker)
+
+  assert supervisor.poll_count >= 2
+  assert [str(error) for error in errors] == ["poll failed"]
+
+
 def test_asgi_lifespan_startup_and_shutdown_wrap_supervisor(monkeypatch):
   events = []
 
@@ -190,6 +235,67 @@ def test_asgi_lifespan_prunes_stale_process_rows(monkeypatch):
   assert events[0] == "start"
   assert "poll" in events[1:-1]
   assert events[-1] == "stop"
+  assert sent_messages == [
+    {"type": "lifespan.startup.complete"},
+    {"type": "lifespan.shutdown.complete"},
+  ]
+
+
+def test_asgi_lifespan_poll_survives_errors(monkeypatch):
+  errors = []
+  events = []
+
+  class StubSupervisor:
+    polling_interval = 0.01
+    backend_alias = "default"
+
+    def __init__(self):
+      self.poll_count = 0
+
+    def start(self):
+      events.append("start")
+
+    def poll_once(self):
+      self.poll_count += 1
+      if self.poll_count == 1:
+        raise RuntimeError("poll failed")
+      events.append("poll")
+
+    def stop(self):
+      events.append("stop")
+
+  monkeypatch.setattr(
+    "dj_queue.contrib.asgi.build_supervisor",
+    lambda backend_alias="default": StubSupervisor(),
+  )
+
+  from dj_queue.contrib import asgi
+
+  monkeypatch.setattr(asgi, "handle_thread_error", lambda error, **kwargs: errors.append(error))
+  app = asgi.DjQueueLifespan(lambda scope, receive, send: None)
+  sent_messages = []
+  messages = iter(
+    [
+      {"type": "lifespan.startup"},
+      {"type": "lifespan.shutdown"},
+    ]
+  )
+
+  async def receive():
+    message = next(messages)
+    if message["type"] == "lifespan.shutdown":
+      await asyncio.sleep(0.05)
+    return message
+
+  async def send(message):
+    sent_messages.append(message)
+
+  asyncio.run(app({"type": "lifespan"}, receive, send))
+
+  assert events[0] == "start"
+  assert "poll" in events[1:-1]
+  assert events[-1] == "stop"
+  assert [str(error) for error in errors] == ["poll failed"]
   assert sent_messages == [
     {"type": "lifespan.startup.complete"},
     {"type": "lifespan.shutdown.complete"},

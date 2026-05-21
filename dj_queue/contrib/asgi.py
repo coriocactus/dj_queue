@@ -1,5 +1,6 @@
 import asyncio
 
+from dj_queue.runtime.errors import handle_thread_error
 from dj_queue.runtime.supervisor import AsyncSupervisor
 
 
@@ -16,7 +17,14 @@ class DjQueueLifespan:
 
   async def _poll_supervisor(self):
     while self.supervisor is not None:
-      await asyncio.to_thread(self.supervisor.poll_once)
+      try:
+        await asyncio.to_thread(self.supervisor.poll_once)
+      except Exception as error:
+        handle_thread_error(
+          error,
+          context="supervisor.run",
+          backend_alias=self.supervisor.backend_alias,
+        )
       await asyncio.sleep(self.supervisor.polling_interval)
 
   async def __call__(self, scope, receive, send):

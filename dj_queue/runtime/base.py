@@ -108,8 +108,8 @@ class BaseRunner:
     return self.process
 
   def run(self):
-    self.start()
     try:
+      self.start()
       self.run_poll_loop()
     finally:
       self.stop()
@@ -156,7 +156,9 @@ class BaseRunner:
       return False
 
     alias = get_database_alias(self.backend_alias)
-    if Process.objects.using(alias).filter(pk=self.process.pk).exists():
+    with app_executor():
+      exists = Process.objects.using(alias).filter(pk=self.process.pk).exists()
+    if exists:
       return True
 
     self.request_stop()

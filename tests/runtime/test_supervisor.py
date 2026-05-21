@@ -216,6 +216,31 @@ def test_supervisor_start_checks_persistent_connection_budget(monkeypatch):
   assert seen == [(supervisor.config, "default")]
 
 
+def test_supervisor_start_failure_cleans_process_row_and_pidfile(monkeypatch, tmp_path):
+  pidfile = tmp_path / "run" / "dj_queue.pid"
+  tasks_settings = async_tasks_settings(recurring={})
+  tasks_settings["default"]["OPTIONS"]["supervisor_pidfile"] = str(pidfile)
+  supervisor = build_fork_supervisor(
+    tasks_settings=tasks_settings,
+    launcher=lambda spec: 91000,
+    name="failing-supervisor-start",
+  )
+
+  def fail_budget_check(config, *, backend_alias):
+    raise RuntimeError("budget check failed")
+
+  monkeypatch.setattr(
+    "dj_queue.runtime.supervisor.warn_if_persistent_connection_budget_is_tight",
+    fail_budget_check,
+  )
+
+  with pytest.raises(RuntimeError, match="budget check failed"):
+    supervisor.start()
+
+  assert pidfile.exists() is False
+  assert Process.objects.filter(name="failing-supervisor-start").exists() is False
+
+
 def test_prune_stale_process_rows_fails_their_claimed_jobs():
   stale_process = make_process(
     name="stale-worker",
@@ -727,6 +752,28 @@ def test_dead_child_fails_claimed_jobs_and_replaces_runner():
   )
   assert supervisor.children[90002]["kind"] == "worker"
   assert Process.objects.filter(pk=child_process.pk).exists() is False
+
+
+def test_fork_supervisor_ignores_unknown_reaped_child_pid():
+  waitpid_results = [(90009, 0)]
+
+  def waitpid(_pid, _flags):
+    if waitpid_results:
+      return waitpid_results.pop(0)
+    raise ChildProcessError
+
+  supervisor = build_fork_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[], recurring={}),
+    launcher=lambda spec: 90001,
+    waitpid=waitpid,
+  )
+  supervisor.start()
+
+  replaced = supervisor.check_children()
+
+  assert replaced is None
+  assert tuple(supervisor.children) == (90001,)
+  supervisor.stop()
 
 
 def test_fork_supervisor_poll_once_checks_children_without_pruning_every_tick(monkeypatch):
