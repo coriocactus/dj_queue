@@ -389,8 +389,10 @@ class JobConcurrencyKeyListFilter(admin.SimpleListFilter):
 
   def lookups(self, request, model_admin):
     alias = model_admin._backend_database_alias(request)
+    backend_alias = model_admin._backend_alias(request)
     return tuple(
       Job.objects.using(alias)
+      .filter(backend_alias=backend_alias)
       .exclude(concurrency_key__isnull=True)
       .exclude(concurrency_key="")
       .order_by("concurrency_key")
@@ -713,6 +715,7 @@ class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
 
 @admin.register(Process)
 class ProcessAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
+  backend_filter_field = "backend_alias"
   list_display = (
     "name",
     "backend_alias",

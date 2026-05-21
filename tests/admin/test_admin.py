@@ -668,6 +668,68 @@ def test_process_admin_displays_metadata(admin_client):
   assert "threads" in content
 
 
+def test_process_admin_backend_param_controls_shared_database_scope(admin_client, settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+    "secondary": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+  }
+  default_process = make_process(
+    backend_alias="default",
+    name="default-worker",
+    last_heartbeat_at=timezone.now(),
+  )
+  secondary_process = make_process(
+    backend_alias="secondary",
+    name="secondary-worker",
+    last_heartbeat_at=timezone.now(),
+  )
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_process_changelist"),
+    {"backend": "secondary"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert secondary_process.name in content
+  assert default_process.name not in content
+
+
+def test_job_concurrency_key_filter_is_backend_scoped(admin_client, settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+    "secondary": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+  }
+  make_job(backend_alias="default", concurrency_key="default-key-leak")
+  make_job(backend_alias="secondary", concurrency_key="secondary-key-visible")
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_job_changelist"),
+    {"backend": "secondary"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert "secondary-key-visible" in content
+  assert "default-key-leak" not in content
+
+
 def test_raw_admin_changelist_timestamps_use_compact_format(admin_client):
   job = make_job()
 

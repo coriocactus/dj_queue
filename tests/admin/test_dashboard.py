@@ -692,6 +692,41 @@ def test_dashboard_queue_bulk_actions(admin_client):
   assert Job.objects.filter(pk=ready_job.pk).exists() is False
 
 
+@pytest.mark.parametrize(
+  ("state", "action", "factory", "state_model"),
+  (
+    ("ready", "discard", make_ready_job, ReadyExecution),
+    ("scheduled", "discard", make_scheduled_job, ScheduledExecution),
+    ("blocked", "discard", make_blocked_job, BlockedExecution),
+    ("failed", "retry", make_failed_job, FailedExecution),
+    ("failed", "discard", make_failed_job, FailedExecution),
+  ),
+)
+def test_dashboard_queue_bulk_actions_are_queue_scoped(
+  admin_client,
+  state,
+  action,
+  factory,
+  state_model,
+):
+  foreign_job = factory(queue_name="beta")
+  url = reverse("admin:dj_queue_dashboard_job_action", args=["alpha"])
+
+  response = admin_client.post(
+    url,
+    {
+      "backend": "default",
+      "state": state,
+      "action": action,
+      "_selected_action": [str(foreign_job.pk)],
+    },
+  )
+
+  assert response.status_code == 302
+  assert Job.objects.filter(pk=foreign_job.pk).exists() is True
+  assert state_model.objects.filter(job=foreign_job).exists() is True
+
+
 def test_dashboard_queue_bulk_actions_require_explicit_selection(admin_client):
   ready_job = make_ready_job(queue_name="alpha")
   url = reverse("admin:dj_queue_dashboard_job_action", args=["alpha"])
@@ -1416,6 +1451,19 @@ def test_dashboard_backend_aliases_ignore_non_dj_queue_backends(settings):
 
   assert dashboard.configured_backend_aliases() == ("default",)
   assert dashboard.resolve_backend_alias(None) == "default"
+
+
+def test_dashboard_backend_resolution_handles_no_dj_queue_backends(settings):
+  settings.TASKS = {
+    "other": {
+      "BACKEND": "other.backend.Backend",
+      "QUEUES": [],
+      "OPTIONS": {},
+    },
+  }
+
+  with pytest.raises(Http404, match="no dj_queue backends"):
+    dashboard.resolve_backend_alias(None)
 
 
 def test_dashboard_rejects_non_dj_queue_backend_alias(settings):

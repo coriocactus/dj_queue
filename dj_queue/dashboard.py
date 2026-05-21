@@ -254,6 +254,8 @@ def configured_backend_aliases():
 
 def resolve_backend_alias(raw_backend_alias):
   aliases = configured_backend_aliases()
+  if not aliases:
+    raise Http404("no dj_queue backends are configured")
   backend_alias = raw_backend_alias or ("default" if "default" in aliases else aliases[0])
   if backend_alias not in aliases:
     raise Http404(f"unknown dj_queue backend {backend_alias!r}")
@@ -362,9 +364,11 @@ def queue_page_context(*, backend_alias, queue_name, state, page_number, query_p
     state=state,
   )
   sort, explicit_sort = _resolve_queue_sort(state=state, raw_sort=query_params.get("sort"))
-  jobs = list(queryset)
   if explicit_sort:
+    jobs = list(queryset)
     jobs = _sort_queue_jobs(jobs=jobs, state=state, sort=sort)
+  else:
+    jobs = queryset
 
   paginator = Paginator(jobs, PAGE_SIZE)
   page_obj = paginator.get_page(query_params.get("page", page_number))
@@ -475,6 +479,12 @@ def apply_job_action(*, backend_alias, queue_name, state, action, job_ids):
     raise ValueError("select at least one job")
 
   if state == "ready" and action == "discard":
+    job_ids = _queue_scoped_job_ids(
+      backend_alias=backend_alias,
+      queue_name=queue_name,
+      state=state,
+      job_ids=job_ids,
+    )
     deleted = discard_ready_jobs(
       job_ids=job_ids,
       batch_size=max(len(job_ids), 1),
@@ -483,6 +493,12 @@ def apply_job_action(*, backend_alias, queue_name, state, action, job_ids):
     return f"discarded {deleted} ready jobs from {queue_name}"
 
   if state == "scheduled" and action == "discard":
+    job_ids = _queue_scoped_job_ids(
+      backend_alias=backend_alias,
+      queue_name=queue_name,
+      state=state,
+      job_ids=job_ids,
+    )
     deleted = discard_scheduled_jobs(
       job_ids=job_ids,
       batch_size=max(len(job_ids), 1),
@@ -491,6 +507,12 @@ def apply_job_action(*, backend_alias, queue_name, state, action, job_ids):
     return f"discarded {deleted} scheduled jobs from {queue_name}"
 
   if state == "blocked" and action == "discard":
+    job_ids = _queue_scoped_job_ids(
+      backend_alias=backend_alias,
+      queue_name=queue_name,
+      state=state,
+      job_ids=job_ids,
+    )
     deleted = discard_blocked_jobs(
       job_ids=job_ids,
       batch_size=max(len(job_ids), 1),
@@ -499,6 +521,12 @@ def apply_job_action(*, backend_alias, queue_name, state, action, job_ids):
     return f"discarded {deleted} blocked jobs from {queue_name}"
 
   if state == "failed" and action == "retry":
+    job_ids = _queue_scoped_job_ids(
+      backend_alias=backend_alias,
+      queue_name=queue_name,
+      state=state,
+      job_ids=job_ids,
+    )
     retried = retry_failed_jobs(
       job_ids=job_ids,
       batch_size=max(len(job_ids), 1),
@@ -507,6 +535,12 @@ def apply_job_action(*, backend_alias, queue_name, state, action, job_ids):
     return f"retried {retried} failed jobs from {queue_name}"
 
   if state == "failed" and action == "discard":
+    job_ids = _queue_scoped_job_ids(
+      backend_alias=backend_alias,
+      queue_name=queue_name,
+      state=state,
+      job_ids=job_ids,
+    )
     discarded = discard_failed_jobs(
       job_ids=job_ids,
       batch_size=max(len(job_ids), 1),
@@ -529,6 +563,14 @@ def apply_job_action(*, backend_alias, queue_name, state, action, job_ids):
     return f"enqueued {len(jobs)} finished jobs again from {queue_name}"
 
   raise ValueError(f"unsupported {state!r} job action {action!r}")
+
+
+def _queue_scoped_job_ids(*, backend_alias, queue_name, state, job_ids):
+  return list(
+    queue_state_queryset(backend_alias=backend_alias, queue_name=queue_name, state=state)
+    .filter(pk__in=job_ids)
+    .values_list("pk", flat=True)
+  )
 
 
 def job_actions_for_state(state):
