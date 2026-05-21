@@ -135,7 +135,9 @@ def test_gunicorn_embedded_supervisor_poll_survives_errors(monkeypatch):
 
   from dj_queue.contrib import gunicorn
 
-  monkeypatch.setattr(gunicorn, "handle_thread_error", lambda error, **kwargs: errors.append(error))
+  monkeypatch.setattr(
+    gunicorn, "handle_thread_error", lambda error, **kwargs: errors.append(error)
+  )
   worker = type("Worker", (), {"age": 1})()
 
   supervisor = gunicorn.post_fork(object(), worker)
