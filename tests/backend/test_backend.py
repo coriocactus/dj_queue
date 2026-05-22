@@ -903,9 +903,13 @@ def test_enqueue_rejects_non_json_round_trippable_payload():
   (
     ("concurrency_limit", 0, "concurrency_limit must be a positive integer"),
     ("concurrency_limit", -1, "concurrency_limit must be a positive integer"),
+    ("concurrency_limit", True, "concurrency_limit must be a positive integer"),
+    ("concurrency_limit", 1.9, "concurrency_limit must be a positive integer"),
     ("concurrency_limit", "many", "concurrency_limit must be a positive integer"),
     ("concurrency_duration", 0, "concurrency_duration must be a positive integer"),
     ("concurrency_duration", -1, "concurrency_duration must be a positive integer"),
+    ("concurrency_duration", True, "concurrency_duration must be a positive integer"),
+    ("concurrency_duration", 1.9, "concurrency_duration must be a positive integer"),
     ("concurrency_duration", "soon", "concurrency_duration must be a positive integer"),
   ),
 )

@@ -309,10 +309,18 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
 
 
 def _positive_int_option(value, name):
-  try:
-    number = int(value)
-  except (TypeError, ValueError, OverflowError) as exc:
-    raise EnqueueError(f"{name} must be a positive integer") from exc
+  if isinstance(value, bool):
+    raise EnqueueError(f"{name} must be a positive integer")
+  if isinstance(value, int):
+    number = value
+  elif isinstance(value, str):
+    normalized = value.strip()
+    unsigned = normalized[1:] if normalized[:1] == "+" else normalized
+    if not unsigned.isdecimal():
+      raise EnqueueError(f"{name} must be a positive integer")
+    number = int(normalized)
+  else:
+    raise EnqueueError(f"{name} must be a positive integer")
 
   if number <= 0:
     raise EnqueueError(f"{name} must be a positive integer")

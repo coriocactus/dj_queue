@@ -5,7 +5,6 @@ import tomllib
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +60,7 @@ DJ_QUEUE_BACKEND_PATH = "dj_queue.backend.DjQueueBackend"
 TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
 FALSY_ENV_VALUES = {"0", "false", "no", "off"}
 CONFIG_ENV_KEYS = ("DJ_QUEUE_CONFIG", "DJ_QUEUE_MODE", "DJ_QUEUE_SKIP_RECURRING")
+_BACKEND_CONFIG_CACHE = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,24 +149,29 @@ def load_backend_config(
   if tasks_settings is None:
     tasks_settings = getattr(settings, "TASKS", {})
 
-  return _load_backend_config_cached(
+  env_values = {key: env.get(key) for key in CONFIG_ENV_KEYS if env.get(key) is not None}
+  cache_key = (
     backend_alias,
     _cache_key(cli_overrides),
-    _cache_key({key: env.get(key) for key in CONFIG_ENV_KEYS if env.get(key) is not None}),
+    _cache_key(env_values),
     _cache_key(tasks_settings),
   )
+  if cache_key not in _BACKEND_CONFIG_CACHE:
+    _BACKEND_CONFIG_CACHE[cache_key] = _load_backend_config_uncached(
+      backend_alias,
+      cli_overrides,
+      env_values,
+      tasks_settings,
+    )
+  return _BACKEND_CONFIG_CACHE[cache_key]
 
 
-@lru_cache(maxsize=None)
-def _load_backend_config_cached(
+def _load_backend_config_uncached(
   backend_alias: str,
-  cli_overrides_key: str,
-  env_key: str,
-  tasks_settings_key: str,
+  cli_overrides: Mapping[str, Any],
+  env: Mapping[str, str],
+  tasks_settings: Mapping[str, Any],
 ) -> BackendConfig:
-  cli_overrides = json.loads(cli_overrides_key)
-  env = json.loads(env_key)
-  tasks_settings = json.loads(tasks_settings_key)
   ensure_dj_queue_backend_alias(tasks_settings, backend_alias)
   backend_block = _backend_block(tasks_settings, backend_alias)
   resolved_options = _resolved_options(backend_alias, backend_block, cli_overrides, env)
@@ -228,10 +233,15 @@ def _load_backend_config_cached(
     shutdown_timeout=_nonnegative_float(resolved_options["shutdown_timeout"], "shutdown_timeout"),
     supervisor_pidfile=resolved_options["supervisor_pidfile"],
     preserve_finished_jobs=preserve_finished_jobs,
-    clear_finished_jobs_after=_optional_int(resolved_options["clear_finished_jobs_after"]),
-    clear_failed_jobs_after=_optional_int(resolved_options["clear_failed_jobs_after"]),
-    clear_recurring_executions_after=_optional_int(
-      resolved_options["clear_recurring_executions_after"]
+    clear_finished_jobs_after=_optional_nonnegative_int(
+      resolved_options["clear_finished_jobs_after"], "clear_finished_jobs_after"
+    ),
+    clear_failed_jobs_after=_optional_nonnegative_int(
+      resolved_options["clear_failed_jobs_after"], "clear_failed_jobs_after"
+    ),
+    clear_recurring_executions_after=_optional_nonnegative_int(
+      resolved_options["clear_recurring_executions_after"],
+      "clear_recurring_executions_after",
     ),
     default_concurrency_duration=_positive_int(
       resolved_options["default_concurrency_duration"],
@@ -570,10 +580,15 @@ def _as_string_tuple(value: Any) -> tuple[str, ...]:
   return tuple(str(item) for item in value)
 
 
-def _optional_int(value: Any) -> int | None:
+def _optional_nonnegative_int(value: Any, setting_name: str) -> int | None:
   if value is None:
     return None
-  return int(value)
+  number = _integer(value, setting_name, "a non-negative integer")
+  if number < 0:
+    raise ImproperlyConfigured(
+      f"dj_queue {setting_name} must be a non-negative integer, got {value!r}"
+    )
+  return number
 
 
 def _positive_float(value: Any, setting_name: str) -> float:
@@ -605,12 +620,7 @@ def _nonnegative_float(value: Any, setting_name: str) -> float:
 
 
 def _positive_int(value: Any, setting_name: str) -> int:
-  try:
-    number = int(value)
-  except (TypeError, ValueError, OverflowError) as exc:
-    raise ImproperlyConfigured(
-      f"dj_queue {setting_name} must be a positive integer, got {value!r}"
-    ) from exc
+  number = _integer(value, setting_name, "a positive integer")
 
   if number <= 0:
     raise ImproperlyConfigured(
@@ -620,12 +630,7 @@ def _positive_int(value: Any, setting_name: str) -> int:
 
 
 def _priority_int(value: Any, setting_name: str) -> int:
-  try:
-    number = int(value)
-  except (TypeError, ValueError, OverflowError) as exc:
-    raise ImproperlyConfigured(
-      f"dj_queue {setting_name} must be an integer from -100 to 100, got {value!r}"
-    ) from exc
+  number = _integer(value, setting_name, "an integer from -100 to 100")
 
   if number < -100 or number > 100:
     raise ImproperlyConfigured(
@@ -634,5 +639,21 @@ def _priority_int(value: Any, setting_name: str) -> int:
   return number
 
 
+def _integer(value: Any, setting_name: str, expectation: str) -> int:
+  if isinstance(value, bool):
+    raise ImproperlyConfigured(f"dj_queue {setting_name} must be {expectation}, got {value!r}")
+  if isinstance(value, int):
+    return value
+  if isinstance(value, str):
+    normalized = value.strip()
+    unsigned = normalized[1:] if normalized[:1] in {"+", "-"} else normalized
+    if unsigned.isdecimal():
+      return int(normalized)
+  raise ImproperlyConfigured(f"dj_queue {setting_name} must be {expectation}, got {value!r}")
+
+
 def _cache_key(value: Any) -> str:
-  return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+  try:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+  except (TypeError, ValueError) as exc:
+    raise ImproperlyConfigured("dj_queue config values must be JSON-serializable") from exc

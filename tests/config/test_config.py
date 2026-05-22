@@ -436,6 +436,8 @@ def test_missing_runner_polling_interval_uses_positive_defaults(settings):
   (
     (0, "default_concurrency_duration"),
     (-1, "default_concurrency_duration"),
+    (True, "default_concurrency_duration"),
+    (1.9, "default_concurrency_duration"),
     ("soon", "default_concurrency_duration"),
   ),
 )
@@ -606,9 +608,31 @@ def test_runtime_numeric_options_validate(settings, setting_name, value):
 
 
 @pytest.mark.parametrize(
+  "setting_name",
+  (
+    "clear_finished_jobs_after",
+    "clear_failed_jobs_after",
+    "clear_recurring_executions_after",
+  ),
+)
+def test_retention_options_must_be_nonnegative_integers(settings, setting_name):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {setting_name: -1},
+    },
+  }
+
+  with pytest.raises(ImproperlyConfigured, match=setting_name):
+    load_backend_config()
+
+
+@pytest.mark.parametrize(
   ("options", "setting_name"),
   (
     ({"workers": {"threads": 0}}, "workers[0].threads"),
+    ({"workers": {"threads": True}}, "workers[0].threads"),
+    ({"workers": {"threads": 1.9}}, "workers[0].threads"),
     ({"workers": {"processes": 0}}, "workers[0].processes"),
     ({"dispatchers": {"batch_size": 0}}, "dispatchers[0].batch_size"),
     (
@@ -652,6 +676,20 @@ def test_load_backend_config_caches_repeated_inputs(settings, monkeypatch):
 
   assert first == second
   assert calls == [("/tmp/dj-queue.toml", "default")]
+
+
+def test_load_backend_config_rejects_non_json_config_values(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {
+        "database_alias": object(),
+      },
+    },
+  }
+
+  with pytest.raises(ImproperlyConfigured, match="JSON-serializable"):
+    load_backend_config()
 
 
 def test_load_backend_config_cache_invalidates_when_settings_change(settings):
