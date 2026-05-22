@@ -64,6 +64,12 @@ def wait_until(predicate, timeout=1):
 
 def test_gunicorn_post_fork_starts_one_embedded_supervisor(monkeypatch):
   events = []
+  released = []
+
+  class Lock:
+    pass
+
+  locks = [Lock()]
 
   class StubSupervisor:
     polling_interval = 0.01
@@ -87,8 +93,15 @@ def test_gunicorn_post_fork_starts_one_embedded_supervisor(monkeypatch):
 
   from dj_queue.contrib import gunicorn
 
-  worker_one = type("Worker", (), {"age": 1})()
-  worker_two = type("Worker", (), {"age": 2})()
+  monkeypatch.setattr(
+    gunicorn,
+    "_try_acquire_supervisor_lock",
+    lambda: locks.pop(0) if locks else None,
+  )
+  monkeypatch.setattr(gunicorn, "_release_supervisor_lock", lambda lock: released.append(lock))
+
+  worker_one = type("Worker", (), {"age": 2})()
+  worker_two = type("Worker", (), {"age": 3})()
 
   gunicorn.post_fork(object(), worker_one)
   gunicorn.post_fork(object(), worker_two)
@@ -96,6 +109,7 @@ def test_gunicorn_post_fork_starts_one_embedded_supervisor(monkeypatch):
 
   assert isinstance(worker_one._dj_queue_supervisor, StubSupervisor)
   assert hasattr(worker_two, "_dj_queue_supervisor") is False
+  acquired_lock = worker_one._dj_queue_supervisor_lock
 
   gunicorn.worker_exit(object(), worker_one)
 
@@ -103,6 +117,8 @@ def test_gunicorn_post_fork_starts_one_embedded_supervisor(monkeypatch):
   assert any(event[0] == "poll" for event in events)
   assert events[-1] == ("stop", "default")
   assert worker_one._dj_queue_supervisor is None
+  assert released == [acquired_lock]
+  assert worker_one._dj_queue_supervisor_lock is None
 
 
 def test_gunicorn_embedded_supervisor_poll_survives_errors(monkeypatch):
@@ -137,6 +153,16 @@ def test_gunicorn_embedded_supervisor_poll_survives_errors(monkeypatch):
 
   monkeypatch.setattr(
     gunicorn, "handle_thread_error", lambda error, **kwargs: errors.append(error)
+  )
+  monkeypatch.setattr(
+    gunicorn,
+    "_try_acquire_supervisor_lock",
+    lambda: object(),
+  )
+  monkeypatch.setattr(
+    gunicorn,
+    "_release_supervisor_lock",
+    lambda lock: None,
   )
   worker = type("Worker", (), {"age": 1})()
 

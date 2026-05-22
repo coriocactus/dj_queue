@@ -111,7 +111,8 @@ class Worker(BaseRunner):
       return execute_claimed_job(claimed_job, backend_alias=self.backend_alias)
 
   def _handle_future(self, future):
-    try:
-      future.result()
-    except Exception as exc:
-      handle_thread_error(exc, context="worker.execute", backend_alias=self.backend_alias)
+    with app_executor():
+      try:
+        future.result()
+      except Exception as exc:
+        handle_thread_error(exc, context="worker.execute", backend_alias=self.backend_alias)

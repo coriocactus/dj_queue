@@ -457,7 +457,9 @@ class ForkSupervisor(Supervisor):
         time.sleep(min(0.05, max(deadline - time.monotonic(), 0)))
         continue
 
-      self.children.pop(pid, None)
+      spec = self.children.pop(pid, None)
+      if spec is not None:
+        self._fail_claimed_jobs_for_pid(pid)
     return None
 
   def poll_once(self):

@@ -1,6 +1,7 @@
 import threading
 import time
 from concurrent.futures import Future
+from contextlib import contextmanager
 from uuid import uuid4
 
 import pytest
@@ -111,6 +112,28 @@ def make_worker(config=None, **overrides):
     pool=overrides.pop("pool", InlinePool(config.threads)),
     wakeup_backend=overrides.pop("wakeup_backend", FakeWakeupBackend()),
   )
+
+
+def test_worker_future_handler_runs_inside_app_executor(monkeypatch):
+  events = []
+
+  @contextmanager
+  def executor():
+    events.append("enter")
+    yield
+    events.append("exit")
+
+  monkeypatch.setattr("dj_queue.runtime.worker.app_executor", executor)
+  monkeypatch.setattr(
+    "dj_queue.runtime.worker.handle_thread_error",
+    lambda error, **kwargs: events.append(str(error)),
+  )
+  future = Future()
+  future.set_exception(RuntimeError("boom"))
+
+  make_worker()._handle_future(future)
+
+  assert events == ["enter", "boom", "exit"]
 
 
 def test_worker_registers_process_with_metadata():

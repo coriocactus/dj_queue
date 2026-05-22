@@ -653,11 +653,18 @@ def test_fork_supervisor_stop_waits_for_child_exit_before_hard_kill():
     killer=lambda pid, sig: killed.append((pid, sig)),
   )
   supervisor.start()
+  child_process = make_process(pid=80001, name="worker-1")
+  job = make_job(task_path="tests.tasks.echo")
+  make_claimed_execution(job=job, process=child_process)
 
   supervisor.stop()
 
   assert killed == [(80001, signal.SIGTERM)]
   assert supervisor.children == {}
+  assert FailedExecution.objects.get(job=job).exception_class == (
+    f"{ProcessExitError.__module__}.{ProcessExitError.__qualname__}"
+  )
+  assert Process.objects.filter(pk=child_process.pk).exists() is False
 
 
 def test_fork_supervisor_stop_kills_unreaped_child_and_fails_claimed_jobs():

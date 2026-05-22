@@ -239,6 +239,17 @@ def test_notify_watcher_shutdown_is_clean():
   assert watcher.is_alive() is False
 
 
+def test_notify_wakeup_backend_start_clears_prior_stop_event(monkeypatch):
+  backend = NotifyWakeupBackend(backend_alias="default", wake_up=lambda: None)
+  backend._stop_event.set()
+  monkeypatch.setattr(backend, "_open_connection", lambda: object())
+  monkeypatch.setattr(backend, "_start_watcher", lambda: None)
+
+  backend.start()
+
+  assert backend._stop_event.is_set() is False
+
+
 def test_notify_ready_queues_sends_one_queue_payload(monkeypatch):
   sent = []
 

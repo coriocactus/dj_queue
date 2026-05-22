@@ -34,6 +34,7 @@ class NotifyWakeupBackend:
     if self._watcher is not None:
       return None
 
+    self._stop_event.clear()
     try:
       self._connection = self._open_connection()
       self._start_watcher()
