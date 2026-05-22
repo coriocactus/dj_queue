@@ -489,23 +489,46 @@ def prune_stale_processes(
   exclude_process=None,
 ):
   alias = get_database_alias(backend_alias)
-  queryset = Process.objects.using(alias).filter(
-    backend_alias=backend_alias,
-    last_heartbeat_at__lt=cutoff,
-  )
-  if exclude_process is not None:
-    queryset = queryset.exclude(pk=exclude_process.pk)
+  config = load_backend_config(backend_alias)
+  pruned_processes = []
 
-  stale_processes = list(queryset.order_by("last_heartbeat_at", "id"))
-  for process in stale_processes:
-    fail_claimed_jobs_for_process(
-      process,
-      error,
-      traceback_text=traceback_text,
+  with transaction.atomic(using=alias):
+    queryset = Process.objects.using(alias).filter(
       backend_alias=backend_alias,
-      delete_process=True,
+      last_heartbeat_at__lt=cutoff,
     )
-  return stale_processes
+    if exclude_process is not None:
+      queryset = queryset.exclude(pk=exclude_process.pk)
+
+    stale_processes = list(
+      locked_queryset(
+        queryset.order_by("last_heartbeat_at", "id"),
+        use_skip_locked=config.use_skip_locked,
+      )
+    )
+    if not stale_processes:
+      return []
+
+    for process in stale_processes:
+      job_ids = list(
+        ClaimedExecution.objects.using(alias).filter(process=process).values_list("job_id", flat=True)
+      )
+      deleted, _ = Process.objects.using(alias).filter(
+        pk=process.pk,
+        backend_alias=backend_alias,
+        last_heartbeat_at__lt=cutoff,
+      ).delete()
+      if not deleted:
+        continue
+
+      _fail_claimed_job_ids(
+        job_ids,
+        error,
+        traceback_text=traceback_text,
+        backend_alias=backend_alias,
+      )
+      pruned_processes.append(process)
+    return pruned_processes
 
 
 def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_locked=None):

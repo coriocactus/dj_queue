@@ -64,6 +64,7 @@ class BaseRunner:
     hostname,
     sleeper=None,
     heartbeat_interval=None,
+    process_alive_threshold=None,
     supervisor=None,
   ):
     self.config = config
@@ -81,6 +82,9 @@ class BaseRunner:
     if heartbeat_interval is None:
       heartbeat_interval = load_backend_config(backend_alias).process_heartbeat_interval
     self._heartbeat_interval = heartbeat_interval
+    if process_alive_threshold is None:
+      process_alive_threshold = getattr(config, "process_alive_threshold", None)
+    self._process_alive_threshold = process_alive_threshold
     self._started = False
     self._stopped = False
 
@@ -236,7 +240,8 @@ class BaseRunner:
     self.process = None
 
   def _start_heartbeat_thread(self):
-    if self._heartbeat_interval <= 0:
+    interval = self._effective_heartbeat_interval()
+    if interval <= 0:
       return
     self._heartbeat_stop_event.clear()
     self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
@@ -247,25 +252,16 @@ class BaseRunner:
     if thread is None:
       return
     self._heartbeat_stop_event.set()
-    thread.join(timeout=max(self._heartbeat_interval, 0.1) + 0.1)
+    thread.join(timeout=max(self._effective_heartbeat_interval(), 0.1) + 0.1)
     self._heartbeat_thread = None
 
   def _heartbeat_loop(self):
-    alias = get_database_alias(self.backend_alias)
-    while not self._heartbeat_stop_event.wait(self._heartbeat_interval):
+    interval = self._effective_heartbeat_interval()
+    while not self._heartbeat_stop_event.wait(interval):
       if self.process is None:
         return
       try:
-        with app_executor():
-          with _process_write_context(alias):
-            updated = sqlite_retry(
-              lambda: (
-                Process.objects.using(alias)
-                .filter(pk=self.process.pk)
-                .update(last_heartbeat_at=timezone.now())
-              ),
-              alias=alias,
-            )
+        updated = self._touch_process_row()
       except Exception as error:
         handle_thread_error(
           error,
@@ -278,3 +274,35 @@ class BaseRunner:
       if updated == 0:
         self.request_stop()
         return
+
+  def _touch_process_row(self):
+    alias = get_database_alias(self.backend_alias)
+    with app_executor():
+      with _process_write_context(alias):
+        return sqlite_retry(
+          lambda: (
+            Process.objects.using(alias).filter(pk=self.process.pk).update(last_heartbeat_at=timezone.now())
+          ),
+          alias=alias,
+        )
+
+  def _effective_heartbeat_interval(self):
+    try:
+      heartbeat_interval = float(self._heartbeat_interval)
+    except (TypeError, ValueError):
+      heartbeat_interval = 0
+
+    if math.isfinite(heartbeat_interval) and heartbeat_interval > 0:
+      return heartbeat_interval
+
+    threshold = self._process_alive_threshold
+    if threshold is None:
+      threshold = load_backend_config(self.backend_alias).process_alive_threshold
+    try:
+      threshold = float(threshold)
+    except (TypeError, ValueError):
+      threshold = 0
+
+    if not math.isfinite(threshold) or threshold <= 0:
+      return 1.0
+    return max(min(threshold / 2, 60.0), 0.01)

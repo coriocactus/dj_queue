@@ -48,6 +48,7 @@ class Supervisor(BaseRunner):
       hostname=hostname or socket.gethostname(),
       sleeper=sleeper,
       heartbeat_interval=heartbeat_interval,
+      process_alive_threshold=config.process_alive_threshold,
     )
     self.standalone = standalone
     self.pidfile = None
@@ -294,6 +295,8 @@ class AsyncSupervisor(Supervisor):
       "name": runner.name,
       "pid": self.pid,
       "hostname": self.hostname,
+      "heartbeat_interval": self.config.process_heartbeat_interval,
+      "process_alive_threshold": self.config.process_alive_threshold,
       "supervisor": self.process,
     }
     return runner.__class__(**kwargs)
@@ -306,6 +309,8 @@ class AsyncSupervisor(Supervisor):
         name=definition.name,
         pid=self.pid,
         hostname=self.hostname,
+        heartbeat_interval=self.config.process_heartbeat_interval,
+        process_alive_threshold=self.config.process_alive_threshold,
         supervisor=self.process,
       )
       for definition in runner_definitions(self.config)
@@ -485,13 +490,15 @@ class ForkSupervisor(Supervisor):
           "kind": definition.kind,
           "runner_class": definition.runner_class,
           "kwargs": {
-            "config": definition.config,
-            "backend_alias": self.backend_alias,
-            "name": definition.name,
-            "hostname": self.hostname,
-            "supervisor": supervisor_id,
-          },
-        }
+                "config": definition.config,
+                "backend_alias": self.backend_alias,
+                "name": definition.name,
+                "hostname": self.hostname,
+                "heartbeat_interval": self.config.process_heartbeat_interval,
+                "process_alive_threshold": self.config.process_alive_threshold,
+                "supervisor": supervisor_id,
+              },
+            }
       )
 
     return specs

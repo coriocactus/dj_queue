@@ -265,6 +265,39 @@ def test_prune_stale_process_rows_fails_their_claimed_jobs():
   supervisor.stop()
 
 
+def test_prune_stale_process_rows_skips_process_that_heartbeats_before_delete(monkeypatch):
+  stale_process = make_process(
+    name="stale-worker",
+    last_heartbeat_at=timezone.now() - timedelta(minutes=10),
+  )
+  job = make_job(task_path="tests.tasks.echo")
+  make_claimed_execution(job=job, process=stale_process)
+  supervisor = make_supervisor()
+  supervisor.start()
+
+  from django.db.models.query import QuerySet
+
+  original_delete = QuerySet.delete
+  refreshed = {"done": False}
+
+  def refresh_before_delete(queryset):
+    if queryset.filter(pk=stale_process.pk).exists() and refreshed["done"] is False:
+      refreshed["done"] = True
+      Process.objects.filter(pk=stale_process.pk).update(last_heartbeat_at=timezone.now())
+    return original_delete(queryset)
+
+  monkeypatch.setattr("django.db.models.query.QuerySet.delete", refresh_before_delete)
+
+  try:
+    pruned = supervisor.prune_stale_process_rows(now=timezone.now())
+  finally:
+    supervisor.stop()
+
+  assert pruned == []
+  assert FailedExecution.objects.filter(job=job).exists() is False
+  assert ClaimedExecution.objects.filter(job=job, process=stale_process).exists() is True
+
+
 def test_supervisor_housekeeping_interval_tracks_heartbeat_when_enabled():
   supervisor = make_supervisor()
 
@@ -291,6 +324,40 @@ def test_supervisor_housekeeping_interval_falls_back_when_heartbeat_disabled(set
   )
 
   assert supervisor.housekeeping_interval == 60
+
+
+def test_supervisor_heartbeat_disabled_still_keeps_live_processes_fresh(settings):
+  tasks_settings = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {
+        "mode": "async",
+        "workers": [{"queues": "*", "threads": 1, "processes": 1, "polling_interval": 0.01}],
+        "dispatchers": [],
+        "scheduler": None,
+        "process_heartbeat_interval": 0,
+        "process_alive_threshold": 0.05,
+        "supervisor_pidfile": None,
+        "preserve_finished_jobs": False,
+        "clear_finished_jobs_after": None,
+      },
+    }
+  }
+  supervisor = build_async_supervisor(tasks_settings=tasks_settings, standalone=False)
+  process = supervisor.start()
+
+  try:
+    wait_until(lambda: Process.objects.filter(supervisor=process, kind="Worker").count() == 1)
+    worker_process = Process.objects.get(supervisor=process, kind="Worker")
+    initial_heartbeat = worker_process.last_heartbeat_at
+
+    wait_until(
+      lambda: Process.objects.get(pk=worker_process.pk).last_heartbeat_at > initial_heartbeat,
+      timeout=1,
+    )
+  finally:
+    supervisor.stop()
 
 
 def test_supervisor_poll_once_skips_prune_until_housekeeping_interval(monkeypatch):
@@ -608,6 +675,20 @@ def test_async_supervisor_stop_preserves_undrained_worker_until_work_finishes(mo
     release.set()
     wait_until(finished.is_set)
     wait_until(lambda: Process.objects.filter(supervisor=process, kind="Worker").exists() is False)
+
+
+def test_async_supervisor_passes_backend_heartbeat_interval_to_managed_runners():
+  tasks_settings = async_tasks_settings(dispatchers=[])
+  tasks_settings["default"]["OPTIONS"]["process_heartbeat_interval"] = 0.25
+  supervisor = build_async_supervisor(tasks_settings=tasks_settings, standalone=False)
+
+  process = supervisor.start()
+
+  try:
+    wait_until(lambda: Process.objects.filter(supervisor=process, kind="Worker").count() == 1)
+    assert supervisor.runners[0]._heartbeat_interval == 0.25
+  finally:
+    supervisor.stop()
 
 
 def test_fork_supervisor_starts_configured_children():

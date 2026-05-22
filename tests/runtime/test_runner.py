@@ -60,6 +60,25 @@ def test_runner_heartbeat_updates_and_stop_deregisters():
   assert Process.objects.filter(pk=process.pk).exists() is False
 
 
+def test_runner_heartbeat_uses_fallback_interval_when_disabled():
+  runner = FallbackRunner(
+    SimpleNamespace(polling_interval=0.01, process_alive_threshold=0.05),
+    name=f"fallback-heartbeat-runner-{uuid4()}",
+    pid=12345,
+    hostname="localhost",
+    heartbeat_interval=0,
+  )
+  process = runner.start()
+  initial_heartbeat = process.last_heartbeat_at
+
+  try:
+    wait_until(lambda: Process.objects.get(pk=process.pk).last_heartbeat_at > initial_heartbeat)
+  finally:
+    runner.stop()
+
+  assert Process.objects.filter(pk=process.pk).exists() is False
+
+
 def test_runner_deleted_process_row_stops_cleanly():
   runner = DummyRunner()
   runner.start()

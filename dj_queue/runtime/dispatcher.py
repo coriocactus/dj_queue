@@ -25,6 +25,7 @@ class Dispatcher(BaseRunner):
     hostname=None,
     sleeper=None,
     heartbeat_interval=None,
+    process_alive_threshold=None,
     supervisor=None,
   ):
     super().__init__(
@@ -35,6 +36,7 @@ class Dispatcher(BaseRunner):
       hostname=hostname or socket.gethostname(),
       sleeper=sleeper,
       heartbeat_interval=heartbeat_interval,
+      process_alive_threshold=process_alive_threshold,
       supervisor=supervisor,
     )
     self._last_maintenance_at = None
