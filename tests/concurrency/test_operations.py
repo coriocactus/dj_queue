@@ -29,6 +29,7 @@ from dj_queue.operations.concurrency import (
   semaphore_acquire,
   semaphore_release,
 )
+import dj_queue.operations.concurrency as concurrency_operations
 from dj_queue.operations.recurring import fire_recurring_task
 from dj_queue.operations.jobs import (
   claim_ready_jobs,
@@ -486,6 +487,35 @@ def test_discarding_ready_job_releases_waiter():
   assert deleted == 1
   assert ReadyExecution.objects.filter(job_id=second.id).exists() is True
   assert Semaphore.objects.get(key="account:1").value == 0
+
+
+@pytest.mark.django_db(transaction=True)
+def test_unblock_next_blocked_job_restores_waiter_when_slot_is_not_acquired(monkeypatch):
+  job = make_job(task=limited, args=[1], kwargs={"value": "blocked"}, concurrency_key="account:1")
+  expires_at = timezone.now() + timedelta(minutes=1)
+  BlockedExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+    concurrency_key=job.concurrency_key,
+    expires_at=expires_at,
+  )
+  monkeypatch.setattr(concurrency_operations, "semaphore_acquire", lambda *args, **kwargs: False)
+
+  unblocked = concurrency_operations.unblock_next_blocked_job(
+    "account:1",
+    limit=1,
+    duration_seconds=60,
+  )
+
+  blocked = BlockedExecution.objects.get(job=job)
+  assert unblocked is None
+  assert blocked.queue_name == job.queue_name
+  assert blocked.priority == job.priority
+  assert blocked.concurrency_key == "account:1"
+  assert blocked.expires_at == expires_at
+  assert ReadyExecution.objects.filter(job=job).exists() is False
 
 
 @pytest.mark.django_db

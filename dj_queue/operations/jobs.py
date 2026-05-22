@@ -578,9 +578,11 @@ def dispatch_scheduled_job_now(job_id, *, backend_alias="default"):
     ).first()
     if scheduled is None:
       raise EnqueueError("job is not scheduled")
+    scheduled_rows = _consume_selected_rows(alias, ScheduledExecution, [scheduled])
+    if not scheduled_rows:
+      raise EnqueueError("job is not scheduled")
 
     job = scheduled.job
-    scheduled.delete(using=alias)
     job.scheduled_at = None
     job.save(using=alias, update_fields=["scheduled_at", "updated_at"])
     dispatch_outcome = _dispatch_existing_job(job)
@@ -609,8 +611,10 @@ def retry_failed_job(job_id, *, backend_alias="default"):
       .select_related("job")
       .get(job_id=job_id, job__backend_alias=backend_alias)
     )
+    failed_rows = _consume_selected_rows(alias, FailedExecution, [failed])
+    if not failed_rows:
+      raise EnqueueError("job is not failed")
     job = failed.job
-    failed.delete(using=alias)
     job.return_value = None
     job.finished_at = None
     job.save(using=alias, update_fields=["return_value", "finished_at", "updated_at"])
@@ -643,11 +647,14 @@ def retry_failed_jobs(*, job_ids=None, batch_size=500, backend_alias="default"):
     if not failed_rows:
       return 0
 
+    failed_rows = _consume_selected_rows(alias, FailedExecution, failed_rows)
+    if not failed_rows:
+      return 0
+
     jobs = []
     ready_queue_names = []
     for failed in failed_rows:
       job = failed.job
-      failed.delete(using=alias)
       job.return_value = None
       job.finished_at = None
       job.save(using=alias, update_fields=["return_value", "finished_at", "updated_at"])
@@ -712,6 +719,10 @@ def _discard_state_jobs(
     if job_ids is not None:
       queryset = queryset.filter(job_id__in=job_ids)
     rows = list(locked_queryset(queryset, use_skip_locked=config.use_skip_locked)[:batch_size])
+    if not rows:
+      return 0
+
+    rows = _consume_selected_rows(alias, model, rows)
     if not rows:
       return 0
 

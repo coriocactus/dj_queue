@@ -165,18 +165,30 @@ def unblock_next_blocked_job(
     if blocked is None:
       return None
 
+    consumed = _consume_selected_rows(alias, BlockedExecution, [blocked])
+    if not consumed:
+      return None
+
     if not semaphore_acquire(
       key,
       limit=limit,
       duration_seconds=duration_seconds,
       backend_alias=backend_alias,
     ):
+      _create_blocked_execution(
+        alias,
+        blocked.job,
+        backend_alias=backend_alias,
+        queue_name=blocked.queue_name,
+        priority=blocked.priority,
+        concurrency_key=blocked.concurrency_key,
+        expires_at=blocked.expires_at,
+      )
       return None
 
     job = blocked.job
     queue_name = blocked.queue_name
     priority = blocked.priority
-    blocked.delete(using=alias)
     _create_ready_execution(
       alias,
       job=job,

@@ -31,12 +31,14 @@ from dj_queue.operations.cleanup import (
 )
 from dj_queue.operations.jobs import (
   DispatchOutcome,
+  dispatch_scheduled_job_now,
   discard_failed_job,
   discard_ready_jobs,
   discard_scheduled_jobs,
   enqueue_job_with_dispatch,
   promote_scheduled_jobs,
   retry_failed_job,
+  retry_failed_jobs,
 )
 from tests.tasks import add, async_echo, echo, limited, limited_discard
 
@@ -395,6 +397,31 @@ def test_discard_ready_jobs_in_batches():
   assert ReadyExecution.objects.count() == 1
 
 
+@pytest.mark.django_db(transaction=True)
+def test_discard_ready_jobs_skips_rows_consumed_by_another_transition(monkeypatch):
+  import dj_queue.operations.jobs as job_operations
+
+  job = make_job()
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+
+  def consume_elsewhere(alias, model, rows):
+    model.objects.using(alias).filter(pk__in=[row.pk for row in rows]).delete()
+    return []
+
+  monkeypatch.setattr(job_operations, "_consume_selected_rows", consume_elsewhere)
+
+  deleted = discard_ready_jobs(batch_size=1)
+
+  assert deleted == 0
+  assert Job.objects.filter(pk=job.pk).exists() is True
+  assert ReadyExecution.objects.filter(job=job).exists() is False
+
+
 @pytest.mark.django_db
 def test_discard_scheduled_jobs_in_batches():
   future = timezone.now() + timedelta(minutes=5)
@@ -413,6 +440,34 @@ def test_discard_scheduled_jobs_in_batches():
   assert deleted == 2
   assert Job.objects.count() == 1
   assert ScheduledExecution.objects.count() == 1
+
+
+@pytest.mark.django_db(transaction=True)
+def test_dispatch_scheduled_job_now_skips_rows_consumed_by_another_transition(monkeypatch):
+  import dj_queue.operations.jobs as job_operations
+
+  future = timezone.now() + timedelta(minutes=5)
+  job = make_job(scheduled_at=future)
+  ScheduledExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+    scheduled_at=future,
+  )
+
+  def consume_elsewhere(alias, model, rows):
+    model.objects.using(alias).filter(pk__in=[row.pk for row in rows]).delete()
+    return []
+
+  monkeypatch.setattr(job_operations, "_consume_selected_rows", consume_elsewhere)
+
+  with pytest.raises(EnqueueError, match="job is not scheduled"):
+    dispatch_scheduled_job_now(job.id)
+
+  job.refresh_from_db()
+  assert job.scheduled_at == future
+  assert ReadyExecution.objects.filter(job=job).exists() is False
 
 
 @pytest.mark.django_db
@@ -589,6 +644,60 @@ def test_clear_failed_jobs_locks_failed_rows(monkeypatch):
   assert deleted == 1
   assert calls == [True]
   assert Job.objects.filter(pk=job.pk).exists() is False
+
+
+@pytest.mark.django_db(transaction=True)
+def test_clear_failed_jobs_skips_rows_consumed_by_another_transition(monkeypatch):
+  import dj_queue.operations.cleanup as cleanup_operations
+
+  job = make_job(task=echo)
+  failed = FailedExecution.objects.create(
+    job=job,
+    exception_class="ValueError",
+    message="old",
+    traceback="old",
+  )
+  FailedExecution.objects.filter(pk=failed.pk).update(
+    created_at=timezone.now() - timedelta(minutes=10)
+  )
+
+  def consume_elsewhere(alias, model, rows):
+    model.objects.using(alias).filter(pk__in=[row.pk for row in rows]).delete()
+    return []
+
+  monkeypatch.setattr(cleanup_operations, "_consume_selected_rows", consume_elsewhere)
+
+  deleted = clear_failed_jobs(older_than=60, batch_size=10)
+
+  assert deleted == 0
+  assert Job.objects.filter(pk=job.pk).exists() is True
+  assert FailedExecution.objects.filter(job=job).exists() is False
+
+
+@pytest.mark.django_db(transaction=True)
+def test_retry_failed_jobs_skips_rows_consumed_by_another_transition(monkeypatch):
+  import dj_queue.operations.jobs as job_operations
+
+  job = make_job(task=echo)
+  FailedExecution.objects.create(
+    job=job,
+    exception_class="ValueError",
+    message="old",
+    traceback="old",
+  )
+
+  def consume_elsewhere(alias, model, rows):
+    model.objects.using(alias).filter(pk__in=[row.pk for row in rows]).delete()
+    return []
+
+  monkeypatch.setattr(job_operations, "_consume_selected_rows", consume_elsewhere)
+
+  retried = retry_failed_jobs(batch_size=10)
+
+  assert retried == 0
+  assert Job.objects.filter(pk=job.pk).exists() is True
+  assert ReadyExecution.objects.filter(job=job).exists() is False
+  assert FailedExecution.objects.filter(job=job).exists() is False
 
 
 @pytest.mark.django_db

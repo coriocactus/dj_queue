@@ -6,6 +6,7 @@ from django.utils import timezone
 from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias, locked_queryset
 from dj_queue.models import FailedExecution, Job, RecurringExecution
+from dj_queue.operations._helpers import _consume_selected_rows
 
 
 def clear_finished_jobs(
@@ -73,6 +74,10 @@ def clear_failed_jobs(
     failed_rows = list(
       locked_queryset(queryset, use_skip_locked=config.use_skip_locked)[:batch_size]
     )
+    if not failed_rows:
+      return 0
+
+    failed_rows = _consume_selected_rows(alias, FailedExecution, failed_rows)
     if not failed_rows:
       return 0
 
