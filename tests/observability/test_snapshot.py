@@ -4,42 +4,11 @@ import pytest
 from django.utils import timezone
 
 from dj_queue import observability
-from dj_queue.models import Job, Pause, Process, ReadyExecution, RecurringTask, Semaphore
+from dj_queue.models import Pause, Process, RecurringTask, Semaphore
+from tests.factories import make_ready_job
 
 
 pytestmark = pytest.mark.django_db(transaction=True)
-
-
-def make_job(**overrides):
-  payload = {
-    "args": list(overrides.pop("args", [])),
-    "kwargs": dict(overrides.pop("kwargs", {})),
-  }
-  payload.update(overrides.pop("payload", {}))
-
-  return Job.objects.create(
-    task_path=overrides.pop("task_path", "tests.tasks.echo"),
-    queue_name=overrides.pop("queue_name", "default"),
-    priority=overrides.pop("priority", 0),
-    payload=payload,
-    backend_alias=overrides.pop("backend_alias", "default"),
-    scheduled_at=overrides.pop("scheduled_at", None),
-    concurrency_key=overrides.pop("concurrency_key", None),
-    finished_at=overrides.pop("finished_at", None),
-    return_value=overrides.pop("return_value", None),
-    **overrides,
-  )
-
-
-def make_ready_job(**overrides):
-  job = make_job(**overrides)
-  ReadyExecution.objects.create(
-    job=job,
-    backend_alias=job.backend_alias,
-    queue_name=job.queue_name,
-    priority=job.priority,
-  )
-  return job
 
 
 def test_backend_snapshot_filters_workers_to_backend(settings):

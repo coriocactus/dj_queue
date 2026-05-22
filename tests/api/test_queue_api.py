@@ -9,74 +9,21 @@ from dj_queue.api import (
   retry_failed_jobs,
 )
 from dj_queue.models import (
-  BlockedExecution,
   FailedExecution,
   Job,
   Pause,
-  Process,
   ReadyExecution,
   RecurringTask,
-  ScheduledExecution,
+)
+from tests.factories import (
+  make_blocked_job,
+  make_failed_job,
+  make_ready_job,
+  make_scheduled_job,
 )
 
 
 pytestmark = pytest.mark.django_db(transaction=True)
-
-
-def make_job(**overrides):
-  payload = {
-    "args": list(overrides.pop("args", [])),
-    "kwargs": dict(overrides.pop("kwargs", {})),
-  }
-  payload.update(overrides.pop("payload", {}))
-
-  return Job.objects.create(
-    task_path=overrides.pop("task_path", "tests.tasks.echo"),
-    queue_name=overrides.pop("queue_name", "default"),
-    priority=overrides.pop("priority", 0),
-    payload=payload,
-    backend_alias=overrides.pop("backend_alias", "default"),
-    scheduled_at=overrides.pop("scheduled_at", None),
-    concurrency_key=overrides.pop("concurrency_key", None),
-    finished_at=overrides.pop("finished_at", None),
-    return_value=overrides.pop("return_value", None),
-    **overrides,
-  )
-
-
-def make_process(**overrides):
-  return Process.objects.create(
-    backend_alias=overrides.pop("backend_alias", "default"),
-    kind=overrides.pop("kind", "Worker"),
-    pid=overrides.pop("pid", 12345),
-    hostname=overrides.pop("hostname", "localhost"),
-    name=overrides.pop("name", "worker-1"),
-    metadata=overrides.pop("metadata", {}),
-    last_heartbeat_at=overrides.pop("last_heartbeat_at", timezone.now()),
-    **overrides,
-  )
-
-
-def make_ready_job(**overrides):
-  job = make_job(**overrides)
-  ReadyExecution.objects.create(
-    job=job,
-    backend_alias=job.backend_alias,
-    queue_name=job.queue_name,
-    priority=job.priority,
-  )
-  return job
-
-
-def make_failed_job(**overrides):
-  job = make_job(**overrides)
-  FailedExecution.objects.create(
-    job=job,
-    exception_class=overrides.pop("exception_class", "builtins.ValueError"),
-    message=overrides.pop("message", "boom"),
-    traceback=overrides.pop("traceback", "traceback"),
-  )
-  return job
 
 
 def test_queue_info_size():
@@ -127,21 +74,10 @@ def test_queue_info_latency_is_never_negative():
 
 def test_queue_info_all_uses_shared_queue_discovery():
   future = timezone.now() + timedelta(minutes=5)
-  scheduled = make_job(queue_name="scheduled", scheduled_at=future)
-  ScheduledExecution.objects.create(
-    job=scheduled,
-    backend_alias=scheduled.backend_alias,
-    queue_name=scheduled.queue_name,
-    priority=scheduled.priority,
-    scheduled_at=future,
-  )
-  blocked = make_job(queue_name="blocked", concurrency_key="account:1")
-  BlockedExecution.objects.create(
-    job=blocked,
-    backend_alias=blocked.backend_alias,
-    queue_name=blocked.queue_name,
-    priority=blocked.priority,
-    concurrency_key=blocked.concurrency_key,
+  make_scheduled_job(queue_name="scheduled", scheduled_at=future)
+  make_blocked_job(
+    queue_name="blocked",
+    concurrency_key="account:1",
     expires_at=timezone.now() + timedelta(minutes=1),
   )
   make_failed_job(queue_name="failed")
