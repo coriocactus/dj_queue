@@ -108,7 +108,7 @@ def test_gunicorn_post_fork_starts_one_embedded_supervisor(monkeypatch):
   wait_until(lambda: any(event[0] == "poll" for event in events), timeout=1)
 
   assert isinstance(worker_one._dj_queue_supervisor, StubSupervisor)
-  assert hasattr(worker_two, "_dj_queue_supervisor") is False
+  assert worker_two._dj_queue_supervisor is None
   acquired_lock = worker_one._dj_queue_supervisor_lock
 
   gunicorn.worker_exit(object(), worker_one)
@@ -177,6 +177,114 @@ def test_gunicorn_embedded_supervisor_poll_survives_errors(monkeypatch):
   assert [str(error) for error in errors] == ["poll failed"]
 
 
+def test_gunicorn_retries_lock_until_replacement_worker_can_start(monkeypatch):
+  events = []
+  released = []
+
+  class Lock:
+    pass
+
+  locks = [Lock(), Lock()]
+  available = {"open": False}
+
+  class StubSupervisor:
+    polling_interval = 0.01
+
+    def __init__(self, backend_alias):
+      self.backend_alias = backend_alias
+
+    def start(self):
+      events.append(("start", self.backend_alias))
+
+    def poll_once(self):
+      events.append(("poll", self.backend_alias))
+
+    def stop(self):
+      events.append(("stop", self.backend_alias))
+
+  monkeypatch.setattr(
+    "dj_queue.contrib.gunicorn.build_supervisor",
+    lambda backend_alias="default": StubSupervisor(backend_alias),
+  )
+
+  from dj_queue.contrib import gunicorn
+
+  monkeypatch.setattr(gunicorn, "LOCK_RETRY_INTERVAL", 0.01)
+  monkeypatch.setattr(
+    gunicorn,
+    "_try_acquire_supervisor_lock",
+    lambda: locks.pop(0) if available["open"] and locks else None,
+  )
+  monkeypatch.setattr(gunicorn, "_release_supervisor_lock", lambda lock: released.append(lock))
+
+  worker_one = type("Worker", (), {"age": 2})()
+  worker_two = type("Worker", (), {"age": 3})()
+
+  available["open"] = True
+  gunicorn.post_fork(object(), worker_one)
+  available["open"] = False
+  first_lock = worker_one._dj_queue_supervisor_lock
+  gunicorn.post_fork(object(), worker_two)
+  assert worker_two._dj_queue_supervisor is None
+
+  available["open"] = True
+  gunicorn.worker_exit(object(), worker_one)
+
+  wait_until(lambda: getattr(worker_two, "_dj_queue_supervisor", None) is not None, timeout=1)
+  acquired_lock = worker_two._dj_queue_supervisor_lock
+
+  gunicorn.worker_exit(object(), worker_two)
+
+  assert events.count(("start", "default")) == 2
+  assert released == [first_lock, acquired_lock]
+
+
+def test_gunicorn_worker_exit_waits_for_poll_thread_before_releasing_lock(monkeypatch):
+  released = []
+  poll_started = threading.Event()
+  allow_poll_exit = threading.Event()
+
+  class StubSupervisor:
+    polling_interval = 0.01
+    backend_alias = "default"
+
+    def start(self):
+      return None
+
+    def poll_once(self):
+      poll_started.set()
+      allow_poll_exit.wait(timeout=1)
+
+    def stop(self):
+      return None
+
+  monkeypatch.setattr(
+    "dj_queue.contrib.gunicorn.build_supervisor",
+    lambda backend_alias="default": StubSupervisor(),
+  )
+
+  from dj_queue.contrib import gunicorn
+
+  monkeypatch.setattr(gunicorn, "_try_acquire_supervisor_lock", lambda: object())
+  monkeypatch.setattr(gunicorn, "_release_supervisor_lock", lambda lock: released.append(lock))
+  worker = type("Worker", (), {"age": 1})()
+
+  gunicorn.post_fork(object(), worker)
+  acquired_lock = worker._dj_queue_supervisor_lock
+  assert poll_started.wait(timeout=1) is True
+
+  exit_thread = threading.Thread(target=lambda: gunicorn.worker_exit(object(), worker))
+  exit_thread.start()
+
+  time.sleep(0.05)
+  assert released == []
+
+  allow_poll_exit.set()
+  exit_thread.join(timeout=1)
+
+  assert released == [acquired_lock]
+
+
 def test_asgi_lifespan_startup_and_shutdown_wrap_supervisor(monkeypatch):
   events = []
 
@@ -216,6 +324,94 @@ def test_asgi_lifespan_startup_and_shutdown_wrap_supervisor(monkeypatch):
     {"type": "lifespan.startup.complete"},
     {"type": "lifespan.shutdown.complete"},
   ]
+
+
+def test_asgi_lifespan_forwards_wrapped_app_startup_and_shutdown(monkeypatch):
+  events = []
+
+  class StubSupervisor:
+    def start(self):
+      events.append("supervisor-start")
+
+    def stop(self):
+      events.append("supervisor-stop")
+
+  async def wrapped_app(scope, receive, send):
+    events.append(("scope", scope["type"]))
+    startup = await receive()
+    events.append(startup["type"])
+    await send({"type": "lifespan.startup.complete"})
+    shutdown = await receive()
+    events.append(shutdown["type"])
+    await send({"type": "lifespan.shutdown.complete"})
+
+  monkeypatch.setattr(
+    "dj_queue.contrib.asgi.build_supervisor",
+    lambda backend_alias="default": StubSupervisor(),
+  )
+
+  from dj_queue.contrib.asgi import DjQueueLifespan
+
+  app = DjQueueLifespan(wrapped_app)
+  sent_messages = []
+  messages = iter(
+    [
+      {"type": "lifespan.startup"},
+      {"type": "lifespan.shutdown"},
+    ]
+  )
+
+  async def receive():
+    return next(messages)
+
+  async def send(message):
+    sent_messages.append(message)
+
+  asyncio.run(app({"type": "lifespan"}, receive, send))
+
+  assert events == [
+    ("scope", "lifespan"),
+    "lifespan.startup",
+    "supervisor-start",
+    "supervisor-stop",
+    "lifespan.shutdown",
+  ]
+  assert sent_messages == [
+    {"type": "lifespan.startup.complete"},
+    {"type": "lifespan.shutdown.complete"},
+  ]
+
+
+def test_asgi_lifespan_forwards_wrapped_app_startup_failure(monkeypatch):
+  class StubSupervisor:
+    def start(self):
+      raise AssertionError("supervisor should not start after wrapped startup failure")
+
+  async def wrapped_app(_scope, receive, send):
+    startup = await receive()
+    assert startup["type"] == "lifespan.startup"
+    await send({"type": "lifespan.startup.failed", "message": "wrapped app failed"})
+
+  monkeypatch.setattr(
+    "dj_queue.contrib.asgi.build_supervisor",
+    lambda backend_alias="default": StubSupervisor(),
+  )
+
+  from dj_queue.contrib.asgi import DjQueueLifespan
+
+  app = DjQueueLifespan(wrapped_app)
+  sent_messages = []
+  messages = iter([{"type": "lifespan.startup"}])
+
+  async def receive():
+    return next(messages)
+
+  async def send(message):
+    sent_messages.append(message)
+
+  asyncio.run(app({"type": "lifespan"}, receive, send))
+
+  assert sent_messages == [{"type": "lifespan.startup.failed", "message": "wrapped app failed"}]
 
 
 def test_asgi_lifespan_prunes_stale_process_rows(monkeypatch):

@@ -1,32 +1,49 @@
 import fcntl
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 from dj_queue.runtime.errors import handle_thread_error
 from dj_queue.runtime.supervisor import AsyncSupervisor
 
 LOCK_PATH = Path(tempfile.gettempdir()) / "dj_queue_gunicorn_supervisor.lock"
+LOCK_RETRY_INTERVAL = 1.0
 
 
 def build_supervisor(backend_alias="default"):
   return AsyncSupervisor.from_backend_config(backend_alias=backend_alias, standalone=False)
 
 
-def post_fork(_server, worker):
+def _set_supervisor_state(worker, **state):
+  for name, value in state.items():
+    setattr(worker, f"_dj_queue_{name}", value)
+
+
+def _start_embedded_supervisor(worker, *, backend_alias="default"):
   lock_file = _try_acquire_supervisor_lock()
   if lock_file is None:
     return None
 
   try:
-    supervisor = build_supervisor()
-    worker._dj_queue_supervisor_lock = lock_file
-    worker._dj_queue_supervisor = supervisor
-    worker._dj_queue_supervisor_poll_stop = threading.Event()
+    supervisor = build_supervisor(backend_alias=backend_alias)
+    poll_stop = threading.Event()
+    _set_supervisor_state(
+      worker,
+      supervisor_lock=lock_file,
+      supervisor=supervisor,
+      supervisor_poll_stop=poll_stop,
+    )
     supervisor.start()
   except Exception:
     _release_supervisor_lock(lock_file)
-    worker._dj_queue_supervisor_lock = None
+    _set_supervisor_state(
+      worker,
+      supervisor_lock=None,
+      supervisor=None,
+      supervisor_poll_stop=None,
+      supervisor_poll_thread=None,
+    )
     raise
 
   def poll_supervisor():
@@ -47,15 +64,59 @@ def post_fork(_server, worker):
   return supervisor
 
 
+def _start_lock_retry_loop(worker, *, backend_alias="default"):
+  retry_stop = threading.Event()
+
+  def retry():
+    while retry_stop.wait(LOCK_RETRY_INTERVAL) is False:
+      if getattr(worker, "_dj_queue_supervisor", None) is not None:
+        return
+      if _start_embedded_supervisor(worker, backend_alias=backend_alias) is not None:
+        retry_stop.set()
+        return
+
+  retry_thread = threading.Thread(target=retry, daemon=True)
+  _set_supervisor_state(worker, supervisor_retry_stop=retry_stop, supervisor_retry_thread=retry_thread)
+  retry_thread.start()
+
+
+def post_fork(_server, worker):
+  _set_supervisor_state(
+    worker,
+    supervisor=None,
+    supervisor_lock=None,
+    supervisor_poll_stop=None,
+    supervisor_poll_thread=None,
+    supervisor_retry_stop=None,
+    supervisor_retry_thread=None,
+  )
+  supervisor = _start_embedded_supervisor(worker)
+  if supervisor is not None:
+    return supervisor
+
+  _start_lock_retry_loop(worker)
+  return None
+
+
 def worker_exit(_server, worker):
   supervisor = getattr(worker, "_dj_queue_supervisor", None)
   lock_file = getattr(worker, "_dj_queue_supervisor_lock", None)
   stop_event = getattr(worker, "_dj_queue_supervisor_poll_stop", None)
   poll_thread = getattr(worker, "_dj_queue_supervisor_poll_thread", None)
+  retry_stop = getattr(worker, "_dj_queue_supervisor_retry_stop", None)
+  retry_thread = getattr(worker, "_dj_queue_supervisor_retry_thread", None)
+
+  if retry_stop is not None:
+    retry_stop.set()
+  if retry_thread is not None:
+    retry_thread.join(timeout=1)
+    worker._dj_queue_supervisor_retry_thread = None
+  worker._dj_queue_supervisor_retry_stop = None
+
   if stop_event is not None:
     stop_event.set()
   if poll_thread is not None:
-    poll_thread.join(timeout=1)
+    poll_thread.join()
     worker._dj_queue_supervisor_poll_thread = None
   worker._dj_queue_supervisor_poll_stop = None
   if supervisor is None:
