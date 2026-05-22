@@ -364,6 +364,26 @@ def test_retry_failed_job_reuses_normal_dispatch_path():
 
 
 @pytest.mark.django_db
+def test_retry_failed_job_rejects_conflicting_execution_state():
+  job = make_job(args=["retry"])
+  FailedExecution.objects.create(
+    job=job,
+    exception_class="builtins.ValueError",
+    message="boom",
+    traceback="traceback",
+  )
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+
+  with pytest.raises(EnqueueError, match="already has an execution-state row"):
+    retry_failed_job(job.id)
+
+
+@pytest.mark.django_db
 def test_discard_failed_job_removes_job():
   job = make_job()
   FailedExecution.objects.create(

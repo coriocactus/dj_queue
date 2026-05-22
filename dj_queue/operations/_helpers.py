@@ -1,8 +1,26 @@
 import json
 
+from django.db.models import Q
+
 from dj_queue.db import database_capabilities
 from dj_queue.exceptions import EnqueueError
-from dj_queue.models import BlockedExecution, Pause, ReadyExecution, ScheduledExecution
+from dj_queue.models import (
+  BlockedExecution,
+  ClaimedExecution,
+  FailedExecution,
+  Job,
+  Pause,
+  ReadyExecution,
+  ScheduledExecution,
+)
+
+STATE_RELATIONS = {
+  ReadyExecution: "ready_execution",
+  ScheduledExecution: "scheduled_execution",
+  ClaimedExecution: "claimed_execution",
+  BlockedExecution: "blocked_execution",
+  FailedExecution: "failed_execution",
+}
 
 
 def _normalize_payload(args, kwargs):
@@ -10,6 +28,21 @@ def _normalize_payload(args, kwargs):
     return json.loads(json.dumps({"args": list(args), "kwargs": dict(kwargs)}))
   except (TypeError, ValueError) as exc:
     raise EnqueueError("payload must be JSON round-trippable") from exc
+
+
+def _ensure_no_other_execution_state(alias, job, *, ignored_models=()):
+  relation_names = [
+    relation_name
+    for model, relation_name in STATE_RELATIONS.items()
+    if model not in ignored_models
+  ]
+  if not relation_names:
+    return
+  conflict_query = Q(**{f"{relation_names[0]}__isnull": False})
+  for relation_name in relation_names[1:]:
+    conflict_query |= Q(**{f"{relation_name}__isnull": False})
+  if Job.objects.using(alias).filter(pk=job.pk).filter(conflict_query).exists():
+    raise EnqueueError(f"job {job.id} already has an execution-state row")
 
 
 def _task_option(task, name, default=None):
@@ -66,6 +99,7 @@ def _create_ready_execution(
   ready_at=None,
   created_at=None,
 ):
+  _ensure_no_other_execution_state(alias, job)
   queue_name = _execution_queue_name(job, queue_name)
   _lock_active_pauses(alias, backend_alias, {queue_name})
   return ReadyExecution.objects.using(alias).create(
@@ -92,6 +126,7 @@ def _scheduled_execution_row(job, *, backend_alias, scheduled_at=None, created_a
 
 
 def _create_scheduled_execution(alias, job, *, backend_alias, scheduled_at=None):
+  _ensure_no_other_execution_state(alias, job)
   return ScheduledExecution.objects.using(alias).create(
     **_scheduled_execution_fields(
       job,
@@ -111,6 +146,7 @@ def _create_blocked_execution(
   queue_name=None,
   priority=None,
 ):
+  _ensure_no_other_execution_state(alias, job)
   return BlockedExecution.objects.using(alias).create(
     **_blocked_execution_fields(
       job,

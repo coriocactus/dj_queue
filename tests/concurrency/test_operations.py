@@ -35,6 +35,7 @@ from dj_queue.operations.jobs import (
   claim_ready_jobs,
   complete_claimed_job,
   discard_ready_jobs,
+  EnqueueError,
   execute_claimed_job,
   fail_claimed_job,
   promote_scheduled_jobs,
@@ -296,6 +297,32 @@ def test_failed_completion_still_unblocks_next_waiter():
   assert Semaphore.objects.get(key="account:1").value == 0
 
 
+@pytest.mark.django_db
+def test_fail_claimed_job_rejects_conflicting_execution_state():
+  process = Process.objects.create(
+    backend_alias="default",
+    kind="Worker",
+    pid=12345,
+    hostname="localhost",
+    name="worker-fail-conflict",
+    metadata={},
+    last_heartbeat_at=timezone.now(),
+  )
+  job = make_job()
+  ClaimedExecution.objects.create(job=job, process=process)
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+
+  with pytest.raises(EnqueueError, match="already has an execution-state row"):
+    fail_claimed_job(job.id, ValueError("boom"), traceback_text="traceback")
+
+  assert FailedExecution.objects.filter(job=job).exists() is False
+
+
 @pytest.mark.django_db(transaction=True)
 def test_missing_concurrency_task_path_releases_slot_and_unblocks_next_waiter():
   process = Process.objects.create(
@@ -519,6 +546,32 @@ def test_unblock_next_blocked_job_restores_waiter_when_slot_is_not_acquired(monk
 
 
 @pytest.mark.django_db
+def test_unblock_next_blocked_job_rejects_conflicting_execution_state():
+  job = make_job(task=limited, args=[1], kwargs={"value": "blocked"}, concurrency_key="account:1")
+  BlockedExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+    concurrency_key=job.concurrency_key,
+    expires_at=timezone.now() + timedelta(minutes=1),
+  )
+  FailedExecution.objects.create(
+    job=job,
+    exception_class="builtins.ValueError",
+    message="boom",
+    traceback="traceback",
+  )
+
+  with pytest.raises(EnqueueError, match="already has an execution-state row"):
+    concurrency_operations.unblock_next_blocked_job(
+      "account:1",
+      limit=1,
+      duration_seconds=60,
+    )
+
+
+@pytest.mark.django_db
 def test_queue_pause_blocks_claiming_not_enqueue():
   Pause.objects.create(backend_alias="default", queue_name="other")
   other_queue.enqueue("paused")
@@ -722,6 +775,49 @@ def test_claim_ready_jobs_bulk_inserts_claimed_rows_for_full_batch():
   ]
   assert ClaimedExecution.objects.count() == 3
   assert ReadyExecution.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_claim_ready_jobs_rejects_job_with_conflicting_execution_state():
+  job = make_job()
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+  FailedExecution.objects.create(
+    job=job,
+    exception_class="builtins.ValueError",
+    message="boom",
+    traceback="traceback",
+  )
+
+  with pytest.raises(EnqueueError, match="already has an execution-state row"):
+    claim_ready_jobs(limit=1)
+
+  assert ClaimedExecution.objects.filter(job=job).exists() is False
+
+
+@pytest.mark.django_db
+def test_promote_scheduled_jobs_rejects_job_with_conflicting_execution_state():
+  job = make_job(scheduled_at=timezone.now() - timedelta(seconds=1))
+  ScheduledExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+    scheduled_at=job.scheduled_at,
+  )
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+
+  with pytest.raises(EnqueueError, match="already has an execution-state row"):
+    promote_scheduled_jobs(batch_size=10)
 
 
 @pytest.mark.django_db

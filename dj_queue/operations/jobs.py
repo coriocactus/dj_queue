@@ -7,6 +7,7 @@ from datetime import timedelta
 from enum import StrEnum
 
 from django.db import connections, transaction
+from django.db.models import Exists, OuterRef, Q
 from django.db.utils import OperationalError
 from django.tasks import TaskContext
 from django.utils import timezone
@@ -27,6 +28,7 @@ from dj_queue.models import (
   ScheduledExecution,
 )
 from dj_queue.operations._helpers import (
+  _ensure_no_other_execution_state,
   _consume_selected_rows,
   _create_blocked_execution,
   _create_ready_execution,
@@ -306,6 +308,18 @@ def _claim_ready_jobs_once(
     queryset = (
       ReadyExecution.objects.using(alias).select_related("job").filter(backend_alias=backend_alias)
     )
+    queryset = queryset.annotate(
+      has_conflicting_state=Exists(
+        Job.objects.using(alias)
+        .filter(pk=OuterRef("job_id"))
+        .filter(
+          Q(scheduled_execution__isnull=False)
+          | Q(claimed_execution__isnull=False)
+          | Q(blocked_execution__isnull=False)
+          | Q(failed_execution__isnull=False)
+        )
+      )
+    )
     queryset = _exclude_active_pauses(queryset, alias, backend_alias)
     ready_rows = _select_ready_rows(
       queryset,
@@ -315,6 +329,9 @@ def _claim_ready_jobs_once(
     )
     if not ready_rows:
       return []
+    for row in ready_rows:
+      if row.has_conflicting_state:
+        raise EnqueueError(f"job {row.job_id} already has an execution-state row")
 
     paused_queue_names = _lock_active_pauses(
       alias,
@@ -385,6 +402,7 @@ def complete_claimed_job(job, return_value, *, backend_alias="default"):
 
   with transaction.atomic(using=alias):
     _delete_claimed_execution(alias, job.id)
+    _ensure_no_other_execution_state(alias, job, ignored_models=(ClaimedExecution,))
     now = timezone.now()
     config = load_backend_config(job.backend_alias)
 
@@ -409,6 +427,7 @@ def fail_claimed_job(job, error, *, traceback_text="", backend_alias="default"):
 
   with transaction.atomic(using=alias):
     _delete_claimed_execution(alias, job.id)
+    _ensure_no_other_execution_state(alias, job, ignored_models=(ClaimedExecution,))
     FailedExecution.objects.using(alias).create(
       job=job,
       exception_class=_exception_path(error),
@@ -471,6 +490,35 @@ def fail_claimed_jobs_for_process(
 def fail_claimed_jobs_for_pid(pid, error, *, traceback_text="", backend_alias="default"):
   alias = get_database_alias(backend_alias)
   process = Process.objects.using(alias).filter(pid=pid, backend_alias=backend_alias).first()
+  return fail_claimed_jobs_for_process(
+    process,
+    error,
+    traceback_text=traceback_text,
+    backend_alias=backend_alias,
+    delete_process=True,
+  )
+
+
+def fail_claimed_jobs_for_child(
+  *,
+  pid,
+  name,
+  supervisor_id,
+  error,
+  traceback_text="",
+  backend_alias="default",
+):
+  alias = get_database_alias(backend_alias)
+  process = (
+    Process.objects.using(alias)
+    .filter(
+      pid=pid,
+      name=name,
+      supervisor_id=supervisor_id,
+      backend_alias=backend_alias,
+    )
+    .first()
+  )
   return fail_claimed_jobs_for_process(
     process,
     error,
@@ -558,20 +606,15 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
     direct_jobs = [job for job in jobs if not job.concurrency_key]
     if direct_jobs:
       _lock_active_pauses(alias, backend_alias, {job.queue_name for job in direct_jobs})
-      _bulk_create(
-        alias,
-        ReadyExecution,
-        [
-          _ready_execution_row(
-            job=job,
-            backend_alias=backend_alias,
-            created_at=now,
-            ready_at=now,
-          )
-          for job in direct_jobs
-        ],
-      )
-      ready_queue_names.extend(job.queue_name for job in direct_jobs)
+      for job in direct_jobs:
+        _create_ready_execution(
+          alias,
+          job=job,
+          backend_alias=backend_alias,
+          ready_at=now,
+          created_at=now,
+        )
+        ready_queue_names.append(job.queue_name)
 
     direct_job_ids = {job.pk for job in direct_jobs}
     for job in jobs:
