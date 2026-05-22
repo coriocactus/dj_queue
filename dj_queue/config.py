@@ -190,7 +190,11 @@ def _load_backend_config_uncached(
     resolved_options["preserve_finished_jobs"], "preserve_finished_jobs"
   )
   on_thread_error = _validated_callback_path(resolved_options.get("on_thread_error"))
-  recurring = _build_recurring_config(resolved_options.get("recurring", {}))
+  recurring = _build_recurring_config(
+    resolved_options.get("recurring", {}),
+    allowed_queues=_as_string_tuple(backend_block.get("QUEUES", [])),
+    backend_alias=backend_alias,
+  )
   scheduler = _build_scheduler_config(resolved_options.get("scheduler", DEFAULT_SCHEDULER))
   workers = _build_worker_configs(resolved_options.get("workers", []), mode)
   dispatchers = _build_dispatcher_configs(resolved_options.get("dispatchers", []))
@@ -516,7 +520,12 @@ def _build_scheduler_config(raw_scheduler: Any) -> SchedulerConfig:
   )
 
 
-def _build_recurring_config(raw_recurring: Any) -> dict[str, RecurringTaskConfig]:
+def _build_recurring_config(
+  raw_recurring: Any,
+  *,
+  allowed_queues: tuple[str, ...],
+  backend_alias: str,
+) -> dict[str, RecurringTaskConfig]:
   if raw_recurring is None:
     return {}
   if not isinstance(raw_recurring, Mapping):
@@ -534,14 +543,29 @@ def _build_recurring_config(raw_recurring: Any) -> dict[str, RecurringTaskConfig
     if not is_valid_cron(str(schedule)):
       raise ImproperlyConfigured(f"recurring task {key!r} has an invalid cron schedule")
 
+    queue_name = str(raw_entry.get("queue_name", "default"))
+    priority = _priority_int(raw_entry.get("priority", 0), f"recurring task {key!r} priority")
+    try:
+      task = import_string(str(task_path))
+    except ImportError as exc:
+      raise ImproperlyConfigured(f"recurring task {key!r} is invalid: {exc}") from exc
+    if not hasattr(task, "using"):
+      raise ImproperlyConfigured(
+        f"recurring task {key!r} is invalid: task_path must reference a Django task"
+      )
+    if allowed_queues and queue_name not in allowed_queues:
+      raise ImproperlyConfigured(
+        f"recurring task {key!r} is invalid: queue {queue_name!r} is not allowed for backend {backend_alias!r}"
+      )
+
     recurring[str(key)] = RecurringTaskConfig(
       key=str(key),
       task_path=str(task_path),
       schedule=str(schedule),
       args=tuple(raw_entry.get("args", [])),
       kwargs=dict(raw_entry.get("kwargs", {})),
-      queue_name=str(raw_entry.get("queue_name", "default")),
-      priority=_priority_int(raw_entry.get("priority", 0), f"recurring task {key!r} priority"),
+      queue_name=queue_name,
+      priority=priority,
       description=str(raw_entry.get("description", "")),
     )
   return recurring

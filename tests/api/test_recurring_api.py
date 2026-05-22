@@ -104,6 +104,26 @@ def test_schedule_recurring_task_resets_persisted_next_run_when_schedule_changes
   assert updated_task.next_run_at is None
 
 
+def test_schedule_recurring_task_rejects_overwriting_static_task():
+  RecurringTask.objects.create(
+    backend_alias="default",
+    key="shared-task",
+    task_path="tests.tasks.echo",
+    payload={"args": [], "kwargs": {}},
+    schedule="* * * * *",
+    queue_name="default",
+    priority=0,
+    static=True,
+  )
+
+  with pytest.raises(EnqueueError, match="already managed statically"):
+    schedule_recurring_task(
+      key="shared-task",
+      task_path="tests.tasks.echo",
+      schedule="*/5 * * * *",
+    )
+
+
 def test_invalid_cron_is_rejected():
   with pytest.raises(ValidationError):
     schedule_recurring_task(

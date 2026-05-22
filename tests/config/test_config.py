@@ -145,6 +145,46 @@ def test_static_recurring_priority_must_be_in_range(settings):
     load_backend_config()
 
 
+def test_static_recurring_task_path_must_reference_a_django_task(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {
+        "recurring": {
+          "not-a-task": {
+            "task_path": "dj_queue.config.load_backend_config",
+            "schedule": "* * * * *",
+          }
+        }
+      },
+    }
+  }
+
+  with pytest.raises(ImproperlyConfigured, match="must reference a Django task"):
+    load_backend_config()
+
+
+def test_static_recurring_queue_must_be_allowed_for_backend(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": ["default"],
+      "OPTIONS": {
+        "recurring": {
+          "other-queue": {
+            "task_path": "tests.tasks.echo",
+            "schedule": "* * * * *",
+            "queue_name": "other",
+          }
+        }
+      },
+    }
+  }
+
+  with pytest.raises(ImproperlyConfigured, match="queue 'other' is not allowed"):
+    load_backend_config()
+
+
 def test_config_precedence_cli_over_env_over_toml_over_settings(settings, tmp_path):
   settings.TASKS = {
     "default": {

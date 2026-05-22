@@ -3,12 +3,28 @@ from django.db.models import Q
 from django.utils.module_loading import import_string
 
 from dj_queue.cron import next_cron_run
+from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import RecurringExecution, RecurringTask
 from dj_queue.operations._helpers import _normalize_payload
 from dj_queue.operations._insert import create_ignore_conflicts
 from dj_queue.operations.jobs import enqueue_job, validate_priority, validate_queue_allowed
+
+
+def validate_recurring_task_definition(
+  *,
+  task_path,
+  queue_name,
+  priority,
+  backend_alias,
+):
+  task = import_string(task_path)
+  if not hasattr(task, "using"):
+    raise EnqueueError("task_path must reference a Django task")
+  validate_queue_allowed(queue_name, backend_alias=backend_alias)
+  validate_priority(priority)
+  return task
 
 
 def upsert_static_recurring_tasks(recurring_configs, *, backend_alias="default"):
@@ -18,13 +34,18 @@ def upsert_static_recurring_tasks(recurring_configs, *, backend_alias="default")
     task.key: task
     for task in RecurringTask.objects.using(alias).filter(
       backend_alias=backend_alias,
-      static=True,
     )
   }
   to_create = []
 
   for recurring_config in recurring_configs.values():
     active_keys.add(recurring_config.key)
+    validate_recurring_task_definition(
+      task_path=recurring_config.task_path,
+      queue_name=recurring_config.queue_name,
+      priority=recurring_config.priority,
+      backend_alias=backend_alias,
+    )
     desired = {
       "task_path": recurring_config.task_path,
       "payload": {
@@ -43,6 +64,11 @@ def upsert_static_recurring_tasks(recurring_configs, *, backend_alias="default")
         RecurringTask(backend_alias=backend_alias, key=recurring_config.key, **desired)
       )
       continue
+
+    if existing_task.static is False:
+      raise EnqueueError(
+        f"recurring task key {recurring_config.key!r} is already scheduled dynamically"
+      )
 
     changed_fields = []
     for field, value in desired.items():
@@ -82,37 +108,59 @@ def schedule_recurring_task(
   if kwargs is None:
     kwargs = {}
 
-  task = import_string(task_path)
-  if not hasattr(task, "using"):
-    raise EnqueueError("task_path must reference a Django task")
-  validate_queue_allowed(queue_name, backend_alias=backend_alias)
-  validate_priority(priority)
-  payload = _normalize_payload(args, kwargs)
-
-  previous_schedule = (
-    RecurringTask.objects.using(alias)
-    .filter(backend_alias=backend_alias, key=key)
-    .values_list("schedule", flat=True)
-    .first()
-  )
-  defaults = {
-    "task_path": task_path,
-    "payload": payload,
-    "schedule": schedule,
-    "queue_name": queue_name,
-    "priority": priority,
-    "description": description,
-    "static": False,
-  }
-  if previous_schedule != schedule:
-    defaults["next_run_at"] = None
-
-  recurring_task, _ = RecurringTask.objects.using(alias).update_or_create(
+  validate_recurring_task_definition(
+    task_path=task_path,
+    queue_name=queue_name,
+    priority=priority,
     backend_alias=backend_alias,
-    key=key,
-    defaults=defaults,
   )
-  return recurring_task
+  payload = _normalize_payload(args, kwargs)
+  if key in load_backend_config(backend_alias).recurring:
+    raise EnqueueError(f"recurring task key {key!r} is already managed statically")
+
+  with transaction.atomic(using=alias):
+    recurring_task, created = RecurringTask.objects.using(alias).select_for_update().get_or_create(
+      backend_alias=backend_alias,
+      key=key,
+      defaults={
+        "task_path": task_path,
+        "payload": payload,
+        "schedule": schedule,
+        "queue_name": queue_name,
+        "priority": priority,
+        "description": description,
+        "static": False,
+      },
+    )
+    if created:
+      return recurring_task
+    if recurring_task.static:
+      raise EnqueueError(f"recurring task key {key!r} is already managed statically")
+
+    previous_schedule = recurring_task.schedule
+    changed_fields = []
+    desired = {
+      "task_path": task_path,
+      "payload": payload,
+      "schedule": schedule,
+      "queue_name": queue_name,
+      "priority": priority,
+      "description": description,
+      "static": False,
+    }
+    for field, value in desired.items():
+      if getattr(recurring_task, field) == value:
+        continue
+      setattr(recurring_task, field, value)
+      changed_fields.append(field)
+
+    if previous_schedule != schedule:
+      recurring_task.next_run_at = None
+      changed_fields.append("next_run_at")
+
+    if changed_fields:
+      recurring_task.save(using=alias, update_fields=[*changed_fields, "updated_at"])
+    return recurring_task
 
 
 def unschedule_recurring_task(key, *, backend_alias="default"):

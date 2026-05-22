@@ -7,6 +7,7 @@ import pytest
 from django.utils import timezone
 
 from dj_queue.api import schedule_recurring_task, unschedule_recurring_task
+from dj_queue.exceptions import EnqueueError
 from dj_queue.models import FailedExecution, Job, Process, RecurringExecution, RecurringTask
 from dj_queue.runtime.scheduler import Scheduler
 from tests.tasks import echo
@@ -193,6 +194,27 @@ def test_scheduler_static_sync_is_idempotent_when_unchanged():
     RecurringTask.objects.get(backend_alias="default", key="static-task").updated_at
     == first_updated_at
   )
+
+
+def test_scheduler_static_sync_rejects_taking_over_dynamic_task_key():
+  schedule_recurring_task(
+    key="shared-task",
+    task_path="tests.tasks.echo",
+    schedule="* * * * *",
+  )
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      recurring={
+        "shared-task": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "*/5 * * * *",
+        }
+      }
+    )
+  )
+
+  with pytest.raises(EnqueueError, match="already scheduled dynamically"):
+    scheduler.sync_static_tasks()
 
 
 def test_scheduler_fires_static_task():
