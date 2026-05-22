@@ -93,3 +93,11 @@ def test_process_identity_unique_by_name_and_supervisor():
 
   with pytest.raises(IntegrityError), transaction.atomic():
     make_process(name="worker-1", pid=999, supervisor=supervisor)
+
+
+@pytest.mark.django_db
+def test_root_process_identity_unique_by_name():
+  make_process(kind="Supervisor", name="supervisor-1", pid=100)
+
+  with pytest.raises(IntegrityError), transaction.atomic():
+    make_process(kind="Supervisor", name="supervisor-1", pid=999)

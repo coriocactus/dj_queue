@@ -1,4 +1,5 @@
 from django.db import models
+from django.db.models.functions import Coalesce
 
 
 class Semaphore(models.Model):
@@ -31,6 +32,16 @@ class Process(models.Model):
     on_delete=models.SET_NULL,
     related_name="children",
   )
+  supervisor_identity = models.GeneratedField(
+    expression=Coalesce(
+      "supervisor_id",
+      models.Value(0, output_field=models.BigIntegerField()),
+      output_field=models.BigIntegerField(),
+    ),
+    output_field=models.BigIntegerField(),
+    db_persist=True,
+    editable=False,
+  )
   last_heartbeat_at = models.DateTimeField()
   created_at = models.DateTimeField(auto_now_add=True)
 
@@ -38,8 +49,8 @@ class Process(models.Model):
     db_table = "dj_queue_processes"
     constraints = [
       models.UniqueConstraint(
-        fields=["name", "supervisor"],
-        name="dj_queue_processes_name_supervisor_unique",
+        fields=["name", "supervisor_identity"],
+        name="djq_pr_name_parent_uniq",
       )
     ]
     indexes = [
