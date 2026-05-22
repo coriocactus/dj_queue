@@ -12,6 +12,7 @@ from dj_queue.config import load_backend_config
 from dj_queue.exceptions import ProcessExitError, ProcessMissingError, ProcessPrunedError
 from dj_queue.log import log_event
 from dj_queue.operations.jobs import (
+  fail_claimed_jobs_for_child,
   fail_claimed_jobs_for_pid,
   fail_claimed_jobs_for_process,
   fail_orphaned_claimed_jobs,
@@ -392,11 +393,12 @@ class ForkSupervisor(Supervisor):
 
     self._wait_for_children(timeout)
     for pid in tuple(self.children):
+      spec = self.children.get(pid)
       try:
         self._killer(pid, signal.SIGKILL)
       except ProcessLookupError:
         pass
-      self._fail_claimed_jobs_for_pid(pid)
+      self._fail_claimed_jobs_for_child(pid, spec)
       self.children.pop(pid, None)
     return super().stop()
 
@@ -437,7 +439,7 @@ class ForkSupervisor(Supervisor):
     spec = self.children.pop(pid, None)
     if spec is None:
       return None
-    self._fail_claimed_jobs_for_pid(pid)
+    self._fail_claimed_jobs_for_child(pid, spec)
     replacement_pid = self._launcher(spec)
     self.children[replacement_pid] = spec
     log_event(
@@ -464,12 +466,25 @@ class ForkSupervisor(Supervisor):
 
       spec = self.children.pop(pid, None)
       if spec is not None:
-        self._fail_claimed_jobs_for_pid(pid)
+        self._fail_claimed_jobs_for_child(pid, spec)
     return None
 
   def poll_once(self):
     super().poll_once()
     return self.check_children()
+
+  def _fail_claimed_jobs_for_child(self, pid, spec):
+    if spec is None:
+      return self._fail_claimed_jobs_for_pid(pid)
+    with app_executor():
+      return fail_claimed_jobs_for_child(
+        pid=pid,
+        name=spec["kwargs"]["name"],
+        supervisor_id=self.process.pk if self.process is not None else None,
+        error=ProcessExitError("child process exited"),
+        traceback_text="child process exited",
+        backend_alias=self.backend_alias,
+      )
 
   def _fail_claimed_jobs_for_pid(self, pid):
     with app_executor():

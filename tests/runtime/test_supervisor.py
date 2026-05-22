@@ -733,8 +733,8 @@ def test_fork_supervisor_stop_waits_for_child_exit_before_hard_kill():
     waitpid=waitpid,
     killer=lambda pid, sig: killed.append((pid, sig)),
   )
-  supervisor.start()
-  child_process = make_process(pid=80001, name="worker-1")
+  supervisor_process = supervisor.start()
+  child_process = make_process(pid=80001, name="worker-1", supervisor=supervisor_process)
   job = make_job(task_path="tests.tasks.echo")
   make_claimed_execution(job=job, process=child_process)
 
@@ -758,8 +758,8 @@ def test_fork_supervisor_stop_kills_unreaped_child_and_fails_claimed_jobs():
     waitpid=lambda _pid, _flags: (0, 0),
     killer=lambda pid, sig: killed.append((pid, sig)),
   )
-  supervisor.start()
-  child_process = make_process(pid=80001, name="worker-1")
+  supervisor_process = supervisor.start()
+  child_process = make_process(pid=80001, name="worker-1", supervisor=supervisor_process)
   job = make_job(task_path="tests.tasks.echo")
   make_claimed_execution(job=job, process=child_process)
 
@@ -826,8 +826,8 @@ def test_dead_child_fails_claimed_jobs_and_replaces_runner():
     launcher=launcher,
     waitpid=waitpid,
   )
-  supervisor.start()
-  child_process = make_process(pid=90001, name="worker-1")
+  supervisor_process = supervisor.start()
+  child_process = make_process(pid=90001, name="worker-1", supervisor=supervisor_process)
   job = make_job(task_path="tests.tasks.echo")
   make_claimed_execution(job=job, process=child_process)
 
@@ -861,6 +861,42 @@ def test_fork_supervisor_ignores_unknown_reaped_child_pid():
 
   assert replaced is None
   assert tuple(supervisor.children) == (90001,)
+  supervisor.stop()
+
+
+def test_dead_child_cleanup_uses_supervisor_scoped_process_identity():
+  launched = []
+  waitpid_results = [(90001, 0)]
+
+  def launcher(spec):
+    launched.append(spec)
+    return 90000 + len(launched)
+
+  def waitpid(_pid, _flags):
+    if waitpid_results:
+      return waitpid_results.pop(0)
+    raise ChildProcessError
+
+  supervisor = build_fork_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[], recurring={}),
+    launcher=launcher,
+    waitpid=waitpid,
+  )
+  supervisor_process = supervisor.start()
+  dead_child_process = make_process(pid=90001, name="worker-1", supervisor=supervisor_process)
+  reused_pid_process = make_process(pid=90001, name="worker-99")
+  dead_child_job = make_job(task_path="tests.tasks.echo")
+  reused_pid_job = make_job(task_path="tests.tasks.echo")
+  make_claimed_execution(job=dead_child_job, process=dead_child_process)
+  make_claimed_execution(job=reused_pid_job, process=reused_pid_process)
+
+  supervisor.check_children()
+
+  assert FailedExecution.objects.filter(job=dead_child_job).exists() is True
+  assert FailedExecution.objects.filter(job=reused_pid_job).exists() is False
+  assert ClaimedExecution.objects.filter(job=reused_pid_job, process=reused_pid_process).exists() is True
+  assert Process.objects.filter(pk=dead_child_process.pk).exists() is False
+  assert Process.objects.filter(pk=reused_pid_process.pk).exists() is True
   supervisor.stop()
 
 
@@ -940,3 +976,18 @@ def test_stale_pidfile_is_overwritten(tmp_path):
 
   assert pidfile.read_text() == str(supervisor.pid)
   supervisor.stop()
+
+
+def test_supervisor_stop_does_not_delete_replaced_pidfile(tmp_path):
+  pidfile = tmp_path / "run" / "dj_queue.pid"
+  tasks_settings = async_tasks_settings(recurring={})
+  tasks_settings["default"]["OPTIONS"]["supervisor_pidfile"] = str(pidfile)
+  supervisor = build_fork_supervisor(tasks_settings=tasks_settings, launcher=lambda spec: 94000)
+
+  supervisor.start()
+  pidfile.write_text("999999")
+
+  supervisor.stop()
+
+  assert pidfile.exists() is True
+  assert pidfile.read_text() == "999999"

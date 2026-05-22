@@ -201,8 +201,8 @@ def test_unexpected_child_exit_records_process_exit_error():
     raise ChildProcessError
 
   supervisor = build_fork_supervisor(launcher=launcher, waitpid=waitpid)
-  supervisor.start()
-  child_process = make_process(pid=90001, name="worker-1")
+  supervisor_process = supervisor.start()
+  child_process = make_process(pid=90001, name="worker-1", supervisor=supervisor_process)
   job = make_job(task_path="tests.tasks.echo")
   ClaimedExecution.objects.create(job=job, process=child_process)
 
