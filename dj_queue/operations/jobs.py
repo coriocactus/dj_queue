@@ -559,13 +559,19 @@ def prune_stale_processes(
 
     for process in stale_processes:
       job_ids = list(
-        ClaimedExecution.objects.using(alias).filter(process=process).values_list("job_id", flat=True)
+        ClaimedExecution.objects.using(alias)
+        .filter(process=process)
+        .values_list("job_id", flat=True)
       )
-      deleted, _ = Process.objects.using(alias).filter(
-        pk=process.pk,
-        backend_alias=backend_alias,
-        last_heartbeat_at__lt=cutoff,
-      ).delete()
+      deleted, _ = (
+        Process.objects.using(alias)
+        .filter(
+          pk=process.pk,
+          backend_alias=backend_alias,
+          last_heartbeat_at__lt=cutoff,
+        )
+        .delete()
+      )
       if not deleted:
         continue
 

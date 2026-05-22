@@ -894,7 +894,10 @@ def test_dead_child_cleanup_uses_supervisor_scoped_process_identity():
 
   assert FailedExecution.objects.filter(job=dead_child_job).exists() is True
   assert FailedExecution.objects.filter(job=reused_pid_job).exists() is False
-  assert ClaimedExecution.objects.filter(job=reused_pid_job, process=reused_pid_process).exists() is True
+  assert (
+    ClaimedExecution.objects.filter(job=reused_pid_job, process=reused_pid_process).exists()
+    is True
+  )
   assert Process.objects.filter(pk=dead_child_process.pk).exists() is False
   assert Process.objects.filter(pk=reused_pid_process.pk).exists() is True
   supervisor.stop()

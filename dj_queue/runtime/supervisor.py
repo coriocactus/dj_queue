@@ -505,15 +505,15 @@ class ForkSupervisor(Supervisor):
           "kind": definition.kind,
           "runner_class": definition.runner_class,
           "kwargs": {
-                "config": definition.config,
-                "backend_alias": self.backend_alias,
-                "name": definition.name,
-                "hostname": self.hostname,
-                "heartbeat_interval": self.config.process_heartbeat_interval,
-                "process_alive_threshold": self.config.process_alive_threshold,
-                "supervisor": supervisor_id,
-              },
-            }
+            "config": definition.config,
+            "backend_alias": self.backend_alias,
+            "name": definition.name,
+            "hostname": self.hostname,
+            "heartbeat_interval": self.config.process_heartbeat_interval,
+            "process_alive_threshold": self.config.process_alive_threshold,
+            "supervisor": supervisor_id,
+          },
+        }
       )
 
     return specs

@@ -119,18 +119,22 @@ def schedule_recurring_task(
     raise EnqueueError(f"recurring task key {key!r} is already managed statically")
 
   with transaction.atomic(using=alias):
-    recurring_task, created = RecurringTask.objects.using(alias).select_for_update().get_or_create(
-      backend_alias=backend_alias,
-      key=key,
-      defaults={
-        "task_path": task_path,
-        "payload": payload,
-        "schedule": schedule,
-        "queue_name": queue_name,
-        "priority": priority,
-        "description": description,
-        "static": False,
-      },
+    recurring_task, created = (
+      RecurringTask.objects.using(alias)
+      .select_for_update()
+      .get_or_create(
+        backend_alias=backend_alias,
+        key=key,
+        defaults={
+          "task_path": task_path,
+          "payload": payload,
+          "schedule": schedule,
+          "queue_name": queue_name,
+          "priority": priority,
+          "description": description,
+          "static": False,
+        },
+      )
     )
     if created:
       return recurring_task

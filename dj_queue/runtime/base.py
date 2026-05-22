@@ -281,7 +281,9 @@ class BaseRunner:
       with _process_write_context(alias):
         return sqlite_retry(
           lambda: (
-            Process.objects.using(alias).filter(pk=self.process.pk).update(last_heartbeat_at=timezone.now())
+            Process.objects.using(alias)
+            .filter(pk=self.process.pk)
+            .update(last_heartbeat_at=timezone.now())
           ),
           alias=alias,
         )

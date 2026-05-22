@@ -1,7 +1,6 @@
 import fcntl
 import tempfile
 import threading
-import time
 from pathlib import Path
 
 from dj_queue.runtime.errors import handle_thread_error
@@ -76,7 +75,9 @@ def _start_lock_retry_loop(worker, *, backend_alias="default"):
         return
 
   retry_thread = threading.Thread(target=retry, daemon=True)
-  _set_supervisor_state(worker, supervisor_retry_stop=retry_stop, supervisor_retry_thread=retry_thread)
+  _set_supervisor_state(
+    worker, supervisor_retry_stop=retry_stop, supervisor_retry_thread=retry_thread
+  )
   retry_thread.start()
 
 

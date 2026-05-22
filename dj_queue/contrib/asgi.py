@@ -19,7 +19,9 @@ class DjQueueLifespan:
     self._poll_stop = None
 
   async def _poll_supervisor(self):
-    while self.supervisor is not None and self._poll_stop is not None and not self._poll_stop.is_set():
+    while (
+      self.supervisor is not None and self._poll_stop is not None and not self._poll_stop.is_set()
+    ):
       try:
         await asyncio.to_thread(self.supervisor.poll_once)
       except Exception as error:
@@ -100,7 +102,9 @@ class DjQueueLifespan:
       while True:
         message = await receive()
         if message["type"] == "lifespan.startup":
-          response = await self._forward_lifespan_message(app_task, receive_queue, send_queue, message)
+          response = await self._forward_lifespan_message(
+            app_task, receive_queue, send_queue, message
+          )
           if response is not None and response["type"] != "lifespan.startup.complete":
             await send(response)
             return
@@ -109,7 +113,9 @@ class DjQueueLifespan:
           await send({"type": "lifespan.startup.complete"})
         elif message["type"] == "lifespan.shutdown":
           await self._stop_supervisor()
-          response = await self._forward_lifespan_message(app_task, receive_queue, send_queue, message)
+          response = await self._forward_lifespan_message(
+            app_task, receive_queue, send_queue, message
+          )
           if response is None:
             response = {"type": "lifespan.shutdown.complete"}
           await send(response)
