@@ -1,9 +1,12 @@
+from datetime import timedelta
 from functools import partial
 
 from django.db.models.functions import Coalesce
 from django.db import transaction
 from django.utils import timezone
 
+from dj_queue import observability
+from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias
 from dj_queue.models import Pause, ReadyExecution
 from dj_queue.operations.jobs import (
@@ -59,7 +62,7 @@ class QueueInfo:
     )
     if oldest is None:
       return 0.0
-    return (timezone.now() - oldest).total_seconds()
+    return max((timezone.now() - oldest).total_seconds(), 0.0)
 
   @property
   def paused(self):
@@ -93,18 +96,15 @@ class QueueInfo:
 
   @classmethod
   def all(cls, *, backend_alias="default"):
-    alias = get_database_alias(backend_alias)
-    queue_names = (
-      ReadyExecution.objects.using(alias)
-      .filter(backend_alias=backend_alias)
-      .order_by("queue_name")
-      .values_list(
-        "queue_name",
-        flat=True,
-      )
-      .distinct()
+    now = timezone.now()
+    config = load_backend_config(backend_alias)
+    process_cutoff = now - timedelta(seconds=config.process_alive_threshold)
+    queue_rows = observability.queue_rows(
+      backend_alias=backend_alias,
+      now=now,
+      process_cutoff=process_cutoff,
     )
-    return [cls(queue_name, backend_alias=backend_alias) for queue_name in queue_names]
+    return [cls(row["name"], backend_alias=backend_alias) for row in queue_rows]
 
   def _ready_queryset(self):
     alias = get_database_alias(self.backend_alias)

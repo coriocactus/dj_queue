@@ -9,11 +9,14 @@ from dj_queue.api import (
   retry_failed_jobs,
 )
 from dj_queue.models import (
+  BlockedExecution,
   FailedExecution,
   Job,
   Pause,
   Process,
   ReadyExecution,
+  RecurringTask,
+  ScheduledExecution,
 )
 
 
@@ -111,6 +114,54 @@ def test_queue_info_latency():
   )
 
   assert QueueInfo("emails").latency >= 5.0
+
+
+def test_queue_info_latency_is_never_negative():
+  job = make_ready_job(queue_name="emails")
+  ReadyExecution.objects.filter(job=job).update(
+    latency_started_at=timezone.now() + timedelta(seconds=5)
+  )
+
+  assert QueueInfo("emails").latency == 0.0
+
+
+def test_queue_info_all_uses_shared_queue_discovery():
+  future = timezone.now() + timedelta(minutes=5)
+  scheduled = make_job(queue_name="scheduled", scheduled_at=future)
+  ScheduledExecution.objects.create(
+    job=scheduled,
+    backend_alias=scheduled.backend_alias,
+    queue_name=scheduled.queue_name,
+    priority=scheduled.priority,
+    scheduled_at=future,
+  )
+  blocked = make_job(queue_name="blocked", concurrency_key="account:1")
+  BlockedExecution.objects.create(
+    job=blocked,
+    backend_alias=blocked.backend_alias,
+    queue_name=blocked.queue_name,
+    priority=blocked.priority,
+    concurrency_key=blocked.concurrency_key,
+    expires_at=timezone.now() + timedelta(minutes=1),
+  )
+  make_failed_job(queue_name="failed")
+  Pause.objects.create(backend_alias="default", queue_name="paused")
+  RecurringTask.objects.create(
+    backend_alias="default",
+    key="hourly",
+    task_path="tests.tasks.echo",
+    payload={"args": [], "kwargs": {}},
+    schedule="* * * * *",
+    queue_name="recurring",
+  )
+
+  assert [queue.queue_name for queue in QueueInfo.all()] == [
+    "blocked",
+    "failed",
+    "paused",
+    "recurring",
+    "scheduled",
+  ]
 
 
 def test_queue_info_pause_and_resume():
