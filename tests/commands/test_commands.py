@@ -1,5 +1,6 @@
 from datetime import timedelta
 from io import StringIO
+from types import SimpleNamespace
 
 import pytest
 from django.core.management import call_command
@@ -101,6 +102,80 @@ def test_dj_queue_command_mode_async(monkeypatch):
     ),
     "run",
   ]
+
+
+def test_dj_queue_command_waits_for_migrations_before_runtime(monkeypatch):
+  events = []
+
+  class StubSupervisor:
+    def run(self):
+      events.append("run")
+
+  def wait_for_migrations(database_alias, *, timeout, stdout):
+    events.append(("wait", database_alias, timeout))
+
+  def build_supervisor(*, backend_alias, cli_overrides):
+    events.append(("build", backend_alias, cli_overrides))
+    return StubSupervisor()
+
+  monkeypatch.setattr(
+    "dj_queue.management.commands.dj_queue.wait_for_dj_queue_migrations",
+    wait_for_migrations,
+  )
+  monkeypatch.setattr("dj_queue.management.commands.dj_queue.build_supervisor", build_supervisor)
+
+  call_command("dj_queue", "--migration-wait-timeout", "2.5")
+
+  assert events == [
+    ("wait", "default", 2.5),
+    (
+      "build",
+      "default",
+      {
+        "config": None,
+        "mode": None,
+        "only_work": False,
+        "only_dispatch": False,
+        "skip_recurring": False,
+      },
+    ),
+    "run",
+  ]
+
+
+def test_wait_for_dj_queue_migrations_rechecks_until_applied(monkeypatch):
+  from dj_queue.management.commands import dj_queue as command
+
+  pending_migration = SimpleNamespace(app_label="dj_queue", name="0010_pending")
+  plans = [[(pending_migration, False)], []]
+  sleeps = []
+  output = StringIO()
+
+  def pending_migrations(database_alias):
+    assert database_alias == "default"
+    return plans.pop(0)
+
+  monkeypatch.setattr(command, "pending_dj_queue_migrations", pending_migrations)
+  monkeypatch.setattr(command.time, "sleep", sleeps.append)
+
+  command.wait_for_dj_queue_migrations("default", timeout=5, interval=0.25, stdout=output)
+
+  assert sleeps == [0.25]
+  assert "waiting for dj_queue migrations" in output.getvalue()
+
+
+def test_wait_for_dj_queue_migrations_times_out(monkeypatch):
+  from dj_queue.management.commands import dj_queue as command
+
+  pending_migration = SimpleNamespace(app_label="dj_queue", name="0010_pending")
+  monkeypatch.setattr(
+    command,
+    "pending_dj_queue_migrations",
+    lambda _database_alias: [(pending_migration, False)],
+  )
+
+  with pytest.raises(CommandError, match="dj_queue migrations are pending"):
+    command.wait_for_dj_queue_migrations("default", timeout=0, interval=0)
 
 
 def test_only_work_mode_starts_no_dispatcher_or_scheduler(monkeypatch):
@@ -221,6 +296,10 @@ def test_dj_queue_command_uses_selected_backend_toml_overlay(monkeypatch, settin
     captured.append(load_backend_config(backend_alias, cli_overrides=cli_overrides))
     return StubSupervisor()
 
+  monkeypatch.setattr(
+    "dj_queue.management.commands.dj_queue.wait_for_dj_queue_migrations",
+    lambda _database_alias, *, timeout, stdout: None,
+  )
   monkeypatch.setattr("dj_queue.management.commands.dj_queue.build_supervisor", build_supervisor)
 
   call_command("dj_queue", "--backend", "secondary", "--config", str(config_path))

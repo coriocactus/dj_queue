@@ -89,6 +89,11 @@ Run migrations:
 python manage.py migrate
 ```
 
+`python manage.py dj_queue` checks for pending `dj_queue` migrations before it
+starts workers. If another process is applying migrations during startup, the
+runtime waits up to 60 seconds by default instead of starting against a stale
+queue schema.
+
 ## Quick Start
 
 Define a task with Django's `@task` decorator:
@@ -248,11 +253,14 @@ python manage.py dj_queue --backend <alias>
 python manage.py dj_queue --only-work
 python manage.py dj_queue --only-dispatch
 python manage.py dj_queue --skip-recurring
+python manage.py dj_queue --migration-wait-timeout 120
 ```
 
 Notes:
 
 - `fork` is the default standalone mode
+- startup waits up to 60 seconds for pending `dj_queue` migrations to finish;
+  use `--migration-wait-timeout 0` to fail fast instead
 - `async` is also supported as a standalone mode and runs supervised actors in threads inside one process
 - `--backend` targets a non-default backend alias
 - `--only-work` starts workers without dispatchers or scheduler
