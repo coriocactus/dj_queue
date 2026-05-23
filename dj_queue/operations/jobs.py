@@ -1092,7 +1092,9 @@ def _ordered_selector_rows_queryset(queryset, selectors):
     default=Value(len(selectors)),
     output_field=IntegerField(),
   )
-  return filtered.annotate(selector_rank=selector_rank).order_by("selector_rank", "-priority", "id")
+  return filtered.annotate(selector_rank=selector_rank).order_by(
+    "selector_rank", "-priority", "id"
+  )
 
 
 def _is_transient_claim_error(error):

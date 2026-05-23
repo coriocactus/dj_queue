@@ -1,5 +1,9 @@
 from benchmarks.scenarios.enqueue import bulk_enqueue, single_enqueue
-from benchmarks.scenarios.runtime import concurrency_contention, ordered_selector_claim, worker_drain
+from benchmarks.scenarios.runtime import (
+  concurrency_contention,
+  ordered_selector_claim,
+  worker_drain,
+)
 from benchmarks.scenarios.scheduling import recurring_scale, scheduled_promotion
 
 SCENARIOS = {

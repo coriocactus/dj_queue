@@ -247,7 +247,10 @@ def test_scheduler_static_sync_ignores_unrelated_dynamic_tasks(monkeypatch):
   scheduler.sync_static_tasks()
 
   assert {kwargs.get("static") for kwargs in seen_filters if "static" in kwargs} >= {True, False}
-  assert RecurringTask.objects.filter(backend_alias="default", key="static-task", static=True).exists() is True
+  assert (
+    RecurringTask.objects.filter(backend_alias="default", key="static-task", static=True).exists()
+    is True
+  )
 
 
 def test_scheduler_fires_static_task():

@@ -322,7 +322,7 @@ def test_successful_completion_unblocks_next_waiter():
 @pytest.mark.django_db
 def test_execute_claimed_job_reuses_loaded_task_for_concurrency_release(monkeypatch):
   limited.func.concurrency_limit = 1
-  first = limited.enqueue(1, value="first")
+  limited.enqueue(1, value="first")
   second = limited.enqueue(1, value="second")
   claimed_job = claim_ready_jobs(limit=1)[0]
   seen = []

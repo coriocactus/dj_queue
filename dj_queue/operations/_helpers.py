@@ -46,7 +46,12 @@ def _job_ids_with_other_execution_state(alias, job_ids, *, ignored_models=()):
   conflict_query = Q(**{f"{relation_names[0]}__isnull": False})
   for relation_name in relation_names[1:]:
     conflict_query |= Q(**{f"{relation_name}__isnull": False})
-  return set(Job.objects.using(alias).filter(pk__in=job_ids).filter(conflict_query).values_list("pk", flat=True))
+  return set(
+    Job.objects.using(alias)
+    .filter(pk__in=job_ids)
+    .filter(conflict_query)
+    .values_list("pk", flat=True)
+  )
 
 
 def _task_option(task, name, default=None):
