@@ -983,6 +983,19 @@ def _release_concurrency_slot(job, *, task=None):
     limit = _semaphore_limit(job) or 1
     duration_seconds = config.default_concurrency_duration
 
+  if (
+    unblock_next_blocked_job(
+      job.concurrency_key,
+      limit=limit,
+      duration_seconds=duration_seconds,
+      backend_alias=job.backend_alias,
+      use_skip_locked=config.use_skip_locked,
+      release_slot=True,
+    )
+    is not None
+  ):
+    return
+
   semaphore_release(
     job.concurrency_key,
     limit=limit,

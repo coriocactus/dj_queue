@@ -177,6 +177,29 @@ def _consume_released_semaphore_slot(alias, key, *, limit, duration_seconds, now
   return updated > 0
 
 
+def _handoff_released_claimed_slot(alias, key, *, limit, duration_seconds, now):
+  expires_at = now + timedelta(seconds=duration_seconds)
+  released_available = _released_available_expression(limit)
+  updated = (
+    Semaphore.objects.using(alias)
+    .filter(key=key, value__gt=F("limit") - Value(limit) - Value(1))
+    .update(
+      value=released_available - Value(1),
+      limit=limit,
+      expires_at=expires_at,
+      updated_at=now,
+    )
+  )
+  return updated > 0
+
+
+def _released_available_expression(limit):
+  return Least(
+    Value(limit),
+    Greatest(Value(0), F("value") + Value(limit) - F("limit") + Value(1)),
+  )
+
+
 def _reconciled_available_expression(limit):
   return Least(Value(limit), Greatest(Value(0), F("value") + Value(limit) - F("limit")))
 
@@ -209,6 +232,7 @@ def unblock_next_blocked_job(
   backend_alias="default",
   use_skip_locked=True,
   handoff_released_slot=False,
+  release_slot=False,
 ):
   alias = get_database_alias(backend_alias)
   now = timezone.now()
@@ -229,7 +253,15 @@ def unblock_next_blocked_job(
       return None
 
     slot_acquired = False
-    if handoff_released_slot:
+    if release_slot:
+      slot_acquired = _handoff_released_claimed_slot(
+        alias,
+        key,
+        limit=limit,
+        duration_seconds=duration_seconds,
+        now=now,
+      )
+    elif handoff_released_slot:
       slot_acquired = _consume_released_semaphore_slot(
         alias,
         key,
@@ -238,7 +270,7 @@ def unblock_next_blocked_job(
         now=now,
       )
 
-    if not slot_acquired:
+    if not slot_acquired and not release_slot:
       slot_acquired = semaphore_acquire(
         key,
         limit=limit,

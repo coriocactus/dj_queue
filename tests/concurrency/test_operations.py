@@ -181,7 +181,7 @@ def test_execute_claimed_job_uses_terminal_update_query_budget():
 
 
 @pytest.mark.django_db
-def test_complete_claimed_job_with_waiter_uses_two_semaphore_queries():
+def test_complete_claimed_job_with_waiter_uses_one_semaphore_query():
   first = limited.enqueue(1, value="first")
   limited.enqueue(1, value="second")
   claim_ready_jobs(limit=1)
@@ -189,7 +189,7 @@ def test_complete_claimed_job_with_waiter_uses_two_semaphore_queries():
   with CaptureQueriesContext(connection) as ctx:
     complete_claimed_job(first.id, "done")
 
-  assert len(queries_touching(ctx, "dj_queue_semaphores")) == 2
+  assert len(queries_touching(ctx, "dj_queue_semaphores")) == 1
 
 
 @pytest.mark.django_db
@@ -201,7 +201,7 @@ def test_execute_claimed_job_with_waiter_avoids_nested_unblock_savepoint():
   with CaptureQueriesContext(connection) as ctx:
     execute_claimed_job(claimed_job)
 
-  assert len(ctx.captured_queries) == 11
+  assert len(ctx.captured_queries) == 10
 
 
 @pytest.mark.django_db
