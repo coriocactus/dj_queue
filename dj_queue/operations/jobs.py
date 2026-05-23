@@ -434,7 +434,6 @@ def _complete_claimed_job(job, return_value, *, backend_alias="default", task=No
 
   with transaction.atomic(using=alias):
     _delete_claimed_execution(alias, job.id)
-    _ensure_no_other_execution_state(alias, job, ignored_models=(ClaimedExecution,))
     now = timezone.now()
     config = load_backend_config(job.backend_alias)
 
@@ -1148,28 +1147,67 @@ def _delete_claimed_execution(alias, job_id):
 
 
 def _finish_job_if_no_execution_state(alias, job, return_value, *, finished_at):
-  updated = (
-    Job.objects.using(alias)
-    .filter(
-      pk=job.pk,
-      backend_alias=job.backend_alias,
-      ready_execution__isnull=True,
-      scheduled_execution__isnull=True,
-      claimed_execution__isnull=True,
-      blocked_execution__isnull=True,
-      failed_execution__isnull=True,
-    )
-    .update(
-      finished_at=finished_at,
-      return_value=return_value,
-      updated_at=finished_at,
+  connection = connections[alias]
+  quote = connection.ops.quote_name
+  jobs_table = quote(Job._meta.db_table)
+  job_id_column = quote(Job._meta.get_field("id").column)
+  backend_alias_column = quote(Job._meta.get_field("backend_alias").column)
+  finished_at_column = quote(Job._meta.get_field("finished_at").column)
+  return_value_column = quote(Job._meta.get_field("return_value").column)
+  updated_at_column = quote(Job._meta.get_field("updated_at").column)
+  state_checks = " AND ".join(
+    _state_absence_sql(model, jobs_table=jobs_table, job_id_column=job_id_column, quote=quote)
+    for model in (
+      ReadyExecution,
+      ScheduledExecution,
+      ClaimedExecution,
+      BlockedExecution,
+      FailedExecution,
     )
   )
-  if not updated:
+  job_id = Job._meta.get_field("id").get_db_prep_value(
+    job.pk,
+    connection=connection,
+    prepared=False,
+  )
+  prepared_return_value = Job._meta.get_field("return_value").get_db_prep_save(
+    return_value,
+    connection=connection,
+  )
+
+  with connection.cursor() as cursor:
+    cursor.execute(
+      f"""
+      UPDATE {jobs_table}
+      SET
+        {finished_at_column} = %s,
+        {return_value_column} = %s,
+        {updated_at_column} = %s
+      WHERE
+        {jobs_table}.{job_id_column} = %s
+        AND {jobs_table}.{backend_alias_column} = %s
+        AND {state_checks}
+      """,
+      [finished_at, prepared_return_value, finished_at, job_id, job.backend_alias],
+    )
+    updated = cursor.rowcount
+
+  if updated != 1:
     raise EnqueueError(f"job {job.id} already has an execution-state row")
   job.finished_at = finished_at
   job.return_value = return_value
   job.updated_at = finished_at
+
+
+def _state_absence_sql(model, *, jobs_table, job_id_column, quote):
+  state_table = quote(model._meta.db_table)
+  state_job_id_column = quote(model._meta.get_field("job").column)
+  return (
+    f"NOT EXISTS ("
+    f"SELECT 1 FROM {state_table} "
+    f"WHERE {state_table}.{state_job_id_column} = {jobs_table}.{job_id_column}"
+    f")"
+  )
 
 
 def _bulk_create(alias, model, objects):

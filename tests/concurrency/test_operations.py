@@ -177,7 +177,7 @@ def test_execute_claimed_job_uses_terminal_update_query_budget():
   with CaptureQueriesContext(connection) as ctx:
     execute_claimed_job(claimed_job)
 
-  assert len(ctx.captured_queries) == 5
+  assert len(ctx.captured_queries) == 4
 
 
 @pytest.mark.django_db
