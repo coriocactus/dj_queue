@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from django.db.models.query import QuerySet
 from django.utils import timezone
 
 from dj_queue.api import schedule_recurring_task, unschedule_recurring_task
@@ -215,6 +216,38 @@ def test_scheduler_static_sync_rejects_taking_over_dynamic_task_key():
 
   with pytest.raises(EnqueueError, match="already scheduled dynamically"):
     scheduler.sync_static_tasks()
+
+
+def test_scheduler_static_sync_ignores_unrelated_dynamic_tasks(monkeypatch):
+  schedule_recurring_task(
+    key="dynamic-task",
+    task_path="tests.tasks.echo",
+    schedule="* * * * *",
+  )
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      recurring={
+        "static-task": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "*/5 * * * *",
+        }
+      }
+    )
+  )
+  seen_filters = []
+  original_filter = QuerySet.filter
+
+  def capture_filter(self, *args, **kwargs):
+    if self.model is RecurringTask:
+      seen_filters.append(kwargs)
+    return original_filter(self, *args, **kwargs)
+
+  monkeypatch.setattr(QuerySet, "filter", capture_filter)
+
+  scheduler.sync_static_tasks()
+
+  assert {kwargs.get("static") for kwargs in seen_filters if "static" in kwargs} >= {True, False}
+  assert RecurringTask.objects.filter(backend_alias="default", key="static-task", static=True).exists() is True
 
 
 def test_scheduler_fires_static_task():

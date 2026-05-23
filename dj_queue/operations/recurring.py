@@ -33,12 +33,25 @@ def validate_recurring_task_definition(
 def upsert_static_recurring_tasks(recurring_configs, *, backend_alias="default"):
   alias = get_database_alias(backend_alias)
   active_keys = set()
+  configured_keys = tuple(recurring_configs)
   existing = {
     task.key: task
     for task in RecurringTask.objects.using(alias).filter(
       backend_alias=backend_alias,
+      static=True,
     )
   }
+  if configured_keys:
+    existing.update(
+      {
+        task.key: task
+        for task in RecurringTask.objects.using(alias).filter(
+          backend_alias=backend_alias,
+          key__in=configured_keys,
+          static=False,
+        )
+      }
+    )
   to_create = []
 
   for recurring_config in recurring_configs.values():
