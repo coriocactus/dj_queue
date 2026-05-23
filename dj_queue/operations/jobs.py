@@ -14,7 +14,7 @@ from django.tasks import TaskContext
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
-from dj_queue.config import load_backend_config
+from dj_queue.config import load_allowed_queues, load_backend_config
 from dj_queue.db import get_database_alias, locked_queryset
 from dj_queue.exceptions import EnqueueError
 from dj_queue.log import event_logging_enabled, log_event
@@ -1006,7 +1006,7 @@ def _semaphore_limit(job):
 
 
 def validate_queue_allowed(queue_name, *, backend_alias="default"):
-  allowed_queues = load_backend_config(backend_alias).allowed_queues
+  allowed_queues = load_allowed_queues(backend_alias)
   if allowed_queues and queue_name not in allowed_queues:
     raise EnqueueError(f"queue {queue_name!r} is not allowed for backend {backend_alias!r}")
 

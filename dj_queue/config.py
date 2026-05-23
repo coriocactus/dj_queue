@@ -166,6 +166,18 @@ def load_backend_config(
   return _BACKEND_CONFIG_CACHE[cache_key]
 
 
+def load_allowed_queues(
+  backend_alias: str = "default",
+  *,
+  tasks_settings: Mapping[str, Any] | None = None,
+) -> tuple[str, ...]:
+  if tasks_settings is None:
+    tasks_settings = getattr(settings, "TASKS", {})
+  ensure_dj_queue_backend_alias(tasks_settings, backend_alias)
+  backend_block = _backend_block(tasks_settings, backend_alias)
+  return _as_string_tuple(backend_block.get("QUEUES", []))
+
+
 def _load_backend_config_uncached(
   backend_alias: str,
   cli_overrides: Mapping[str, Any],
@@ -189,10 +201,11 @@ def _load_backend_config_uncached(
   preserve_finished_jobs = _bool_option(
     resolved_options["preserve_finished_jobs"], "preserve_finished_jobs"
   )
+  allowed_queues = _as_string_tuple(backend_block.get("QUEUES", []))
   on_thread_error = _validated_callback_path(resolved_options.get("on_thread_error"))
   recurring = _build_recurring_config(
     resolved_options.get("recurring", {}),
-    allowed_queues=_as_string_tuple(backend_block.get("QUEUES", [])),
+    allowed_queues=allowed_queues,
     backend_alias=backend_alias,
   )
   scheduler = _build_scheduler_config(resolved_options.get("scheduler", DEFAULT_SCHEDULER))
@@ -222,7 +235,7 @@ def _load_backend_config_uncached(
 
   return BackendConfig(
     backend_alias=backend_alias,
-    allowed_queues=_as_string_tuple(backend_block.get("QUEUES", [])),
+    allowed_queues=allowed_queues,
     mode=mode,
     workers=workers,
     dispatchers=dispatchers,

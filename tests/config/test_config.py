@@ -1,4 +1,5 @@
 import json
+import sys
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
@@ -162,6 +163,50 @@ def test_static_recurring_task_path_must_reference_a_django_task(settings):
 
   with pytest.raises(ImproperlyConfigured, match="must reference a Django task"):
     load_backend_config()
+
+
+def test_static_recurring_task_import_tolerates_task_decorators_before_target(
+  settings, tmp_path, monkeypatch
+):
+  module_name = "reentrant_recurring_tasks"
+  monkeypatch.delitem(sys.modules, module_name, raising=False)
+  (tmp_path / f"{module_name}.py").write_text(
+    "\n".join(
+      (
+        "from django.tasks import task",
+        "",
+        "@task",
+        "def earlier_task():",
+        "  return 'earlier'",
+        "",
+        "@task",
+        "def cleanup_unactivated_users():",
+        "  return 'cleanup'",
+      )
+    ),
+    encoding="utf-8",
+  )
+  monkeypatch.syspath_prepend(str(tmp_path))
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {
+        "recurring": {
+          "users_cleanup_unactivated_users": {
+            "task_path": f"{module_name}.cleanup_unactivated_users",
+            "schedule": "* * * * *",
+          }
+        }
+      },
+    }
+  }
+
+  try:
+    config = load_backend_config()
+  finally:
+    sys.modules.pop(module_name, None)
+
+  assert "users_cleanup_unactivated_users" in config.recurring
 
 
 def test_static_recurring_queue_must_be_allowed_for_backend(settings):
