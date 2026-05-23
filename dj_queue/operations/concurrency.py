@@ -86,9 +86,7 @@ def _mysql_family_semaphore_acquire(alias, key, *, limit, expires_at, now):
   expires_at_column = connection.ops.quote_name("expires_at")
   created_at_column = connection.ops.quote_name("created_at")
   updated_at_column = connection.ops.quote_name("updated_at")
-  reconciled_available = (
-    f"LEAST(VALUES({limit_column}), GREATEST(0, {value_column} + VALUES({limit_column}) - {limit_column}))"
-  )
+  reconciled_available = f"LEAST(VALUES({limit_column}), GREATEST(0, {value_column} + VALUES({limit_column}) - {limit_column}))"
 
   # one upsert avoids mysql-family deadlocks from mixing ignored inserts and follow-up updates
   with connection.cursor() as cursor:
