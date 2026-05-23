@@ -13,6 +13,7 @@ SCENARIO_DESCRIPTIONS = {
   "recurring-scale": "scheduler poll cost for persisted not-due recurring rows",
   "worker-drain": "async supervisor drain throughput for no-op ready jobs",
   "concurrency-contention": "one hot concurrency key through enqueue, block, release, and unblock",
+  "ordered-selector-claim": "ordered exact-queue claiming and drain throughput",
 }
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 

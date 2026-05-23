@@ -72,3 +72,11 @@ def test_concurrency_contention_reports_drain_query_counts():
   assert metrics["drain_query_count"] == (
     metrics["claim_query_count"] + metrics["execute_query_count"]
   )
+
+
+@pytest.mark.django_db
+def test_ordered_selector_claim_reports_claim_query_count():
+  metrics = runtime.ordered_selector_claim(6)
+
+  assert metrics["finished_count"] == 6
+  assert metrics["claim_query_count"] > 0

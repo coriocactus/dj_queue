@@ -123,6 +123,65 @@ def concurrency_contention(size):
   }
 
 
+def ordered_selector_claim(size):
+  now = timezone.now()
+  jobs = []
+  ready_rows = []
+  queue_names = ("alpha", "beta", "gamma")
+  selectors = ("alpha", "beta", "gamma")
+
+  for index in range(size):
+    queue_name = queue_names[index % len(queue_names)]
+    job = Job(
+      task_path=noop.module_path,
+      queue_name=queue_name,
+      priority=noop.priority,
+      payload={"args": [f"selector-{index}"], "kwargs": {}},
+      backend_alias="default",
+      created_at=now,
+      updated_at=now,
+    )
+    jobs.append(job)
+
+  Job.objects.bulk_create(jobs, batch_size=1000)
+  for job in jobs:
+    ready_rows.append(
+      ReadyExecution(
+        job=job,
+        backend_alias=job.backend_alias,
+        queue_name=job.queue_name,
+        priority=job.priority,
+        created_at=now,
+        latency_started_at=now,
+      )
+    )
+  ReadyExecution.objects.bulk_create(ready_rows, batch_size=1000)
+
+  claim_query_count = 0
+  completed = 0
+  with Timer() as timer:
+    while completed < size:
+      with _capture_query_count() as captured:
+        claimed_jobs = claim_ready_jobs(limit=3, queues=selectors)
+      claim_query_count += captured["count"]
+      if not claimed_jobs:
+        break
+      for claimed_job in claimed_jobs:
+        execute_claimed_job(claimed_job)
+      completed += len(claimed_jobs)
+
+  finished_count = Job.objects.filter(finished_at__isnull=False).count()
+  if completed != size or finished_count != size or ReadyExecution.objects.exists():
+    raise AssertionError("ordered selector claim did not drain all ready jobs")
+
+  return {
+    "duration_seconds": timer.duration,
+    "jobs_per_second": throughput(size, timer.duration),
+    "claim_query_count": claim_query_count,
+    "finished_count": finished_count,
+  }
+
+
 def _wait_for_drain(size, *, preserve_finished_jobs, timeout):
   deadline = time.monotonic() + timeout
   while time.monotonic() < deadline:
