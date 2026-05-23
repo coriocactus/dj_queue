@@ -114,7 +114,7 @@ def make_worker(config=None, **overrides):
   )
 
 
-def test_worker_future_handler_runs_inside_app_executor(monkeypatch):
+def test_worker_future_handler_uses_app_executor_only_for_errors(monkeypatch):
   events = []
 
   @contextmanager
@@ -134,6 +134,24 @@ def test_worker_future_handler_runs_inside_app_executor(monkeypatch):
   make_worker()._handle_future(future)
 
   assert events == ["enter", "boom", "exit"]
+
+
+def test_worker_future_handler_skips_app_executor_on_success(monkeypatch):
+  events = []
+
+  @contextmanager
+  def executor():
+    events.append("enter")
+    yield
+    events.append("exit")
+
+  monkeypatch.setattr("dj_queue.runtime.worker.app_executor", executor)
+  future = Future()
+  future.set_result(None)
+
+  make_worker()._handle_future(future)
+
+  assert events == []
 
 
 def test_worker_registers_process_with_metadata():
