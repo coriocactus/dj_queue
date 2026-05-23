@@ -42,7 +42,7 @@ def semaphore_acquire(
       now=now,
     )
 
-  with transaction.atomic(using=alias):
+  with _operation_atomic(alias):
     if create_ignore_conflicts(
       Semaphore,
       using=alias,
@@ -54,7 +54,7 @@ def semaphore_acquire(
       return True
 
   reconciled_available = _reconciled_available_expression(limit)
-  with transaction.atomic(using=alias):
+  with _operation_atomic(alias):
     updated = (
       Semaphore.objects.using(alias)
       .filter(key=key, value__gt=F("limit") - Value(limit))
@@ -213,7 +213,7 @@ def unblock_next_blocked_job(
   alias = get_database_alias(backend_alias)
   now = timezone.now()
 
-  with transaction.atomic(using=alias):
+  with _operation_atomic(alias):
     queryset = (
       BlockedExecution.objects.using(alias)
       .select_related("job")
@@ -397,3 +397,7 @@ def _positive_int_option(value, name):
   if number <= 0:
     raise EnqueueError(f"{name} must be a positive integer")
   return number
+
+
+def _operation_atomic(alias):
+  return transaction.atomic(using=alias, savepoint=not connections[alias].in_atomic_block)

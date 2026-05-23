@@ -193,6 +193,18 @@ def test_complete_claimed_job_with_waiter_uses_two_semaphore_queries():
 
 
 @pytest.mark.django_db
+def test_execute_claimed_job_with_waiter_avoids_nested_unblock_savepoint():
+  limited.enqueue(1, value="first")
+  limited.enqueue(1, value="second")
+  claimed_job = claim_ready_jobs(limit=1)[0]
+
+  with CaptureQueriesContext(connection) as ctx:
+    execute_claimed_job(claimed_job)
+
+  assert len(ctx.captured_queries) == 11
+
+
+@pytest.mark.django_db
 def test_fail_claimed_job_uses_one_claimed_table_query():
   job = make_job(args=["failed"])
   ClaimedExecution.objects.create(job=job)
