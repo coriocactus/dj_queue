@@ -17,6 +17,7 @@ from dj_queue.runtime.notify import (
   notify_ready_queues,
 )
 from dj_queue.runtime.scheduler import Scheduler, _latest_run_at
+from dj_queue.wakeup import notify_ready_queues_on_commit
 from tests.tasks import echo
 
 
@@ -88,6 +89,7 @@ def test_ready_notification_waits_for_outer_transaction_commit(monkeypatch):
   def capture(queue_names, *, backend_alias="default"):
     notified.append((tuple(queue_names), backend_alias))
 
+  monkeypatch.setattr("dj_queue.wakeup.supports_listen_notify", lambda alias: True)
   monkeypatch.setattr("dj_queue.runtime.notify.notify_ready_queues", capture)
 
   with transaction.atomic():
@@ -95,6 +97,42 @@ def test_ready_notification_waits_for_outer_transaction_commit(monkeypatch):
     assert notified == []
 
   assert notified == [(("default",), "default")]
+
+
+def test_ready_notification_skips_on_commit_when_listen_notify_disabled(monkeypatch):
+  on_commit_calls = []
+
+  monkeypatch.setattr(
+    "dj_queue.wakeup.load_backend_config",
+    lambda backend_alias: SimpleNamespace(listen_notify=False, database_alias="default"),
+  )
+  monkeypatch.setattr("dj_queue.wakeup.supports_listen_notify", lambda alias: True)
+  monkeypatch.setattr(
+    "dj_queue.wakeup.transaction.on_commit",
+    lambda func, *, using: on_commit_calls.append((func, using)),
+  )
+
+  notify_ready_queues_on_commit(("default",), backend_alias="default")
+
+  assert on_commit_calls == []
+
+
+def test_ready_notification_skips_on_commit_without_notify_support(monkeypatch):
+  on_commit_calls = []
+
+  monkeypatch.setattr(
+    "dj_queue.wakeup.load_backend_config",
+    lambda backend_alias: SimpleNamespace(listen_notify=True, database_alias="default"),
+  )
+  monkeypatch.setattr("dj_queue.wakeup.supports_listen_notify", lambda alias: False)
+  monkeypatch.setattr(
+    "dj_queue.wakeup.transaction.on_commit",
+    lambda func, *, using: on_commit_calls.append((func, using)),
+  )
+
+  notify_ready_queues_on_commit(("default",), backend_alias="default")
+
+  assert on_commit_calls == []
 
 
 def test_recurring_reservation_without_job_backfill_does_not_double_fire(monkeypatch):

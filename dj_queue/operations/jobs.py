@@ -369,6 +369,7 @@ def execute_claimed_job(job, *, backend_alias="default"):
     claimed_job = _load_claimed_job(job, backend_alias=backend_alias)
     job = claimed_job.job
 
+  task = None
   try:
     task = import_string(job.task_path)
     args = list(job.payload.get("args", []))
@@ -384,17 +385,22 @@ def execute_claimed_job(job, *, backend_alias="default"):
       return_value = task.call(*args, **kwargs)
     return_value = _normalize_return_value(return_value)
   except Exception as exc:
-    return fail_claimed_job(
+    return _fail_claimed_job(
       job,
       exc,
       traceback_text=traceback.format_exc(),
       backend_alias=job.backend_alias,
+      task=task,
     )
 
-  return complete_claimed_job(job, return_value, backend_alias=job.backend_alias)
+  return _complete_claimed_job(job, return_value, backend_alias=job.backend_alias, task=task)
 
 
 def complete_claimed_job(job, return_value, *, backend_alias="default"):
+  return _complete_claimed_job(job, return_value, backend_alias=backend_alias)
+
+
+def _complete_claimed_job(job, return_value, *, backend_alias="default", task=None):
   alias = get_database_alias(backend_alias)
   if isinstance(job, ClaimedJob):
     job = job.job
@@ -413,13 +419,22 @@ def complete_claimed_job(job, return_value, *, backend_alias="default"):
     else:
       job.delete(using=alias)
 
-    _release_concurrency_slot(job)
+    _release_concurrency_slot(job, task=task)
   if event_logging_enabled(backend_alias=backend_alias):
     log_event("job.executed", job_id=str(job.id), status="success")
   return job
 
 
 def fail_claimed_job(job, error, *, traceback_text="", backend_alias="default"):
+  return _fail_claimed_job(
+    job,
+    error,
+    traceback_text=traceback_text,
+    backend_alias=backend_alias,
+  )
+
+
+def _fail_claimed_job(job, error, *, traceback_text="", backend_alias="default", task=None):
   alias = get_database_alias(backend_alias)
   if isinstance(job, ClaimedJob):
     job = job.job
@@ -435,7 +450,7 @@ def fail_claimed_job(job, error, *, traceback_text="", backend_alias="default"):
       traceback=traceback_text,
     )
 
-    _release_concurrency_slot(job)
+    _release_concurrency_slot(job, task=task)
   if event_logging_enabled(backend_alias=backend_alias):
     log_event(
       "job.failed",
@@ -918,16 +933,18 @@ def _dispatch_job(job, *, task, backend_alias, now=None):
   return DispatchOutcome.BLOCKED
 
 
-def _release_concurrency_slot(job):
+def _release_concurrency_slot(job, *, task=None):
   if not job.concurrency_key:
     return
 
+  config = load_backend_config(job.backend_alias)
   try:
-    task = import_string(job.task_path)
+    if task is None:
+      task = import_string(job.task_path)
     limit, duration_seconds, _ = concurrency_settings(task, backend_alias=job.backend_alias)
   except (AttributeError, EnqueueError, ImportError):
     limit = _semaphore_limit(job) or 1
-    duration_seconds = load_backend_config(job.backend_alias).default_concurrency_duration
+    duration_seconds = config.default_concurrency_duration
 
   semaphore_release(
     job.concurrency_key,
@@ -940,7 +957,8 @@ def _release_concurrency_slot(job):
     limit=limit,
     duration_seconds=duration_seconds,
     backend_alias=job.backend_alias,
-    use_skip_locked=load_backend_config(job.backend_alias).use_skip_locked,
+    use_skip_locked=config.use_skip_locked,
+    handoff_released_slot=True,
   )
 
 

@@ -253,10 +253,10 @@ def test_execute_claimed_job_completes_already_loaded_job_object(monkeypatch):
   ClaimedExecution.objects.create(job=job, process=process)
   seen = []
 
-  def complete_job(claimed_job, return_value, *, backend_alias):
+  def complete_job(claimed_job, return_value, *, backend_alias, task=None):
     seen.append((claimed_job, return_value, backend_alias))
 
-  monkeypatch.setattr("dj_queue.operations.jobs.complete_claimed_job", complete_job)
+  monkeypatch.setattr("dj_queue.operations.jobs._complete_claimed_job", complete_job)
 
   execute_claimed_job(ClaimedJob(job=job, claimed_at=timezone.now(), worker_ids=(process.name,)))
 

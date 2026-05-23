@@ -164,6 +164,18 @@ def test_complete_claimed_job_uses_one_claimed_table_query():
 
 
 @pytest.mark.django_db
+def test_complete_claimed_job_with_waiter_uses_two_semaphore_queries():
+  first = limited.enqueue(1, value="first")
+  limited.enqueue(1, value="second")
+  claim_ready_jobs(limit=1)
+
+  with CaptureQueriesContext(connection) as ctx:
+    complete_claimed_job(first.id, "done")
+
+  assert len(queries_touching(ctx, "dj_queue_semaphores")) == 2
+
+
+@pytest.mark.django_db
 def test_fail_claimed_job_uses_one_claimed_table_query():
   job = make_job(args=["failed"])
   ClaimedExecution.objects.create(job=job)
@@ -308,6 +320,28 @@ def test_successful_completion_unblocks_next_waiter():
 
 
 @pytest.mark.django_db
+def test_execute_claimed_job_reuses_loaded_task_for_concurrency_release(monkeypatch):
+  limited.func.concurrency_limit = 1
+  first = limited.enqueue(1, value="first")
+  second = limited.enqueue(1, value="second")
+  claimed_job = claim_ready_jobs(limit=1)[0]
+  seen = []
+  original_import_string = job_operations.import_string
+
+  def capture(path):
+    seen.append(path)
+    return original_import_string(path)
+
+  monkeypatch.setattr(job_operations, "import_string", capture)
+
+  execute_claimed_job(claimed_job)
+
+  assert seen == [limited.module_path]
+  assert ReadyExecution.objects.filter(job_id=second.id).exists() is True
+  assert Semaphore.objects.get(key="account:1").value == 0
+
+
+@pytest.mark.django_db
 def test_failed_completion_still_unblocks_next_waiter():
   first = limited.enqueue(1, value="first")
   second = limited.enqueue(1, value="second")
@@ -413,6 +447,24 @@ def test_invalid_concurrency_settings_after_claim_do_not_leak_slot(monkeypatch):
 
   assert ReadyExecution.objects.filter(job_id=second.id).exists() is True
   assert BlockedExecution.objects.filter(job_id=second.id).exists() is False
+  assert Semaphore.objects.get(key="account:1").value == 0
+
+
+@pytest.mark.django_db
+def test_reduced_concurrency_limit_after_claim_keeps_waiter_blocked(monkeypatch):
+  monkeypatch.setattr(limited.func, "concurrency_limit", 2)
+  first = limited.enqueue(1, value="first")
+  second = limited.enqueue(1, value="second")
+  third = limited.enqueue(1, value="third")
+
+  claim_ready_jobs(limit=2)
+  monkeypatch.setattr(limited.func, "concurrency_limit", 1)
+
+  complete_claimed_job(first.id, "done")
+
+  assert ClaimedExecution.objects.filter(job_id=second.id).exists() is True
+  assert BlockedExecution.objects.filter(job_id=third.id).exists() is True
+  assert ReadyExecution.objects.filter(job_id=third.id).exists() is False
   assert Semaphore.objects.get(key="account:1").value == 0
 
 
