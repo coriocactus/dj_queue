@@ -2,7 +2,7 @@
 
 > Local development benchmark. Treat these numbers as reproducibility evidence, not a portable capacity guarantee.
 
-Generated: 2026-05-23T11:43:11.689227+00:00
+Generated: 2026-05-23T12:06:14.589724+00:00
 
 ## Environment
 
@@ -25,7 +25,7 @@ Generated: 2026-05-23T11:43:11.689227+00:00
 ### `single-enqueue`: one-by-one immediate enqueue latency and throughput
 
 - key metric: **`latency_p95_ms`** - enqueue tail latency for individual task submissions; lower is better
-- good number: `<= 20 ms` for request-path enqueue on the 10k local benchmark
+- healthy local baseline: `<= 15 ms` p95 for request-path enqueue on the 10k local benchmark
 - use case: web requests, admin actions, and small fan-out paths that submit tasks one at a time
 - mechanics: calls the public `Task.enqueue()` path once per job, including validation, job insert, ready-row insert, result mapping, and ready wakeup registration
 
@@ -41,7 +41,7 @@ Generated: 2026-05-23T11:43:11.689227+00:00
 ### `bulk-enqueue`: bulk immediate enqueue throughput and SQL statement count
 
 - key metric: **`jobs_per_second`** - bulk enqueue throughput; `query_count` should stay nearly fixed as size grows
-- good number: `>= 5,000 jobs/sec` for 10k independent immediate jobs
+- healthy local baseline: `>= 6,000 jobs/sec` for 10k independent immediate jobs in under 2 seconds
 - use case: imports, backfills, and fan-out jobs that enqueue many independent tasks
 - mechanics: calls `DjQueueBackend.enqueue_all()` for immediate unconstrained jobs, including bulk job and ready-row inserts plus batched result creation
 
@@ -57,7 +57,7 @@ Generated: 2026-05-23T11:43:11.689227+00:00
 ### `scheduled-promotion`: due scheduled-row promotion from a mixed due/future backlog
 
 - key metric: **`rows_per_second`** - due scheduled-row promotion throughput; higher is better
-- good number: `>= 5,000 rows/sec` for a 10k due-row promotion burst
+- healthy local baseline: `>= 6,000 rows/sec` for a 10k due-row promotion burst in under 2 seconds
 - use case: delayed-job bursts where the dispatcher must move due work into ready state
 - mechanics: seeds equal due and future scheduled backlogs, then calls `promote_scheduled_jobs()` in batches until no due rows remain
 
@@ -73,7 +73,7 @@ Generated: 2026-05-23T11:43:11.689227+00:00
 ### `recurring-scale`: scheduler poll cost for persisted not-due recurring rows
 
 - key metric: **`duration_seconds`** - scheduler no-op poll duration over persisted not-due recurring rows; lower is better
-- good number: `<= 0.050 seconds` for a no-op poll over 10k not-due schedules
+- healthy local baseline: `<= 0.025 seconds` for a no-op poll over 10k not-due schedules
 - use case: large recurring-task catalogs where most scheduler ticks should be cheap no-ops
 - mechanics: seeds dynamic recurring definitions with future `next_run_at` values, then runs one `Scheduler.poll_once()` without firing jobs
 
@@ -89,7 +89,7 @@ Generated: 2026-05-23T11:43:11.689227+00:00
 ### `worker-drain`: async supervisor drain throughput for no-op ready jobs
 
 - key metric: **`jobs_per_second`** - end-to-end ready-job drain throughput through the async runtime; higher is better
-- good number: `>= 250 jobs/sec` for draining 10k no-op ready jobs
+- healthy local baseline: `>= 300 jobs/sec` for draining 10k no-op ready jobs in under 35 seconds
 - use case: steady ready-queue processing by embedded or standalone async workers
 - mechanics: seeds ready rows directly, starts `AsyncSupervisor`, and drains no-op jobs through worker claim, execution, completion, and finished-job retention
 
@@ -105,7 +105,7 @@ Generated: 2026-05-23T11:43:11.689227+00:00
 ### `concurrency-contention`: one hot concurrency key through enqueue, block, release, and unblock
 
 - key metric: **`drain_jobs_per_second`** - serialized hot-key drain throughput after enqueue; higher is better
-- good number: `>= 25 jobs/sec` for a 10k serialized hot-key drain
+- healthy local baseline: `>= 30 jobs/sec` for a 10k serialized hot-key drain in under 6 minutes
 - use case: per-tenant, per-account, or external API limits where one hot key must serialize work
 - mechanics: enqueues jobs sharing one concurrency key so all but one block, then drains with `claim_ready_jobs()` and `execute_claimed_job()` to cover semaphore handoff and unblock
 
@@ -121,7 +121,7 @@ Generated: 2026-05-23T11:43:11.689227+00:00
 ### `ordered-selector-claim`: ordered exact-queue claiming and drain throughput
 
 - key metric: **`jobs_per_second`** - selector-heavy claim and drain throughput; higher is better
-- good number: `>= 50 jobs/sec` for a 10k exact-selector drain
+- healthy local baseline: `>= 60 jobs/sec` for a 10k exact-selector drain in under 3 minutes
 - use case: workers with ordered queue preferences, priority lanes, or queue-isolated tenants
 - mechanics: seeds three queues and drains with exact ordered selectors to cover selector ordering, claim locking, query shape, and completion
 

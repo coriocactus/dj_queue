@@ -44,7 +44,10 @@ def test_render_markdown_report_includes_environment_and_metrics():
     "### `bulk-enqueue`: bulk immediate enqueue throughput and SQL statement count" in markdown
   )
   assert "- key metric: **`jobs_per_second`** - bulk enqueue throughput" in markdown
-  assert "- good number: `>= 5,000 jobs/sec` for 10k independent immediate jobs" in markdown
+  assert (
+    "- healthy local baseline: `>= 6,000 jobs/sec` for 10k independent "
+    "immediate jobs in under 2 seconds" in markdown
+  )
   assert "- use case: imports, backfills, and fan-out jobs" in markdown
   assert "- mechanics: calls `DjQueueBackend.enqueue_all()`" in markdown
   assert "1000.000" in markdown
@@ -67,7 +70,7 @@ def test_render_markdown_report_includes_all_scenario_descriptions():
     assert (
       f"- key metric: **`{context['key_metric']}`** - {context['key_metric_note']}" in markdown
     )
-    assert f"- good number: {context['good_number']}" in markdown
+    assert f"- healthy local baseline: {context['healthy_local_baseline']}" in markdown
     assert f"- use case: {context['use_case']}" in markdown
     assert f"- mechanics: {context['mechanics']}" in markdown
 

@@ -214,7 +214,7 @@ def render_scenario_table(scenario, rows):
     lines.extend(
       [
         f"- key metric: **`{context['key_metric']}`** - {context['key_metric_note']}",
-        f"- good number: {context['good_number']}",
+        f"- healthy local baseline: {context['healthy_local_baseline']}",
         f"- use case: {context['use_case']}",
         f"- mechanics: {context['mechanics']}",
         "",
