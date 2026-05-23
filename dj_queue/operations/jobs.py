@@ -1081,11 +1081,19 @@ def _select_ready_rows(queryset, *, limit, queues, use_skip_locked):
   ordered_selectors = selectors if star_index is None else selectors[:star_index]
 
   if ordered_selectors:
-    ordered = _ordered_selector_rows_queryset(
-      queryset.exclude(pk__in=selected_ids),
-      ordered_selectors,
-    )
-    rows = list(locked_queryset(ordered, use_skip_locked=use_skip_locked)[:limit])
+    if _selectors_are_exact(ordered_selectors):
+      rows = _select_exact_selector_rows(
+        queryset.exclude(pk__in=selected_ids),
+        ordered_selectors,
+        limit=limit,
+        use_skip_locked=use_skip_locked,
+      )
+    else:
+      ordered = _ordered_selector_rows_queryset(
+        queryset.exclude(pk__in=selected_ids),
+        ordered_selectors,
+      )
+      rows = list(locked_queryset(ordered, use_skip_locked=use_skip_locked)[:limit])
     selected_rows.extend(rows)
     selected_ids.update(row.pk for row in rows)
 
@@ -1097,6 +1105,22 @@ def _select_ready_rows(queryset, *, limit, queues, use_skip_locked):
   rows = list(locked_queryset(ordered, use_skip_locked=use_skip_locked)[:remaining])
   selected_rows.extend(rows)
   return selected_rows
+
+
+def _select_exact_selector_rows(queryset, selectors, *, limit, use_skip_locked):
+  selected_rows = []
+  for selector in dict.fromkeys(selectors):
+    remaining = limit - len(selected_rows)
+    if remaining <= 0:
+      break
+    ordered = queryset.filter(queue_name=selector).order_by("-priority", "id")
+    rows = list(locked_queryset(ordered, use_skip_locked=use_skip_locked)[:remaining])
+    selected_rows.extend(rows)
+  return selected_rows
+
+
+def _selectors_are_exact(selectors):
+  return all(selector != "*" and not selector.endswith("*") for selector in selectors)
 
 
 def _ordered_selector_rows_queryset(queryset, selectors):

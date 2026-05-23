@@ -895,23 +895,18 @@ def test_queue_selector_exact_prefix_and_star_ordering():
 
 
 @pytest.mark.django_db
-def test_queue_selector_exact_group_claim_uses_one_selection_pass(monkeypatch):
-  alpha = echo.using(queue_name="alpha").enqueue("alpha")
+def test_queue_selector_exact_group_drains_first_selector_before_next():
+  alpha_1 = echo.using(queue_name="alpha").enqueue("alpha-1")
   beta = echo.using(queue_name="beta").enqueue("beta")
-  calls = 0
-  original_locked_queryset = job_operations.locked_queryset
-
-  def capture(queryset, *, use_skip_locked=True):
-    nonlocal calls
-    calls += 1
-    return original_locked_queryset(queryset, use_skip_locked=use_skip_locked)
-
-  monkeypatch.setattr(job_operations, "locked_queryset", capture)
+  alpha_2 = echo.using(queue_name="alpha").enqueue("alpha-2")
 
   claimed_jobs = claim_ready_jobs(limit=2, queues=("alpha", "beta"))
 
-  assert [str(claimed_job.job.id) for claimed_job in claimed_jobs] == [alpha.id, beta.id]
-  assert calls == 1
+  assert [str(claimed_job.job.id) for claimed_job in claimed_jobs] == [
+    alpha_1.id,
+    alpha_2.id,
+  ]
+  assert ReadyExecution.objects.filter(job_id=beta.id).exists() is True
 
 
 @pytest.mark.django_db
