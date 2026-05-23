@@ -892,6 +892,29 @@ def test_claim_ready_jobs_rejects_job_with_conflicting_execution_state():
 
 
 @pytest.mark.django_db
+def test_claim_ready_jobs_rejects_conflicting_state_with_fixed_query_budget():
+  job = make_job()
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+  FailedExecution.objects.create(
+    job=job,
+    exception_class="builtins.ValueError",
+    message="boom",
+    traceback="traceback",
+  )
+
+  with CaptureQueriesContext(connection) as ctx:
+    with pytest.raises(EnqueueError, match="already has an execution-state row"):
+      claim_ready_jobs(limit=1)
+
+  assert len(ctx.captured_queries) == 4
+
+
+@pytest.mark.django_db
 def test_promote_scheduled_jobs_rejects_job_with_conflicting_execution_state():
   job = make_job(scheduled_at=timezone.now() - timedelta(seconds=1))
   ScheduledExecution.objects.create(
