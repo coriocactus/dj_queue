@@ -110,7 +110,12 @@ def enqueue_job_with_dispatch(task, args, kwargs, *, backend_alias="default"):
       scheduled_at=task.run_after,
       concurrency_key=concurrency_key,
     )
-    dispatch_outcome = _dispatch_job(job, task=task, backend_alias=backend_alias)
+    dispatch_outcome = _dispatch_job(
+      job,
+      task=task,
+      backend_alias=backend_alias,
+      check_conflicts=False,
+    )
 
   if dispatch_outcome.should_notify:
     notify_ready_queues_on_commit((job.queue_name,), backend_alias=backend_alias)
@@ -910,7 +915,7 @@ def _dispatch_existing_job(job):
   return _dispatch_job(job, task=task, backend_alias=job.backend_alias)
 
 
-def _dispatch_job(job, *, task, backend_alias, now=None):
+def _dispatch_job(job, *, task, backend_alias, now=None, check_conflicts=True):
   alias = get_database_alias(backend_alias)
   if now is None:
     now = timezone.now()
@@ -925,11 +930,13 @@ def _dispatch_job(job, *, task, backend_alias, now=None):
     return DispatchOutcome.SCHEDULED
 
   if not job.concurrency_key:
-    _create_ready_execution(
+    _create_ready_execution_locked(
       alias,
       job=job,
       backend_alias=backend_alias,
+      queue_name=job.queue_name,
       ready_at=now,
+      check_conflicts=check_conflicts,
     )
     return DispatchOutcome.READY
 

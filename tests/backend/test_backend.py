@@ -4,7 +4,8 @@ from datetime import timedelta
 import uuid
 
 import pytest
-from django.db import transaction
+from django.db import connection, transaction
+from django.test.utils import CaptureQueriesContext
 from django.tasks import TaskResultStatus
 from django.tasks.exceptions import TaskResultDoesNotExist
 from django.utils import timezone
@@ -116,6 +117,14 @@ def test_enqueue_immediate_uses_ready_path():
   assert result.kwargs == {}
   assert ReadyExecution.objects.filter(job=job).exists() is True
   assert ScheduledExecution.objects.exists() is False
+
+
+@pytest.mark.django_db
+def test_enqueue_immediate_uses_fresh_ready_query_budget():
+  with CaptureQueriesContext(connection) as ctx:
+    echo.enqueue("ready")
+
+  assert len(ctx.captured_queries) == 5
 
 
 @pytest.mark.django_db
