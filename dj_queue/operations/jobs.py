@@ -32,7 +32,6 @@ from dj_queue.operations._helpers import (
   _ensure_no_other_execution_state,
   _consume_selected_rows,
   _create_blocked_execution,
-  _create_ready_execution,
   _create_ready_execution_locked,
   _create_scheduled_execution,
   _exclude_active_pauses,
