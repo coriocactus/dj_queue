@@ -72,6 +72,13 @@ def test_queue_info_latency_is_never_negative():
   assert QueueInfo("emails").latency == 0.0
 
 
+def test_queue_info_latency_is_none_while_paused():
+  make_ready_job(queue_name="emails")
+  Pause.objects.create(backend_alias="default", queue_name="emails")
+
+  assert QueueInfo("emails").latency is None
+
+
 def test_queue_info_all_uses_shared_queue_discovery():
   future = timezone.now() + timedelta(minutes=5)
   make_scheduled_job(queue_name="scheduled", scheduled_at=future)

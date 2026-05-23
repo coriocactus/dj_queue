@@ -46,6 +46,7 @@ def test_warn_if_persistent_connection_budget_is_tight_logs_warning(monkeypatch,
   assert ratio == pytest.approx(74 / 97)
   assert caplog.records[-1].event == "connection_budget.warning"
   assert caplog.records[-1].dj_queue == {
+    "backend_alias": "default",
     "database_alias": "queue",
     "estimated_worker_connections": 74,
     "available_database_connections": 97,

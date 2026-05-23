@@ -3,12 +3,12 @@ import math
 import threading
 import time
 
-from django.db import close_old_connections, connections
+from django.db import close_old_connections
 from django.db.utils import OperationalError
 from django.utils import timezone
 
 from dj_queue.config import load_backend_config
-from dj_queue.db import get_database_alias
+from dj_queue.db import database_capabilities, get_database_alias
 from dj_queue.hooks import fire_hooks
 from dj_queue.models import Process
 from dj_queue.runtime.errors import handle_thread_error
@@ -29,13 +29,13 @@ _safe_polling_interval = 1.0
 
 
 def _process_write_context(alias):
-  if connections[alias].vendor == "sqlite":
+  if database_capabilities(alias).uses_serialized_writes:
     return _sqlite_process_write_lock
   return nullcontext()
 
 
 def sqlite_retry(operation, *, alias, timeout=1):
-  if connections[alias].vendor != "sqlite":
+  if not database_capabilities(alias).uses_serialized_writes:
     return operation()
 
   deadline = time.monotonic() + timeout

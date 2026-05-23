@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 from django.db import connections
 
+from dj_queue.db import database_capabilities
 from dj_queue.log import log_event
 
 
@@ -36,10 +37,10 @@ def estimate_config_worker_connections(config):
 
 
 def postgres_connection_capacity(alias):
-  connection = connections[alias]
-  if connection.vendor != "postgresql":
+  if database_capabilities(alias).backend_family != "postgresql":
     return None
 
+  connection = connections[alias]
   with connection.cursor() as cursor:
     cursor.execute(
       "select current_setting('max_connections')::int, "

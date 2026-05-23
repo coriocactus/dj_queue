@@ -3,12 +3,12 @@ import logging
 from dj_queue.log import event_logging_enabled, log_event
 
 
-def assert_event_record(record, *, event, level, payload):
+def assert_event_record(record, *, event, level, payload, backend_alias="default"):
   assert record.name == "dj_queue"
   assert record.levelno == level
   assert record.getMessage() == event
   assert record.event == event
-  assert record.dj_queue == payload
+  assert record.dj_queue == {"backend_alias": backend_alias, **payload}
 
 
 def test_structured_event_job_enqueued(caplog):
@@ -81,6 +81,21 @@ def test_structured_event_process_replaced(caplog):
     event="process.replaced",
     level=logging.INFO,
     payload=payload,
+  )
+
+
+def test_structured_event_includes_selected_backend_alias(caplog):
+  payload = {"queue_name": "default"}
+
+  with caplog.at_level(logging.INFO, logger="dj_queue"):
+    log_event("queue.paused", backend_alias="secondary", **payload)
+
+  assert_event_record(
+    caplog.records[-1],
+    event="queue.paused",
+    level=logging.INFO,
+    payload=payload,
+    backend_alias="secondary",
   )
 
 

@@ -53,6 +53,9 @@ class QueueInfo:
 
   @property
   def latency(self):
+    if self.paused:
+      return None
+
     oldest = (
       self._ready_queryset()
       .annotate(latency_at=Coalesce("latency_started_at", "created_at"))

@@ -33,6 +33,6 @@ def log_event(
     event,
     extra={
       "event": event,
-      "dj_queue": fields,
+      "dj_queue": {"backend_alias": backend_alias, **fields},
     },
   )
