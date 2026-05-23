@@ -10,11 +10,20 @@ from dj_queue.config import load_backend_config
 from dj_queue.db import database_capabilities, get_database_alias, locked_queryset
 from dj_queue.exceptions import EnqueueError
 from dj_queue.log import log_event
-from dj_queue.models import BlockedExecution, ClaimedExecution, ReadyExecution, Semaphore
+from dj_queue.models import (
+  BlockedExecution,
+  ClaimedExecution,
+  FailedExecution,
+  Job,
+  ReadyExecution,
+  ScheduledExecution,
+  Semaphore,
+)
 from dj_queue.operations._helpers import (
   _consume_selected_rows,
   _create_blocked_execution,
   _create_ready_execution,
+  _lock_active_pauses,
   _task_option,
 )
 from dj_queue.operations._insert import create_ignore_conflicts
@@ -293,7 +302,7 @@ def unblock_next_blocked_job(
     job = blocked.job
     queue_name = blocked.queue_name
     priority = blocked.priority
-    _create_ready_execution(
+    _create_ready_execution_after_blocked_consume(
       alias,
       job=job,
       backend_alias=backend_alias,
@@ -309,6 +318,71 @@ def unblock_next_blocked_job(
   )
   notify_ready_queues_on_commit((job.queue_name,), backend_alias=backend_alias)
   return job
+
+
+def _create_ready_execution_after_blocked_consume(
+  alias,
+  *,
+  job,
+  backend_alias,
+  queue_name,
+  priority,
+  ready_at,
+):
+  _lock_active_pauses(alias, backend_alias, {queue_name})
+  connection = connections[alias]
+  quote = connection.ops.quote_name
+  ready_table = quote(ReadyExecution._meta.db_table)
+  job_id_column = quote(ReadyExecution._meta.get_field("job").column)
+  backend_alias_column = quote(ReadyExecution._meta.get_field("backend_alias").column)
+  queue_name_column = quote(ReadyExecution._meta.get_field("queue_name").column)
+  priority_column = quote(ReadyExecution._meta.get_field("priority").column)
+  created_at_column = quote(ReadyExecution._meta.get_field("created_at").column)
+  latency_started_at_column = quote(ReadyExecution._meta.get_field("latency_started_at").column)
+  job_id = Job._meta.get_field("id").get_db_prep_value(
+    job.pk,
+    connection=connection,
+    prepared=False,
+  )
+  state_models = (ReadyExecution, ScheduledExecution, ClaimedExecution, FailedExecution)
+  state_checks = " AND ".join(
+    _state_absence_sql(model, job_id_column=job_id_column, quote=quote) for model in state_models
+  )
+
+  with connection.cursor() as cursor:
+    cursor.execute(
+      f"""
+      INSERT INTO {ready_table} (
+        {job_id_column},
+        {backend_alias_column},
+        {queue_name_column},
+        {priority_column},
+        {created_at_column},
+        {latency_started_at_column}
+      )
+      SELECT %s, %s, %s, %s, %s, %s
+      WHERE {state_checks}
+      """,
+      [
+        job_id,
+        backend_alias,
+        queue_name,
+        priority,
+        ready_at,
+        ready_at,
+        *([job_id] * len(state_models)),
+      ],
+    )
+    created = cursor.rowcount
+
+  if created != 1:
+    raise EnqueueError(f"job {job.id} already has an execution-state row")
+
+
+def _state_absence_sql(model, *, job_id_column, quote):
+  state_table = quote(model._meta.db_table)
+  state_job_id_column = quote(model._meta.get_field("job").column)
+  return f"NOT EXISTS (SELECT 1 FROM {state_table} WHERE {state_table}.{state_job_id_column} = %s)"
 
 
 def cleanup_expired_semaphores(*, backend_alias="default"):

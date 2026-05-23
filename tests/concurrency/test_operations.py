@@ -201,7 +201,7 @@ def test_execute_claimed_job_with_waiter_avoids_nested_unblock_savepoint():
   with CaptureQueriesContext(connection) as ctx:
     execute_claimed_job(claimed_job)
 
-  assert len(ctx.captured_queries) == 10
+  assert len(ctx.captured_queries) == 9
 
 
 @pytest.mark.django_db
