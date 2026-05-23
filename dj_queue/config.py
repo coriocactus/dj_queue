@@ -616,6 +616,10 @@ def _optional_nonnegative_int(value: Any, setting_name: str) -> int | None:
 
 
 def _positive_float(value: Any, setting_name: str) -> float:
+  if isinstance(value, bool):
+    raise ImproperlyConfigured(
+      f"dj_queue {setting_name} must be a positive number, got {value!r}"
+    )
   try:
     number = float(value)
   except (TypeError, ValueError) as exc:
@@ -629,6 +633,10 @@ def _positive_float(value: Any, setting_name: str) -> float:
 
 
 def _nonnegative_float(value: Any, setting_name: str) -> float:
+  if isinstance(value, bool):
+    raise ImproperlyConfigured(
+      f"dj_queue {setting_name} must be a non-negative number, got {value!r}"
+    )
   try:
     number = float(value)
   except (TypeError, ValueError) as exc:

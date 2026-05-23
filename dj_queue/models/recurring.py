@@ -1,7 +1,4 @@
-from django.core.exceptions import ValidationError
 from django.db import models
-
-from dj_queue.cron import is_valid_cron
 
 
 class RecurringTask(models.Model):
@@ -33,15 +30,6 @@ class RecurringTask(models.Model):
         name="dj_queue_rt_next_run_idx",
       ),
     ]
-
-  def clean(self):
-    super().clean()
-    if not is_valid_cron(str(self.schedule)):
-      raise ValidationError({"schedule": "schedule must be a valid cron expression"})
-
-  def save(self, *args, **kwargs):
-    self.full_clean()
-    return super().save(*args, **kwargs)
 
 
 class RecurringExecution(models.Model):

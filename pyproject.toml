@@ -49,6 +49,7 @@ dev = [
 module-root = ""
 
 [tool.pytest.ini_options]
+addopts = "--strict-markers --strict-config"
 DJANGO_SETTINGS_MODULE = "tests.settings"
 pythonpath = ["."]
 markers = [

@@ -431,12 +431,15 @@ def test_dispatchers_single_mapping_is_normalized_to_one_item_list(settings):
   (
     ({"workers": {"polling_interval": 0}}, r"workers\[0\]\.polling_interval"),
     ({"workers": {"polling_interval": -0.1}}, r"workers\[0\]\.polling_interval"),
+    ({"workers": {"polling_interval": True}}, r"workers\[0\]\.polling_interval"),
     ({"workers": {"polling_interval": "fast"}}, r"workers\[0\]\.polling_interval"),
     ({"dispatchers": {"polling_interval": 0}}, r"dispatchers\[0\]\.polling_interval"),
     ({"dispatchers": {"polling_interval": -1}}, r"dispatchers\[0\]\.polling_interval"),
+    ({"dispatchers": {"polling_interval": True}}, r"dispatchers\[0\]\.polling_interval"),
     ({"dispatchers": {"polling_interval": "fast"}}, r"dispatchers\[0\]\.polling_interval"),
     ({"scheduler": {"polling_interval": 0}}, r"scheduler\.polling_interval"),
     ({"scheduler": {"polling_interval": -5}}, r"scheduler\.polling_interval"),
+    ({"scheduler": {"polling_interval": True}}, r"scheduler\.polling_interval"),
     ({"scheduler": {"polling_interval": "fast"}}, r"scheduler\.polling_interval"),
   ),
 )
@@ -677,6 +680,10 @@ def test_retention_options_must_be_nonnegative_integers(settings, setting_name):
     ({"dispatchers": {"batch_size": 0}}, "dispatchers[0].batch_size"),
     (
       {"dispatchers": {"concurrency_maintenance_interval": -1}},
+      "dispatchers[0].concurrency_maintenance_interval",
+    ),
+    (
+      {"dispatchers": {"concurrency_maintenance_interval": True}},
       "dispatchers[0].concurrency_maintenance_interval",
     ),
   ),

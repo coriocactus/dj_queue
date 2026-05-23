@@ -1,5 +1,4 @@
 import pytest
-from django.core.exceptions import ValidationError
 from django.utils import timezone
 
 from dj_queue.api import schedule_recurring_task, unschedule_recurring_task
@@ -125,7 +124,7 @@ def test_schedule_recurring_task_rejects_overwriting_static_task():
 
 
 def test_invalid_cron_is_rejected():
-  with pytest.raises(ValidationError):
+  with pytest.raises(EnqueueError, match="schedule must be a valid cron expression"):
     schedule_recurring_task(
       key="invalid-task",
       task_path="tests.tasks.echo",
@@ -156,20 +155,14 @@ def test_missing_recurring_task_path_is_rejected_without_persisting():
   assert RecurringTask.objects.filter(key="missing-task").exists() is False
 
 
-def test_schedule_recurring_task_validates_once(monkeypatch):
-  calls = []
-  original_full_clean = RecurringTask.full_clean
+def test_schedule_recurring_task_does_not_use_model_full_clean(monkeypatch):
+  def fail_full_clean(self, *args, **kwargs):
+    pytest.fail("recurring operation validation should not use model full_clean")
 
-  def counted_full_clean(self, *args, **kwargs):
-    calls.append(self.key)
-    return original_full_clean(self, *args, **kwargs)
-
-  monkeypatch.setattr(RecurringTask, "full_clean", counted_full_clean)
+  monkeypatch.setattr(RecurringTask, "full_clean", fail_full_clean)
 
   schedule_recurring_task(
     key="dynamic-task",
     task_path="tests.tasks.echo",
     schedule="* * * * *",
   )
-
-  assert calls == ["dynamic-task"]

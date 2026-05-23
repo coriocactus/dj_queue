@@ -1,7 +1,6 @@
 from datetime import timedelta
 
 import pytest
-from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
@@ -63,7 +62,7 @@ def test_recurring_task_key_unique():
     schedule="* * * * *",
   )
 
-  with pytest.raises(ValidationError, match="Key"):
+  with pytest.raises(IntegrityError), transaction.atomic():
     RecurringTask.objects.create(
       backend_alias="default",
       key="every-minute",
@@ -90,11 +89,12 @@ def test_recurring_execution_task_key_run_at_unique():
 
 
 @pytest.mark.django_db
-def test_recurring_task_schedule_validation():
-  with pytest.raises(ValidationError, match="schedule"):
-    RecurringTask.objects.create(
-      backend_alias="default",
-      key="bad-cron",
-      task_path="tests.tasks.example",
-      schedule="tomorrow",
-    )
+def test_recurring_task_model_save_does_not_validate_schedule():
+  task = RecurringTask.objects.create(
+    backend_alias="default",
+    key="bad-cron",
+    task_path="tests.tasks.example",
+    schedule="tomorrow",
+  )
+
+  assert task.schedule == "tomorrow"

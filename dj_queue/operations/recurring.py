@@ -2,7 +2,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils.module_loading import import_string
 
-from dj_queue.cron import next_cron_run
+from dj_queue.cron import is_valid_cron, next_cron_run
 from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias
 from dj_queue.exceptions import EnqueueError
@@ -18,7 +18,10 @@ def validate_recurring_task_definition(
   queue_name,
   priority,
   backend_alias,
+  schedule=None,
 ):
+  if schedule is not None and not is_valid_cron(str(schedule)):
+    raise EnqueueError("schedule must be a valid cron expression")
   task = import_string(task_path)
   if not hasattr(task, "using"):
     raise EnqueueError("task_path must reference a Django task")
@@ -45,6 +48,7 @@ def upsert_static_recurring_tasks(recurring_configs, *, backend_alias="default")
       queue_name=recurring_config.queue_name,
       priority=recurring_config.priority,
       backend_alias=backend_alias,
+      schedule=recurring_config.schedule,
     )
     desired = {
       "task_path": recurring_config.task_path,
@@ -113,6 +117,7 @@ def schedule_recurring_task(
     queue_name=queue_name,
     priority=priority,
     backend_alias=backend_alias,
+    schedule=schedule,
   )
   payload = _normalize_payload(args, kwargs)
   if key in load_backend_config(backend_alias).recurring:
