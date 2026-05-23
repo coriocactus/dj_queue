@@ -1160,7 +1160,6 @@ def _finish_job_if_no_execution_state(alias, job, return_value, *, finished_at):
     for model in (
       ReadyExecution,
       ScheduledExecution,
-      ClaimedExecution,
       BlockedExecution,
       FailedExecution,
     )
