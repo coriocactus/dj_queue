@@ -334,6 +334,7 @@ def _claim_ready_jobs_once(
     )
     if not ready_rows:
       return []
+
     for row in ready_rows:
       if _ready_row_has_conflicting_state(row):
         raise EnqueueError(f"job {row.job_id} already has an execution-state row")
@@ -366,7 +367,12 @@ def _claim_ready_jobs_once(
 
 
 def _ready_row_has_conflicting_state(row):
-  for relation_name in ("scheduled_execution", "claimed_execution", "blocked_execution", "failed_execution"):
+  for relation_name in (
+    "scheduled_execution",
+    "claimed_execution",
+    "blocked_execution",
+    "failed_execution",
+  ):
     try:
       getattr(row.job, relation_name)
     except ObjectDoesNotExist:

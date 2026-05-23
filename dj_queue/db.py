@@ -23,9 +23,13 @@ def get_database_alias(backend_alias: str = "default") -> str:
 
 def locked_queryset(qs, use_skip_locked: bool = True):
   alias = getattr(qs, "db", DEFAULT_DB_ALIAS)
+  connection = connections[alias]
+  select_for_update_kwargs = {}
   if use_skip_locked and supports_skip_locked(alias):
-    return qs.select_for_update(skip_locked=True)
-  return qs.select_for_update()
+    select_for_update_kwargs["skip_locked"] = True
+  if getattr(connection.features, "has_select_for_update_of", False):
+    select_for_update_kwargs["of"] = ("self",)
+  return qs.select_for_update(**select_for_update_kwargs)
 
 
 def database_capabilities(alias: str) -> DatabaseCapabilities:
