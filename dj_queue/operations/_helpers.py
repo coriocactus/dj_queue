@@ -31,18 +31,22 @@ def _normalize_payload(args, kwargs):
 
 
 def _ensure_no_other_execution_state(alias, job, *, ignored_models=()):
+  if _job_ids_with_other_execution_state(alias, [job.pk], ignored_models=ignored_models):
+    raise EnqueueError(f"job {job.id} already has an execution-state row")
+
+
+def _job_ids_with_other_execution_state(alias, job_ids, *, ignored_models=()):
   relation_names = [
     relation_name
     for model, relation_name in STATE_RELATIONS.items()
     if model not in ignored_models
   ]
   if not relation_names:
-    return
+    return set()
   conflict_query = Q(**{f"{relation_names[0]}__isnull": False})
   for relation_name in relation_names[1:]:
     conflict_query |= Q(**{f"{relation_name}__isnull": False})
-  if Job.objects.using(alias).filter(pk=job.pk).filter(conflict_query).exists():
-    raise EnqueueError(f"job {job.id} already has an execution-state row")
+  return set(Job.objects.using(alias).filter(pk__in=job_ids).filter(conflict_query).values_list("pk", flat=True))
 
 
 def _task_option(task, name, default=None):
@@ -99,8 +103,32 @@ def _create_ready_execution(
   ready_at=None,
   created_at=None,
 ):
-  _ensure_no_other_execution_state(alias, job)
   queue_name = _execution_queue_name(job, queue_name)
+  return _create_ready_execution_locked(
+    alias,
+    job,
+    backend_alias=backend_alias,
+    queue_name=queue_name,
+    priority=priority,
+    ready_at=ready_at,
+    created_at=created_at,
+    check_conflicts=True,
+  )
+
+
+def _create_ready_execution_locked(
+  alias,
+  job,
+  *,
+  backend_alias,
+  queue_name,
+  priority=None,
+  ready_at=None,
+  created_at=None,
+  check_conflicts,
+):
+  if check_conflicts:
+    _ensure_no_other_execution_state(alias, job)
   _lock_active_pauses(alias, backend_alias, {queue_name})
   return ReadyExecution.objects.using(alias).create(
     **_ready_execution_fields(
@@ -112,6 +140,18 @@ def _create_ready_execution(
       created_at=created_at,
     )
   )
+
+
+def _ready_execution_rows(jobs, *, backend_alias, ready_at=None, created_at=None):
+  return [
+    _ready_execution_row(
+      job,
+      backend_alias=backend_alias,
+      ready_at=ready_at,
+      created_at=created_at,
+    )
+    for job in jobs
+  ]
 
 
 def _scheduled_execution_row(job, *, backend_alias, scheduled_at=None, created_at=None):

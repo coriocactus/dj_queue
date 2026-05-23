@@ -33,10 +33,13 @@ from dj_queue.operations._helpers import (
   _consume_selected_rows,
   _create_blocked_execution,
   _create_ready_execution,
+  _create_ready_execution_locked,
   _create_scheduled_execution,
   _exclude_active_pauses,
+  _job_ids_with_other_execution_state,
   _lock_active_pauses,
   _normalize_payload,
+  _ready_execution_rows,
   _ready_execution_row,
   _scheduled_execution_row,
   _task_option,
@@ -638,16 +641,26 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
 
     direct_jobs = [job for job in jobs if not job.concurrency_key]
     if direct_jobs:
-      _lock_active_pauses(alias, backend_alias, {job.queue_name for job in direct_jobs})
-      for job in direct_jobs:
-        _create_ready_execution(
-          alias,
-          job=job,
+      conflicting_job_ids = _job_ids_with_other_execution_state(
+        alias,
+        [job.pk for job in direct_jobs],
+      )
+      if conflicting_job_ids:
+        conflicting_job_id = next(iter(conflicting_job_ids))
+        raise EnqueueError(f"job {conflicting_job_id} already has an execution-state row")
+      queue_names = {job.queue_name for job in direct_jobs}
+      _lock_active_pauses(alias, backend_alias, queue_names)
+      _bulk_create(
+        alias,
+        ReadyExecution,
+        _ready_execution_rows(
+          direct_jobs,
           backend_alias=backend_alias,
           ready_at=now,
           created_at=now,
-        )
-        ready_queue_names.append(job.queue_name)
+        ),
+      )
+      ready_queue_names.extend(job.queue_name for job in direct_jobs)
 
     direct_job_ids = {job.pk for job in direct_jobs}
     for job in jobs:
@@ -921,11 +934,13 @@ def _dispatch_job(job, *, task, backend_alias, now=None):
     duration_seconds=duration_seconds,
     backend_alias=backend_alias,
   ):
-    _create_ready_execution(
+    _create_ready_execution_locked(
       alias,
       job=job,
       backend_alias=backend_alias,
+      queue_name=job.queue_name,
       ready_at=now,
+      check_conflicts=False,
     )
     return DispatchOutcome.READY
 
