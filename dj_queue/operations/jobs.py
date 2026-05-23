@@ -8,6 +8,7 @@ from enum import StrEnum
 
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import connections, transaction
+from django.db.models import Case, IntegerField, Value, When
 from django.db.utils import OperationalError
 from django.tasks import TaskContext
 from django.utils import timezone
@@ -46,7 +47,12 @@ from dj_queue.operations.concurrency import (
   semaphore_release,
   unblock_next_blocked_job,
 )
-from dj_queue.queue_selectors import filter_by_queue_selectors, selectors_match_all
+from dj_queue.queue_selectors import (
+  filter_by_queue_selectors,
+  normalize_queue_selectors,
+  queue_selector_condition,
+  selectors_match_all,
+)
 from dj_queue.task_results import task_result_for_claimed_job
 from dj_queue.wakeup import notify_ready_queues_on_commit
 
@@ -1029,22 +1035,43 @@ def _select_ready_rows(queryset, *, limit, queues, use_skip_locked):
     ordered = queryset.order_by("-priority", "id")
     return list(locked_queryset(ordered, use_skip_locked=use_skip_locked)[:limit])
 
-  selectors = (queues,) if isinstance(queues, str) else tuple(queues)
+  selectors = normalize_queue_selectors(queues)
   selected_rows = []
   selected_ids = set()
 
-  for selector in selectors:
-    remaining = limit - len(selected_rows)
-    if remaining <= 0:
-      break
+  star_index = selectors.index("*") if "*" in selectors else None
+  ordered_selectors = selectors if star_index is None else selectors[:star_index]
 
-    ordered = queryset.exclude(pk__in=selected_ids).order_by("-priority", "id")
-    filtered = _filter_queue_selectors(ordered, selector)
-    rows = list(locked_queryset(filtered, use_skip_locked=use_skip_locked)[:remaining])
+  if ordered_selectors:
+    ordered = _ordered_selector_rows_queryset(
+      queryset.exclude(pk__in=selected_ids),
+      ordered_selectors,
+    )
+    rows = list(locked_queryset(ordered, use_skip_locked=use_skip_locked)[:limit])
     selected_rows.extend(rows)
     selected_ids.update(row.pk for row in rows)
 
+  remaining = limit - len(selected_rows)
+  if remaining <= 0 or star_index is None:
+    return selected_rows
+
+  ordered = queryset.exclude(pk__in=selected_ids).order_by("-priority", "id")
+  rows = list(locked_queryset(ordered, use_skip_locked=use_skip_locked)[:remaining])
+  selected_rows.extend(rows)
   return selected_rows
+
+
+def _ordered_selector_rows_queryset(queryset, selectors):
+  filtered = _filter_queue_selectors(queryset, selectors)
+  selector_rank = Case(
+    *[
+      When(queue_selector_condition((selector,)), then=Value(index))
+      for index, selector in enumerate(selectors)
+    ],
+    default=Value(len(selectors)),
+    output_field=IntegerField(),
+  )
+  return filtered.annotate(selector_rank=selector_rank).order_by("selector_rank", "-priority", "id")
 
 
 def _is_transient_claim_error(error):
