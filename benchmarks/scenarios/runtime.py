@@ -1,12 +1,14 @@
 import time
+from contextlib import contextmanager
 
+from django.db import connection
 from django.utils import timezone
 
 from benchmarks.harness import Timer, throughput
 from benchmarks.tasks import limited, noop
 from dj_queue.config import load_backend_config
 from dj_queue.models import BlockedExecution, ClaimedExecution, Job, ReadyExecution
-from dj_queue.operations.jobs import claim_ready_jobs, complete_claimed_job
+from dj_queue.operations.jobs import claim_ready_jobs, execute_claimed_job
 from dj_queue.runtime.supervisor import AsyncSupervisor
 
 
@@ -87,14 +89,20 @@ def concurrency_contention(size):
     raise AssertionError(f"expected one ready and {size - 1} blocked jobs")
 
   completed = 0
+  claim_query_count = 0
+  execute_query_count = 0
   with Timer() as drain_timer:
     while completed < size:
-      jobs = claim_ready_jobs(limit=1)
+      with _capture_query_count() as captured:
+        jobs = claim_ready_jobs(limit=1)
+      claim_query_count += captured["count"]
       if not jobs:
         time.sleep(0.001)
         continue
       claimed_job = jobs[0]
-      complete_claimed_job(claimed_job.job.id, claimed_job.job.payload["args"][0])
+      with _capture_query_count() as captured:
+        execute_claimed_job(claimed_job)
+      execute_query_count += captured["count"]
       completed += 1
 
   finished_count = Job.objects.filter(finished_at__isnull=False).count()
@@ -108,6 +116,9 @@ def concurrency_contention(size):
     "enqueue_jobs_per_second": throughput(size, enqueue_timer.duration),
     "drain_duration_seconds": drain_timer.duration,
     "drain_jobs_per_second": throughput(size, drain_timer.duration),
+    "drain_query_count": claim_query_count + execute_query_count,
+    "claim_query_count": claim_query_count,
+    "execute_query_count": execute_query_count,
     "finished_count": finished_count,
   }
 
@@ -126,3 +137,15 @@ def _wait_for_drain(size, *, preserve_finished_jobs, timeout):
       return
     time.sleep(0.02)
   raise AssertionError("timed out waiting for worker drain")
+
+
+@contextmanager
+def _capture_query_count():
+  state = {"count": 0}
+
+  def wrapper(execute, sql, params, many, context):
+    state["count"] += 1
+    return execute(sql, params, many, context)
+
+  with connection.execute_wrapper(wrapper):
+    yield state
