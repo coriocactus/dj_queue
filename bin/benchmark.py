@@ -8,6 +8,7 @@ from pathlib import Path
 
 import django
 
+from benchmarks.catalog import scenarios_for_backend
 from benchmarks.harness import (
   benchmark_result,
   default_output_path,
@@ -251,15 +252,18 @@ def run_metadata(args, *, sizes, output_path):
 
 
 def selected_scenarios(args, *, all_names, quick_names):
+  supported_names = scenarios_for_backend(args.backend, all_names)
   if args.command == "scenario":
     if args.scenario not in all_names:
       raise ValueError(
         f"unknown scenario {args.scenario!r}; expected one of {', '.join(all_names)}"
       )
+    if args.scenario not in supported_names:
+      raise ValueError(f"scenario {args.scenario!r} is not supported for backend {args.backend!r}")
     return (args.scenario,)
   if args.command == "quick":
-    return quick_names
-  return all_names
+    return scenarios_for_backend(args.backend, quick_names)
+  return supported_names
 
 
 def run_once(scenario, *, size, reset):

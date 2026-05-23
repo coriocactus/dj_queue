@@ -2,6 +2,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
@@ -106,3 +108,35 @@ def test_all_backends_runs_benchmarks_and_reports_with_default_outputs(monkeypat
     (outputs["mysql"], Path("docs/benchmarks/mysql.md")),
     (outputs["sqlite"], Path("docs/benchmarks/sqlite.md")),
   ]
+
+
+def test_sqlite_all_and_quick_skip_locking_scenarios():
+  names = (
+    "single-enqueue",
+    "bulk-enqueue",
+    "concurrency-contention",
+    "ordered-selector-claim",
+  )
+
+  all_args = benchmark_cli.parse_args(["all", "--backend", "sqlite"])
+  quick_args = benchmark_cli.parse_args(["quick", "--backend", "sqlite"])
+
+  assert benchmark_cli.selected_scenarios(all_args, all_names=names, quick_names=names) == (
+    "single-enqueue",
+    "bulk-enqueue",
+  )
+  assert benchmark_cli.selected_scenarios(quick_args, all_names=names, quick_names=names) == (
+    "single-enqueue",
+    "bulk-enqueue",
+  )
+
+
+def test_sqlite_rejects_unsupported_scenario():
+  args = benchmark_cli.parse_args(["scenario", "concurrency-contention", "--backend", "sqlite"])
+
+  with pytest.raises(ValueError, match="not supported for backend 'sqlite'"):
+    benchmark_cli.selected_scenarios(
+      args,
+      all_names=("single-enqueue", "concurrency-contention"),
+      quick_names=("single-enqueue", "concurrency-contention"),
+    )

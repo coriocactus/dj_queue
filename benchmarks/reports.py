@@ -5,16 +5,11 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 
+from benchmarks.catalog import (
+  SCENARIO_CONTEXT,
+  scenario_supported_by_backend,
+)
 
-SCENARIO_DESCRIPTIONS = {
-  "single-enqueue": "one-by-one immediate enqueue latency and throughput",
-  "bulk-enqueue": "bulk immediate enqueue throughput and SQL statement count",
-  "scheduled-promotion": "due scheduled-row promotion from a mixed due/future backlog",
-  "recurring-scale": "scheduler poll cost for persisted not-due recurring rows",
-  "worker-drain": "async supervisor drain throughput for no-op ready jobs",
-  "concurrency-contention": "one hot concurrency key through enqueue, block, release, and unblock",
-  "ordered-selector-claim": "ordered exact-queue claiming and drain throughput",
-}
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -40,6 +35,10 @@ def read_jsonl(input_path):
 
 def render_markdown(rows, *, input_path=None, output_path=None, run_command=None):
   metadata = rows[0]["metadata"]
+  rows = reportable_rows(rows, backend=metadata["backend"])
+  if not rows:
+    raise ValueError(f"no reportable benchmark rows found for backend {metadata['backend']!r}")
+
   database = metadata["database"]
   benchmark = metadata.get("benchmark")
   backend_label = {"postgres": "PostgreSQL"}.get(metadata["backend"], metadata["backend"])
@@ -86,6 +85,10 @@ def render_markdown(rows, *, input_path=None, output_path=None, run_command=None
     )
   )
   return "\n".join(lines)
+
+
+def reportable_rows(rows, *, backend):
+  return [row for row in rows if scenario_supported_by_backend(backend, row["scenario"])]
 
 
 def render_reproduce_commands(rows, *, input_path=None, output_path=None, run_command=None):
@@ -201,20 +204,47 @@ def render_scenario_table(scenario, rows):
   columns = [metric for metric in preferred if metric in metric_names]
   columns.extend(metric for metric in metric_names if metric not in columns)
 
-  description = SCENARIO_DESCRIPTIONS.get(scenario)
+  context = SCENARIO_CONTEXT.get(scenario, {})
+  description = context.get("description")
   heading = f"### `{scenario}`"
   if description:
     heading = f"{heading}: {description}"
   lines = [heading, ""]
+  if context:
+    lines.extend(
+      [
+        f"- key metric: **`{context['key_metric']}`** - {context['key_metric_note']}",
+        f"- good number: {context['good_number']}",
+        f"- use case: {context['use_case']}",
+        f"- mechanics: {context['mechanics']}",
+        "",
+      ]
+    )
+  key_metric = context.get("key_metric")
   header = ["size", "run", *columns]
-  lines.append("| " + " | ".join(header) + " |")
+  lines.append("| " + " | ".join(format_header(column, key_metric) for column in header) + " |")
   lines.append("|" + "---|" * len(header))
   for row in rows:
     values = [row["size"], row["run_index"]]
-    values.extend(format_value(row["metrics"].get(column)) for column in columns)
+    values.extend(
+      format_cell(column, row["metrics"].get(column), key_metric) for column in columns
+    )
     lines.append("| " + " | ".join(str(value) for value in values) + " |")
   lines.append("")
   return lines
+
+
+def format_header(column, key_metric):
+  if column == key_metric:
+    return f"**{column}**"
+  return column
+
+
+def format_cell(column, value, key_metric):
+  formatted = format_value(value)
+  if column == key_metric and formatted != "":
+    return f"**{formatted}**"
+  return formatted
 
 
 def format_value(value):

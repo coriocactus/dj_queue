@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from benchmarks.reports import SCENARIO_DESCRIPTIONS, render_markdown
+from benchmarks.catalog import SCENARIO_CONTEXT, SCENARIO_DESCRIPTIONS
+from benchmarks.reports import render_markdown
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -42,17 +43,33 @@ def test_render_markdown_report_includes_environment_and_metrics():
   assert (
     "### `bulk-enqueue`: bulk immediate enqueue throughput and SQL statement count" in markdown
   )
+  assert "- key metric: **`jobs_per_second`** - bulk enqueue throughput" in markdown
+  assert "- good number: `>= 5,000 jobs/sec` for 10k independent immediate jobs" in markdown
+  assert "- use case: imports, backfills, and fan-out jobs" in markdown
+  assert "- mechanics: calls `DjQueueBackend.enqueue_all()`" in markdown
   assert "1000.000" in markdown
-  assert "| 100 | 0 | 0.100 | 1000.000 | 5 |" in markdown
+  assert "| size | run | duration_seconds | **jobs_per_second** | query_count |" in markdown
+  assert "| 100 | 0 | 0.100 | **1000.000** | 5 |" in markdown
 
 
 def test_render_markdown_report_includes_all_scenario_descriptions():
   markdown = render_markdown(
-    [benchmark_row(scenario=scenario) for scenario in SCENARIO_DESCRIPTIONS]
+    [
+      benchmark_row(scenario=scenario, metrics={context["key_metric"]: 1.0})
+      for scenario, context in SCENARIO_CONTEXT.items()
+    ]
   )
 
   for scenario, description in SCENARIO_DESCRIPTIONS.items():
     assert f"### `{scenario}`: {description}" in markdown
+
+  for context in SCENARIO_CONTEXT.values():
+    assert (
+      f"- key metric: **`{context['key_metric']}`** - {context['key_metric_note']}" in markdown
+    )
+    assert f"- good number: {context['good_number']}" in markdown
+    assert f"- use case: {context['use_case']}" in markdown
+    assert f"- mechanics: {context['mechanics']}" in markdown
 
 
 def test_render_markdown_report_uses_recorded_run_metadata():
@@ -145,6 +162,29 @@ def test_render_markdown_report_uses_relative_database_path():
   assert "- database: `sqlite` `benchmark-results/dj_queue_benchmark.sqlite3`" in markdown
 
 
+def test_render_markdown_report_skips_sqlite_locking_scenarios():
+  sqlite_metadata = {
+    "backend": "sqlite",
+    "database": {
+      "vendor": "sqlite",
+      "name": "benchmark-results/dj_queue_benchmark.sqlite3",
+      "version": "3.50.4",
+    },
+  }
+
+  markdown = render_markdown(
+    [
+      benchmark_row(metadata=sqlite_metadata),
+      benchmark_row(scenario="concurrency-contention", metadata=sqlite_metadata),
+      benchmark_row(scenario="ordered-selector-claim", metadata=sqlite_metadata),
+    ]
+  )
+
+  assert "bulk-enqueue" in markdown
+  assert "concurrency-contention" not in markdown
+  assert "ordered-selector-claim" not in markdown
+
+
 def test_render_markdown_report_accepts_run_command_override():
   run_command = (
     "bin/benchmark.py all --backend postgres --sizes 1000,10000 "
@@ -161,7 +201,7 @@ def test_render_markdown_report_accepts_run_command_override():
   assert "--run-command 'bin/benchmark.py all --backend postgres" in markdown
 
 
-def benchmark_row(*, scenario="bulk-enqueue", metadata=None):
+def benchmark_row(*, scenario="bulk-enqueue", metadata=None, metrics=None):
   base_metadata = {
     "backend": "postgres",
     "database": {
@@ -178,15 +218,18 @@ def benchmark_row(*, scenario="bulk-enqueue", metadata=None):
   }
   if metadata:
     base_metadata.update(metadata)
+  row_metrics = {
+    "duration_seconds": 0.1,
+    "jobs_per_second": 1000.0,
+    "query_count": 5,
+  }
+  if metrics:
+    row_metrics.update(metrics)
   return {
     "scenario": scenario,
     "size": 100,
     "run_index": 0,
-    "metrics": {
-      "duration_seconds": 0.1,
-      "jobs_per_second": 1000.0,
-      "query_count": 5,
-    },
+    "metrics": row_metrics,
     "metadata": base_metadata,
   }
 
