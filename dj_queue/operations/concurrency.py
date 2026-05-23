@@ -1,7 +1,8 @@
 from datetime import timedelta
 
 from django.db import connections, transaction
-from django.db.models import Case, F, IntegerField, When
+from django.db.models import Case, F, IntegerField, Value, When
+from django.db.models.functions import Greatest, Least
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
@@ -52,17 +53,27 @@ def semaphore_acquire(
     ):
       return True
 
+  reconciled_available = _reconciled_available_expression(limit)
   with transaction.atomic(using=alias):
     updated = (
       Semaphore.objects.using(alias)
-      .filter(key=key, value__gt=0)
+      .filter(key=key, value__gt=F("limit") - Value(limit))
       .update(
-        value=F("value") - 1,
+        value=reconciled_available - Value(1),
+        limit=limit,
         expires_at=expires_at,
         updated_at=now,
       )
     )
-  return updated > 0
+    if updated:
+      return True
+
+    Semaphore.objects.using(alias).filter(key=key).update(
+      value=reconciled_available,
+      limit=limit,
+      updated_at=now,
+    )
+  return False
 
 
 def _mysql_family_semaphore_acquire(alias, key, *, limit, expires_at, now):
@@ -89,23 +100,44 @@ def _mysql_family_semaphore_acquire(alias, key, *, limit, expires_at, now):
       )
       VALUES (%s, %s, %s, %s, %s, %s)
       ON DUPLICATE KEY UPDATE
-        {expires_at_column} = IF({value_column} > 0, %s, {expires_at_column}),
-        {updated_at_column} = IF({value_column} > 0, %s, {updated_at_column}),
+        {expires_at_column} = IF(
+          LEAST(VALUES({limit_column}), GREATEST(0, {value_column} + VALUES({limit_column}) - {limit_column})) > 0,
+          %s,
+          {expires_at_column}
+        ),
+        {updated_at_column} = %s,
         {value_column} = IF(
-          {value_column} > 0,
-          LAST_INSERT_ID({value_column}) - 1,
-          LAST_INSERT_ID(0) + {value_column}
-        )
+          LEAST(VALUES({limit_column}), GREATEST(0, {value_column} + VALUES({limit_column}) - {limit_column})) > 0,
+          LAST_INSERT_ID(LEAST(VALUES({limit_column}), GREATEST(0, {value_column} + VALUES({limit_column}) - {limit_column})) - 1),
+          LAST_INSERT_ID(0) + LEAST(VALUES({limit_column}), GREATEST(0, {value_column} + VALUES({limit_column}) - {limit_column}))
+        ),
+        {limit_column} = VALUES({limit_column})
       """,
       [key, limit - 1, limit, expires_at, now, now, expires_at, now],
     )
     return cursor.lastrowid != 0
 
 
-def semaphore_release(key, *, duration_seconds, backend_alias="default"):
+def semaphore_release(key, *, limit=None, duration_seconds, backend_alias="default"):
   alias = get_database_alias(backend_alias)
   now = timezone.now()
   expires_at = now + timedelta(seconds=duration_seconds)
+
+  if limit is not None:
+    updated = (
+      Semaphore.objects.using(alias)
+      .filter(key=key)
+      .update(
+        value=Least(
+          Value(limit),
+          Greatest(Value(0), F("value") + Value(limit) - F("limit") + Value(1)),
+        ),
+        limit=limit,
+        expires_at=expires_at,
+        updated_at=now,
+      )
+    )
+    return updated > 0
 
   updated = (
     Semaphore.objects.using(alias)
@@ -121,6 +153,10 @@ def semaphore_release(key, *, duration_seconds, backend_alias="default"):
     )
   )
   return updated > 0
+
+
+def _reconciled_available_expression(limit):
+  return Least(Value(limit), Greatest(Value(0), F("value") + Value(limit) - F("limit")))
 
 
 def concurrency_settings(task, *, backend_alias):

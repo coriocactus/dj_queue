@@ -413,7 +413,7 @@ def complete_claimed_job(job, return_value, *, backend_alias="default"):
     else:
       job.delete(using=alias)
 
-  _release_concurrency_slot(job)
+    _release_concurrency_slot(job)
   if event_logging_enabled(backend_alias=backend_alias):
     log_event("job.executed", job_id=str(job.id), status="success")
   return job
@@ -435,7 +435,7 @@ def fail_claimed_job(job, error, *, traceback_text="", backend_alias="default"):
       traceback=traceback_text,
     )
 
-  _release_concurrency_slot(job)
+    _release_concurrency_slot(job)
   if event_logging_enabled(backend_alias=backend_alias):
     log_event(
       "job.failed",
@@ -803,10 +803,12 @@ def _discard_state_jobs(
     jobs = [jobs_by_id[job_id] for job_id in row_job_ids]
     Job.objects.using(alias).filter(pk__in=row_job_ids).delete()
 
+    if release_concurrency:
+      for job in jobs:
+        _release_concurrency_slot(job)
+
   should_log = event_logging_enabled(backend_alias=backend_alias)
   for job in jobs:
-    if release_concurrency:
-      _release_concurrency_slot(job)
     if should_log:
       log_event("job.discarded", job_id=str(job.id), reason=reason)
   return len(jobs)
@@ -929,6 +931,7 @@ def _release_concurrency_slot(job):
 
   semaphore_release(
     job.concurrency_key,
+    limit=limit,
     duration_seconds=duration_seconds,
     backend_alias=job.backend_alias,
   )

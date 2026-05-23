@@ -78,6 +78,29 @@ def test_semaphore_acquire_release_cycle():
   assert semaphore_acquire("account:1", limit=1, duration_seconds=60) is True
 
 
+@pytest.mark.django_db
+def test_semaphore_acquire_reconciles_increased_limit():
+  assert semaphore_acquire("account:resize", limit=1, duration_seconds=60) is True
+
+  assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True
+
+  semaphore = Semaphore.objects.get(key="account:resize")
+  assert semaphore.limit == 2
+  assert semaphore.value == 0
+
+
+@pytest.mark.django_db
+def test_semaphore_release_reconciles_reduced_limit():
+  assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True
+  assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True
+
+  assert semaphore_release("account:resize", limit=1, duration_seconds=60) is True
+
+  semaphore = Semaphore.objects.get(key="account:resize")
+  assert semaphore.limit == 1
+  assert semaphore.value == 0
+
+
 @pytest.mark.django_db(transaction=True)
 def test_claim_ready_jobs_retries_transient_database_deadlock(monkeypatch):
   job = make_job(args=["deadlock"])
@@ -295,6 +318,23 @@ def test_failed_completion_still_unblocks_next_waiter():
   assert FailedExecution.objects.filter(job_id=first.id).exists() is True
   assert ReadyExecution.objects.filter(job_id=second.id).exists() is True
   assert Semaphore.objects.get(key="account:1").value == 0
+
+
+@pytest.mark.django_db
+def test_complete_claimed_job_rolls_back_when_concurrency_release_fails(monkeypatch):
+  first = limited.enqueue(1, value="first")
+  claim_ready_jobs(limit=1)
+
+  def fail_release(*args, **kwargs):
+    raise RuntimeError("release failed")
+
+  monkeypatch.setattr(job_operations, "semaphore_release", fail_release)
+
+  with pytest.raises(RuntimeError, match="release failed"):
+    complete_claimed_job(first.id, "done")
+
+  assert ClaimedExecution.objects.filter(job_id=first.id).exists() is True
+  assert Job.objects.get(pk=first.id).finished_at is None
 
 
 @pytest.mark.django_db
