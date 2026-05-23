@@ -18,7 +18,7 @@ from dj_queue.operations._helpers import (
   _task_option,
 )
 from dj_queue.operations._insert import create_ignore_conflicts
-from dj_queue.runtime import notify as runtime_notify
+from dj_queue.wakeup import notify_ready_queues_on_commit
 
 
 def semaphore_acquire(
@@ -239,7 +239,7 @@ def unblock_next_blocked_job(
     job_id=str(job.id),
     concurrency_key=key,
   )
-  runtime_notify.notify_ready_queues((job.queue_name,), backend_alias=backend_alias)
+  notify_ready_queues_on_commit((job.queue_name,), backend_alias=backend_alias)
   return job
 
 
@@ -340,7 +340,7 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
 
   for job in promoted_jobs:
     log_event("job.unblocked", job_id=str(job.id), concurrency_key=job.concurrency_key)
-    runtime_notify.notify_ready_queues((job.queue_name,), backend_alias=backend_alias)
+    notify_ready_queues_on_commit((job.queue_name,), backend_alias=backend_alias)
   return promoted_jobs
 
 

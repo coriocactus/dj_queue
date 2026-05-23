@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from django.db import transaction
 from django.db.models.query import QuerySet
 from django.utils import timezone
 
@@ -16,6 +17,7 @@ from dj_queue.runtime.notify import (
   notify_ready_queues,
 )
 from dj_queue.runtime.scheduler import Scheduler, _latest_run_at
+from tests.tasks import echo
 
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -78,6 +80,21 @@ def test_static_recurring_task_cannot_be_unscheduled_via_dynamic_api():
     ).exists()
     is True
   )
+
+
+def test_ready_notification_waits_for_outer_transaction_commit(monkeypatch):
+  notified = []
+
+  def capture(queue_names, *, backend_alias="default"):
+    notified.append((tuple(queue_names), backend_alias))
+
+  monkeypatch.setattr("dj_queue.runtime.notify.notify_ready_queues", capture)
+
+  with transaction.atomic():
+    echo.enqueue("deferred")
+    assert notified == []
+
+  assert notified == [(("default",), "default")]
 
 
 def test_recurring_reservation_without_job_backfill_does_not_double_fire(monkeypatch):

@@ -47,8 +47,8 @@ from dj_queue.operations.concurrency import (
   unblock_next_blocked_job,
 )
 from dj_queue.queue_selectors import filter_by_queue_selectors, selectors_match_all
-from dj_queue.runtime import notify as runtime_notify
 from dj_queue.task_results import task_result_for_claimed_job
+from dj_queue.wakeup import notify_ready_queues_on_commit
 
 
 CLAIM_READY_JOBS_RETRY_ATTEMPTS = 3
@@ -104,7 +104,7 @@ def enqueue_job_with_dispatch(task, args, kwargs, *, backend_alias="default"):
     dispatch_outcome = _dispatch_job(job, task=task, backend_alias=backend_alias)
 
   if dispatch_outcome.should_notify:
-    runtime_notify.notify_ready_queues((job.queue_name,), backend_alias=backend_alias)
+    notify_ready_queues_on_commit((job.queue_name,), backend_alias=backend_alias)
 
   if event_logging_enabled(backend_alias=backend_alias):
     log_event(
@@ -171,7 +171,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
 
     ready_queue_names = tuple(dict.fromkeys(job.queue_name for job in jobs))
     if ready_queue_names:
-      runtime_notify.notify_ready_queues(ready_queue_names, backend_alias=backend_alias)
+      notify_ready_queues_on_commit(ready_queue_names, backend_alias=backend_alias)
 
     if event_logging_enabled(backend_alias=backend_alias):
       for entry in prepared:
@@ -233,7 +233,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
     _bulk_create(alias, ScheduledExecution, scheduled_rows)
 
   if ready_queue_names:
-    runtime_notify.notify_ready_queues(
+    notify_ready_queues_on_commit(
       tuple(dict.fromkeys(ready_queue_names)),
       backend_alias=backend_alias,
     )
@@ -631,7 +631,7 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
         ready_queue_names.append(job.queue_name)
 
   if ready_queue_names:
-    runtime_notify.notify_ready_queues(
+    notify_ready_queues_on_commit(
       tuple(dict.fromkeys(ready_queue_names)), backend_alias=backend_alias
     )
   return jobs
@@ -660,7 +660,7 @@ def dispatch_scheduled_job_now(job_id, *, backend_alias="default"):
     dispatch_outcome = _dispatch_existing_job(job)
 
   if dispatch_outcome.should_notify:
-    runtime_notify.notify_ready_queues((job.queue_name,), backend_alias=backend_alias)
+    notify_ready_queues_on_commit((job.queue_name,), backend_alias=backend_alias)
 
   if event_logging_enabled(backend_alias=backend_alias):
     log_event(
@@ -693,7 +693,7 @@ def retry_failed_job(job_id, *, backend_alias="default"):
     dispatch_outcome = _dispatch_existing_job(job)
 
   if dispatch_outcome.should_notify:
-    runtime_notify.notify_ready_queues((job.queue_name,), backend_alias=backend_alias)
+    notify_ready_queues_on_commit((job.queue_name,), backend_alias=backend_alias)
 
   if event_logging_enabled(backend_alias=backend_alias):
     log_event("job.retried", job_id=str(job.id), queue_name=job.queue_name, priority=job.priority)
@@ -736,7 +736,7 @@ def retry_failed_jobs(*, job_ids=None, batch_size=500, backend_alias="default"):
         ready_queue_names.append(job.queue_name)
 
   if ready_queue_names:
-    runtime_notify.notify_ready_queues(
+    notify_ready_queues_on_commit(
       tuple(dict.fromkeys(ready_queue_names)),
       backend_alias=backend_alias,
     )
