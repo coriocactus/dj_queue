@@ -164,6 +164,23 @@ def test_complete_claimed_job_uses_one_claimed_table_query():
 
 
 @pytest.mark.django_db
+def test_execute_claimed_job_uses_terminal_update_query_budget():
+  job = make_job(args=["done"])
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+  claimed_job = claim_ready_jobs(limit=1)[0]
+
+  with CaptureQueriesContext(connection) as ctx:
+    execute_claimed_job(claimed_job)
+
+  assert len(ctx.captured_queries) == 5
+
+
+@pytest.mark.django_db
 def test_complete_claimed_job_with_waiter_uses_two_semaphore_queries():
   first = limited.enqueue(1, value="first")
   limited.enqueue(1, value="second")
@@ -395,6 +412,24 @@ def test_fail_claimed_job_rejects_conflicting_execution_state():
     fail_claimed_job(job.id, ValueError("boom"), traceback_text="traceback")
 
   assert FailedExecution.objects.filter(job=job).exists() is False
+
+
+@pytest.mark.django_db
+def test_complete_claimed_job_rejects_conflicting_execution_state():
+  job = make_job()
+  ClaimedExecution.objects.create(job=job)
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+
+  with pytest.raises(EnqueueError, match="already has an execution-state row"):
+    complete_claimed_job(job.id, "done")
+
+  assert ClaimedExecution.objects.filter(job=job).exists() is True
+  assert Job.objects.get(pk=job.pk).finished_at is None
 
 
 @pytest.mark.django_db(transaction=True)

@@ -439,10 +439,9 @@ def _complete_claimed_job(job, return_value, *, backend_alias="default", task=No
     config = load_backend_config(job.backend_alias)
 
     if config.preserve_finished_jobs:
-      job.finished_at = now
-      job.return_value = return_value
-      job.save(using=alias, update_fields=["finished_at", "return_value", "updated_at"])
+      _finish_job_if_no_execution_state(alias, job, return_value, finished_at=now)
     else:
+      _ensure_no_other_execution_state(alias, job, ignored_models=(ClaimedExecution,))
       job.delete(using=alias)
 
     _release_concurrency_slot(job, task=task)
@@ -1146,6 +1145,31 @@ def _delete_claimed_execution(alias, job_id):
   deleted, _ = ClaimedExecution.objects.using(alias).filter(job_id=job_id).delete()
   if not deleted:
     raise ClaimedExecution.DoesNotExist
+
+
+def _finish_job_if_no_execution_state(alias, job, return_value, *, finished_at):
+  updated = (
+    Job.objects.using(alias)
+    .filter(
+      pk=job.pk,
+      backend_alias=job.backend_alias,
+      ready_execution__isnull=True,
+      scheduled_execution__isnull=True,
+      claimed_execution__isnull=True,
+      blocked_execution__isnull=True,
+      failed_execution__isnull=True,
+    )
+    .update(
+      finished_at=finished_at,
+      return_value=return_value,
+      updated_at=finished_at,
+    )
+  )
+  if not updated:
+    raise EnqueueError(f"job {job.id} already has an execution-state row")
+  job.finished_at = finished_at
+  job.return_value = return_value
+  job.updated_at = finished_at
 
 
 def _bulk_create(alias, model, objects):
