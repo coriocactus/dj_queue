@@ -99,7 +99,7 @@ def test_runner_liveness_check_uses_app_executor(monkeypatch):
     yield
 
   monkeypatch.setattr("dj_queue.runtime.base.app_executor", executor)
-  runner = DummyRunner()
+  runner = DummyRunner(heartbeat_interval=60)
   runner.start()
 
   try:
