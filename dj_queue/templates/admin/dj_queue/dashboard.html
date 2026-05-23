@@ -586,8 +586,8 @@
                 <tr class="{% cycle 'row1' 'row2' %}">
                   <th class="djq-col-name"><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=ready">{{ queue.name }}</a></th>
                   <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=ready">{{ queue.ready_count }}</a></td>
-                  <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=claimed">{{ queue.claimed_count }}</a></td>
                   <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=scheduled">{{ queue.scheduled_count }}</a></td>
+                  <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=claimed">{{ queue.claimed_count }}</a></td>
                   <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=blocked">{{ queue.blocked_count }}</a></td>
                   <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=failed">{{ queue.failed_count }}</a></td>
                   <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=finished">{{ queue.finished_count }}</a></td>

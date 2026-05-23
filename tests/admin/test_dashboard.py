@@ -311,6 +311,20 @@ def test_dashboard_backend_switch_posts_to_base_dashboard_url(admin_client):
   )
 
 
+def test_dashboard_queue_summary_matches_scheduled_and_claimed_headers(admin_client):
+  make_scheduled_job(queue_name="alpha")
+
+  response = admin_client.get(reverse("admin:dj_queue_dashboard_changelist"))
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  queue_url = reverse("admin:dj_queue_dashboard_queue", args=["alpha"])
+  scheduled_cell = f'href="{queue_url}?backend=default&state=scheduled">1</a>'
+  claimed_cell = f'href="{queue_url}?backend=default&state=claimed">0</a>'
+
+  assert content.index(scheduled_cell) < content.index(claimed_cell)
+
+
 def test_dashboard_processes_group_children_under_supervisor(admin_client):
   now = timezone.now()
   supervisor = Process.objects.create(
