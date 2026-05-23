@@ -110,4 +110,4 @@ urlpatterns = [
 ]
 
 wsgi_application = get_wsgi_application()
-asgi_application = DjQueueLifespan(get_asgi_application())
+asgi_application = DjQueueLifespan(get_asgi_application(), forward_wrapped_lifespan=False)

@@ -545,6 +545,10 @@ def _build_recurring_config(
 
     queue_name = str(raw_entry.get("queue_name", "default"))
     priority = _priority_int(raw_entry.get("priority", 0), f"recurring task {key!r} priority")
+    if allowed_queues and queue_name not in allowed_queues:
+      raise ImproperlyConfigured(
+        f"recurring task {key!r} is invalid: queue {queue_name!r} is not allowed for backend {backend_alias!r}"
+      )
     try:
       task = import_string(str(task_path))
     except ImportError as exc:
@@ -552,10 +556,6 @@ def _build_recurring_config(
     if not hasattr(task, "using"):
       raise ImproperlyConfigured(
         f"recurring task {key!r} is invalid: task_path must reference a Django task"
-      )
-    if allowed_queues and queue_name not in allowed_queues:
-      raise ImproperlyConfigured(
-        f"recurring task {key!r} is invalid: queue {queue_name!r} is not allowed for backend {backend_alias!r}"
       )
 
     recurring[str(key)] = RecurringTaskConfig(

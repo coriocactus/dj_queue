@@ -687,8 +687,11 @@ from django.core.asgi import get_asgi_application
 from dj_queue.contrib.asgi import DjQueueLifespan
 
 django_application = get_asgi_application()
-application = DjQueueLifespan(django_application)
+application = DjQueueLifespan(django_application, forward_wrapped_lifespan=False)
 ```
+
+Set `forward_wrapped_lifespan=False` when the wrapped app does not implement the
+ASGI lifespan protocol itself, such as Django's plain `get_asgi_application()`.
 
 ### Gunicorn
 

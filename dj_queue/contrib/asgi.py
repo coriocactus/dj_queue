@@ -11,9 +11,10 @@ def build_supervisor(backend_alias="default"):
 
 
 class DjQueueLifespan:
-  def __init__(self, app, *, backend_alias="default"):
+  def __init__(self, app, *, backend_alias="default", forward_wrapped_lifespan=True):
     self.app = app
     self.backend_alias = backend_alias
+    self.forward_wrapped_lifespan = forward_wrapped_lifespan
     self.supervisor = None
     self._poll_task = None
     self._poll_stop = None
@@ -74,6 +75,13 @@ class DjQueueLifespan:
     self._poll_stop = asyncio.Event()
     self._poll_task = asyncio.create_task(self._poll_supervisor())
 
+  @staticmethod
+  def _is_unsupported_lifespan_error(error):
+    message = str(error).lower()
+    return isinstance(error, ValueError) and (
+      "django can only handle asgi/http connections" in message and "lifespan" in message
+    )
+
   async def _stop_supervisor(self):
     poll_stop = self._poll_stop
     self._poll_stop = None
@@ -97,14 +105,22 @@ class DjQueueLifespan:
     receive_queue = asyncio.Queue()
     send_queue = asyncio.Queue()
     app_task = await self._start_wrapped_lifespan_app(scope, receive_queue.get, send_queue.put)
+    wrapped_app_supports_lifespan = self.forward_wrapped_lifespan
 
     try:
       while True:
         message = await receive()
         if message["type"] == "lifespan.startup":
-          response = await self._forward_lifespan_message(
-            app_task, receive_queue, send_queue, message
-          )
+          response = None
+          if wrapped_app_supports_lifespan:
+            try:
+              response = await self._forward_lifespan_message(
+                app_task, receive_queue, send_queue, message
+              )
+            except Exception as error:
+              if not self._is_unsupported_lifespan_error(error):
+                raise
+              wrapped_app_supports_lifespan = False
           if response is not None and response["type"] != "lifespan.startup.complete":
             await send(response)
             return
@@ -113,13 +129,16 @@ class DjQueueLifespan:
           await send({"type": "lifespan.startup.complete"})
         elif message["type"] == "lifespan.shutdown":
           await self._stop_supervisor()
-          response = await self._forward_lifespan_message(
-            app_task, receive_queue, send_queue, message
-          )
+          response = None
+          if wrapped_app_supports_lifespan:
+            response = await self._forward_lifespan_message(
+              app_task, receive_queue, send_queue, message
+            )
           if response is None:
             response = {"type": "lifespan.shutdown.complete"}
           await send(response)
-          await app_task
+          if wrapped_app_supports_lifespan:
+            await app_task
           return
     finally:
       await self._stop_supervisor()

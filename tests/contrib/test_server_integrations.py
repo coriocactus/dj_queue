@@ -103,22 +103,26 @@ def test_gunicorn_post_fork_starts_one_embedded_supervisor(monkeypatch):
   worker_one = type("Worker", (), {"age": 2})()
   worker_two = type("Worker", (), {"age": 3})()
 
-  gunicorn.post_fork(object(), worker_one)
-  gunicorn.post_fork(object(), worker_two)
-  wait_until(lambda: any(event[0] == "poll" for event in events), timeout=1)
+  try:
+    gunicorn.post_fork(object(), worker_one)
+    gunicorn.post_fork(object(), worker_two)
+    wait_until(lambda: any(event[0] == "poll" for event in events), timeout=1)
 
-  assert isinstance(worker_one._dj_queue_supervisor, StubSupervisor)
-  assert worker_two._dj_queue_supervisor is None
-  acquired_lock = worker_one._dj_queue_supervisor_lock
+    assert isinstance(worker_one._dj_queue_supervisor, StubSupervisor)
+    assert worker_two._dj_queue_supervisor is None
+    acquired_lock = worker_one._dj_queue_supervisor_lock
 
-  gunicorn.worker_exit(object(), worker_one)
+    gunicorn.worker_exit(object(), worker_one)
 
-  assert events[0] == ("start", "default")
-  assert any(event[0] == "poll" for event in events)
-  assert events[-1] == ("stop", "default")
-  assert worker_one._dj_queue_supervisor is None
-  assert released == [acquired_lock]
-  assert worker_one._dj_queue_supervisor_lock is None
+    assert events[0] == ("start", "default")
+    assert any(event[0] == "poll" for event in events)
+    assert events[-1] == ("stop", "default")
+    assert worker_one._dj_queue_supervisor is None
+    assert released == [acquired_lock]
+    assert worker_one._dj_queue_supervisor_lock is None
+  finally:
+    gunicorn.worker_exit(object(), worker_one)
+    gunicorn.worker_exit(object(), worker_two)
 
 
 def test_gunicorn_embedded_supervisor_poll_survives_errors(monkeypatch):
@@ -412,6 +416,95 @@ def test_asgi_lifespan_forwards_wrapped_app_startup_failure(monkeypatch):
   asyncio.run(app({"type": "lifespan"}, receive, send))
 
   assert sent_messages == [{"type": "lifespan.startup.failed", "message": "wrapped app failed"}]
+
+
+def test_asgi_lifespan_ignores_wrapped_app_without_lifespan_support(monkeypatch):
+  events = []
+
+  class StubSupervisor:
+    def start(self):
+      events.append("start")
+
+    def stop(self):
+      events.append("stop")
+
+  async def wrapped_app(_scope, _receive, _send):
+    raise ValueError("Django can only handle ASGI/HTTP connections, not lifespan.")
+
+  monkeypatch.setattr(
+    "dj_queue.contrib.asgi.build_supervisor",
+    lambda backend_alias="default": StubSupervisor(),
+  )
+
+  from dj_queue.contrib.asgi import DjQueueLifespan
+
+  app = DjQueueLifespan(wrapped_app)
+  sent_messages = []
+  messages = iter(
+    [
+      {"type": "lifespan.startup"},
+      {"type": "lifespan.shutdown"},
+    ]
+  )
+
+  async def receive():
+    return next(messages)
+
+  async def send(message):
+    sent_messages.append(message)
+
+  asyncio.run(app({"type": "lifespan"}, receive, send))
+
+  assert events == ["start", "stop"]
+  assert sent_messages == [
+    {"type": "lifespan.startup.complete"},
+    {"type": "lifespan.shutdown.complete"},
+  ]
+
+
+def test_asgi_lifespan_can_skip_wrapped_lifespan_forwarding_explicitly(monkeypatch):
+  events = []
+
+  class StubSupervisor:
+    def start(self):
+      events.append("start")
+
+    def stop(self):
+      events.append("stop")
+
+  async def wrapped_app(_scope, _receive, _send):
+    events.append("wrapped-app-started")
+    await asyncio.sleep(0)
+
+  monkeypatch.setattr(
+    "dj_queue.contrib.asgi.build_supervisor",
+    lambda backend_alias="default": StubSupervisor(),
+  )
+
+  from dj_queue.contrib.asgi import DjQueueLifespan
+
+  app = DjQueueLifespan(wrapped_app, forward_wrapped_lifespan=False)
+  sent_messages = []
+  messages = iter(
+    [
+      {"type": "lifespan.startup"},
+      {"type": "lifespan.shutdown"},
+    ]
+  )
+
+  async def receive():
+    return next(messages)
+
+  async def send(message):
+    sent_messages.append(message)
+
+  asyncio.run(app({"type": "lifespan"}, receive, send))
+
+  assert events == ["start", "wrapped-app-started", "stop"]
+  assert sent_messages == [
+    {"type": "lifespan.startup.complete"},
+    {"type": "lifespan.shutdown.complete"},
+  ]
 
 
 def test_asgi_lifespan_prunes_stale_process_rows(monkeypatch):

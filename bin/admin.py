@@ -971,7 +971,11 @@ urlpatterns = [
 ]
 
 
-application = DjQueueLifespan(ASGIStaticFilesHandler(get_asgi_application()), backend_alias="demo")
+application = DjQueueLifespan(
+  ASGIStaticFilesHandler(get_asgi_application()),
+  backend_alias="demo",
+  forward_wrapped_lifespan=False,
+)
 
 
 # ---------------------------------------------------------------------------
