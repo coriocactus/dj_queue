@@ -49,8 +49,8 @@ class Process(models.Model):
     db_table = "dj_queue_processes"
     constraints = [
       models.UniqueConstraint(
-        fields=["name", "supervisor_identity"],
-        name="djq_pr_name_parent_uniq",
+        fields=["backend_alias", "name", "supervisor_identity"],
+        name="djq_pr_backend_name_parent_uniq",
       )
     ]
     indexes = [

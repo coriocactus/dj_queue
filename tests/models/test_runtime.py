@@ -96,6 +96,15 @@ def test_process_identity_unique_by_name_and_supervisor():
 
 
 @pytest.mark.django_db
+def test_process_identity_is_scoped_by_backend_alias():
+  supervisor = make_process(kind="Supervisor", name="supervisor-1", pid=100)
+
+  make_process(kind="Supervisor", name="supervisor-1", pid=101, backend_alias="secondary")
+  make_process(name="worker-1", pid=102, supervisor=supervisor)
+  make_process(name="worker-1", pid=103, supervisor=supervisor, backend_alias="secondary")
+
+
+@pytest.mark.django_db
 def test_root_process_identity_unique_by_name():
   make_process(kind="Supervisor", name="supervisor-1", pid=100)
 
