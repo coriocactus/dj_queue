@@ -68,6 +68,8 @@ def test_all_backends_runs_benchmarks_and_reports_with_default_outputs(monkeypat
       "3",
       "--output",
       "benchmark-results/mariadb-timestamp.jsonl",
+      "--conn-max-age",
+      "60",
     ],
     [
       "all",
@@ -81,6 +83,8 @@ def test_all_backends_runs_benchmarks_and_reports_with_default_outputs(monkeypat
       "3",
       "--output",
       "benchmark-results/mysql-timestamp.jsonl",
+      "--conn-max-age",
+      "60",
     ],
     [
       "all",

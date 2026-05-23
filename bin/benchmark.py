@@ -27,6 +27,7 @@ ALL_BACKENDS = ("postgres", "mariadb", "mysql", "sqlite")
 ALL_BACKEND_BENCHMARK_OPTIONS = {
   "warmups": "1",
   "runs": "3",
+  "conn_max_age": "60",
 }
 
 
@@ -158,8 +159,8 @@ def all_backend_command(backend, *, sizes, output_path):
     ]
   )
   command.extend(["--output", str(output_path)])
-  if backend == "postgres":
-    command.extend(["--conn-max-age", "60"])
+  if backend in {"postgres", "mysql", "mariadb"}:
+    command.extend(["--conn-max-age", ALL_BACKEND_BENCHMARK_OPTIONS["conn_max_age"]])
   return command
 
 
