@@ -35,6 +35,9 @@ It has a narrow, explicit shape:
 For detailed comparisons with Celery, RQ, Procrastinate, and other alternatives,
 see [COMPARISONS.md](docs/COMPARISONS.md).
 
+For benchmarks on enqueue, promotion, recurring, claiming, worker-drain, and concurrency-contention scenarios,
+see [docs/benchmarks/](docs/benchmarks/) for the latest published reports.
+
 ## Installation
 
 `dj_queue` requires Python 3.12+ and Django 6.0+.
@@ -985,11 +988,6 @@ Both endpoints support bearer token authentication. Set
 `DJ_QUEUE_OBSERVABILITY_TOKEN` in `settings.py` and include it as
 `Authorization: Bearer <token>`. Leave it unset if you protect these URLs at
 the network or proxy layer.
-
-## Benchmarks
-
-The repository includes a standalone benchmark harness for enqueue, promotion, recurring, worker-drain, and concurrency-contention scenarios. 
-See [`docs/benchmarks/`](docs/benchmarks/) for the latest published reports.
 
 ## License
 
