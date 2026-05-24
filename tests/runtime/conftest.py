@@ -7,18 +7,20 @@ import pytest
 _heartbeat_thread_prefix = "dj_queue-heartbeat-"
 
 
-def _live_heartbeat_threads():
+def _live_heartbeat_threads(*, excluding=frozenset()):
   return [
     thread
     for thread in threading.enumerate()
-    if thread.name.startswith(_heartbeat_thread_prefix) and thread.is_alive()
+    if thread not in excluding
+    and thread.name.startswith(_heartbeat_thread_prefix)
+    and thread.is_alive()
   ]
 
 
-def _wait_for_no_heartbeat_threads(timeout=1):
+def _wait_for_no_heartbeat_threads(*, excluding, timeout=1):
   deadline = time.monotonic() + timeout
   while True:
-    threads = _live_heartbeat_threads()
+    threads = _live_heartbeat_threads(excluding=excluding)
     if not threads:
       return
     if time.monotonic() >= deadline:
@@ -29,6 +31,6 @@ def _wait_for_no_heartbeat_threads(timeout=1):
 
 @pytest.fixture(autouse=True)
 def no_heartbeat_thread_leaks():
-  _wait_for_no_heartbeat_threads()
+  existing_threads = frozenset(threading.enumerate())
   yield
-  _wait_for_no_heartbeat_threads()
+  _wait_for_no_heartbeat_threads(excluding=existing_threads)
