@@ -617,8 +617,9 @@ Run your normal application migrations on `default`, then migrate `dj_queue`
 onto the queue database:
 
 ```bash
-python manage.py migrate
+# migrate dj_queue on its queue alias first so django doesn't mark it applied on default
 python manage.py migrate dj_queue --database queue
+python manage.py migrate
 ```
 
 With this setup, `dj_queue`'s ORM queries and raw SQL helpers stay on the queue
