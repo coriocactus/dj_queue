@@ -249,7 +249,6 @@ def unblock_next_blocked_job(
   with _operation_atomic(alias):
     queryset = (
       BlockedExecution.objects.using(alias)
-      .select_related("job")
       .filter(backend_alias=backend_alias, concurrency_key=key)
       .order_by("-priority", "id")
     )
@@ -287,10 +286,18 @@ def unblock_next_blocked_job(
         backend_alias=backend_alias,
       )
 
+    mock_job = Job(
+      id=blocked.job_id,
+      queue_name=blocked.queue_name,
+      priority=blocked.priority,
+      concurrency_key=blocked.concurrency_key,
+      backend_alias=backend_alias,
+    )
+
     if not slot_acquired:
       _create_blocked_execution(
         alias,
-        blocked.job,
+        mock_job,
         backend_alias=backend_alias,
         queue_name=blocked.queue_name,
         priority=blocked.priority,
@@ -300,25 +307,22 @@ def unblock_next_blocked_job(
       )
       return None
 
-    job = blocked.job
-    queue_name = blocked.queue_name
-    priority = blocked.priority
     _create_ready_execution_after_blocked_consume(
       alias,
-      job=job,
+      job=mock_job,
       backend_alias=backend_alias,
-      queue_name=queue_name,
-      priority=priority,
+      queue_name=blocked.queue_name,
+      priority=blocked.priority,
       ready_at=now,
     )
 
   log_event(
     "job.unblocked",
-    job_id=str(job.id),
+    job_id=str(mock_job.id),
     concurrency_key=key,
   )
-  notify_ready_queues_on_commit((job.queue_name,), backend_alias=backend_alias)
-  return job
+  notify_ready_queues_on_commit((blocked.queue_name,), backend_alias=backend_alias)
+  return mock_job
 
 
 def _create_ready_execution_after_blocked_consume(
