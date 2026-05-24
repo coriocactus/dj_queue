@@ -170,8 +170,11 @@ def _scheduled_execution_row(job, *, backend_alias, scheduled_at=None, created_a
   )
 
 
-def _create_scheduled_execution(alias, job, *, backend_alias, scheduled_at=None):
-  _ensure_no_other_execution_state(alias, job)
+def _create_scheduled_execution(
+  alias, job, *, backend_alias, scheduled_at=None, check_conflicts=True
+):
+  if check_conflicts:
+    _ensure_no_other_execution_state(alias, job)
   return ScheduledExecution.objects.using(alias).create(
     **_scheduled_execution_fields(
       job,
@@ -190,8 +193,10 @@ def _create_blocked_execution(
   expires_at,
   queue_name=None,
   priority=None,
+  check_conflicts=True,
 ):
-  _ensure_no_other_execution_state(alias, job)
+  if check_conflicts:
+    _ensure_no_other_execution_state(alias, job)
   return BlockedExecution.objects.using(alias).create(
     **_blocked_execution_fields(
       job,

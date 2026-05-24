@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from datetime import timedelta
 from enum import StrEnum
 
-from django.core.exceptions import ObjectDoesNotExist
 from django.db import connections, transaction
 from django.db.models import Case, IntegerField, Value, When
 from django.db.utils import OperationalError
@@ -319,15 +318,7 @@ def _claim_ready_jobs_once(
 
   with transaction.atomic(using=alias):
     queryset = (
-      ReadyExecution.objects.using(alias)
-      .select_related(
-        "job",
-        "job__scheduled_execution",
-        "job__claimed_execution",
-        "job__blocked_execution",
-        "job__failed_execution",
-      )
-      .filter(backend_alias=backend_alias)
+      ReadyExecution.objects.using(alias).select_related("job").filter(backend_alias=backend_alias)
     )
     queryset = _exclude_active_pauses(queryset, alias, backend_alias)
     ready_rows = _select_ready_rows(
@@ -339,9 +330,14 @@ def _claim_ready_jobs_once(
     if not ready_rows:
       return []
 
-    for row in ready_rows:
-      if _ready_row_has_conflicting_state(row):
-        raise EnqueueError(f"job {row.job_id} already has an execution-state row")
+    conflicting_job_ids = _job_ids_with_other_execution_state(
+      alias,
+      [row.job_id for row in ready_rows],
+      ignored_models=(ReadyExecution,),
+    )
+    if conflicting_job_ids:
+      conflicting_job_id = next(iter(conflicting_job_ids))
+      raise EnqueueError(f"job {conflicting_job_id} already has an execution-state row")
 
     paused_queue_names = _lock_active_pauses(
       alias,
@@ -368,21 +364,6 @@ def _claim_ready_jobs_once(
     )
 
   return [ClaimedJob(job=job, claimed_at=claimed_at, worker_ids=worker_ids) for job in jobs]
-
-
-def _ready_row_has_conflicting_state(row):
-  for relation_name in (
-    "scheduled_execution",
-    "claimed_execution",
-    "blocked_execution",
-    "failed_execution",
-  ):
-    try:
-      getattr(row.job, relation_name)
-    except ObjectDoesNotExist:
-      continue
-    return True
-  return False
 
 
 def execute_claimed_job(job, *, backend_alias="default"):
@@ -674,7 +655,7 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
     for job in jobs:
       if job.pk in direct_job_ids:
         continue
-      dispatch_outcome = _dispatch_existing_job(job)
+      dispatch_outcome = _dispatch_existing_job(job, check_conflicts=False)
       if dispatch_outcome.should_notify:
         ready_queue_names.append(job.queue_name)
 
@@ -907,9 +888,11 @@ def discard_blocked_jobs(*, job_ids=None, batch_size=500, backend_alias="default
   )
 
 
-def _dispatch_existing_job(job):
+def _dispatch_existing_job(job, *, check_conflicts=True):
   task = import_string(job.task_path)
-  return _dispatch_job(job, task=task, backend_alias=job.backend_alias)
+  return _dispatch_job(
+    job, task=task, backend_alias=job.backend_alias, check_conflicts=check_conflicts
+  )
 
 
 def _dispatch_job(job, *, task, backend_alias, now=None, check_conflicts=True):
@@ -923,6 +906,7 @@ def _dispatch_job(job, *, task, backend_alias, now=None, check_conflicts=True):
       job=job,
       backend_alias=backend_alias,
       scheduled_at=job.scheduled_at,
+      check_conflicts=check_conflicts,
     )
     return DispatchOutcome.SCHEDULED
 
@@ -966,6 +950,7 @@ def _dispatch_job(job, *, task, backend_alias, now=None, check_conflicts=True):
     backend_alias=backend_alias,
     concurrency_key=job.concurrency_key,
     expires_at=now + timedelta(seconds=duration_seconds),
+    check_conflicts=check_conflicts,
   )
   return DispatchOutcome.BLOCKED
 

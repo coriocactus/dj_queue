@@ -22,7 +22,7 @@ from dj_queue.models import (
 from dj_queue.operations._helpers import (
   _consume_selected_rows,
   _create_blocked_execution,
-  _create_ready_execution,
+  _create_ready_execution_locked,
   _lock_active_pauses,
   _task_option,
 )
@@ -296,6 +296,7 @@ def unblock_next_blocked_job(
         priority=blocked.priority,
         concurrency_key=blocked.concurrency_key,
         expires_at=blocked.expires_at,
+        check_conflicts=False,
       )
       return None
 
@@ -455,13 +456,14 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
         priority = blocked.priority
         if not uses_serialized_writes:
           blocked.delete(using=alias)
-        _create_ready_execution(
+        _create_ready_execution_locked(
           alias,
           job=job,
           backend_alias=backend_alias,
           queue_name=queue_name,
           priority=priority,
           ready_at=now,
+          check_conflicts=False,
         )
         promoted_jobs.append(job)
       else:
@@ -475,6 +477,7 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
             priority=blocked.priority,
             concurrency_key=blocked.concurrency_key,
             expires_at=expires_at,
+            check_conflicts=False,
           )
         else:
           blocked.expires_at = expires_at

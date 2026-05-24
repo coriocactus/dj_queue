@@ -761,7 +761,7 @@ def test_claim_ready_jobs_uses_fixed_query_budget_for_successful_claim():
   with CaptureQueriesContext(connection) as ctx:
     claim_ready_jobs(limit=1)
 
-  assert len(ctx.captured_queries) == 6
+  assert len(ctx.captured_queries) == 7
 
 
 @pytest.mark.skipif(
@@ -973,7 +973,7 @@ def test_claim_ready_jobs_rejects_conflicting_state_with_fixed_query_budget():
     with pytest.raises(EnqueueError, match="already has an execution-state row"):
       claim_ready_jobs(limit=1)
 
-  assert len(ctx.captured_queries) == 4
+  assert len(ctx.captured_queries) == 5
 
 
 @pytest.mark.django_db
