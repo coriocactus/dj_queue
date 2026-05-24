@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+import threading
 import time
 from types import SimpleNamespace
 from uuid import uuid4
@@ -92,10 +93,11 @@ def test_runner_deleted_process_row_stops_cleanly():
 
 def test_runner_liveness_check_uses_app_executor(monkeypatch):
   entered = []
+  test_thread = threading.get_ident()
 
   @contextmanager
   def executor():
-    entered.append(True)
+    entered.append(threading.get_ident())
     yield
 
   monkeypatch.setattr("dj_queue.runtime.base.app_executor", executor)
@@ -107,7 +109,46 @@ def test_runner_liveness_check_uses_app_executor(monkeypatch):
   finally:
     runner.stop()
 
-  assert entered == [True]
+  assert entered.count(test_thread) == 1
+
+
+def test_runner_stop_joins_heartbeat_thread():
+  runner = DummyRunner(heartbeat_interval=60)
+  runner.start()
+  thread = runner._heartbeat_thread
+
+  runner.stop()
+
+  assert thread is not None
+  assert thread.is_alive() is False
+  assert runner._heartbeat_thread is None
+
+
+def test_runner_stop_keeps_heartbeat_thread_reference_when_join_times_out():
+  heartbeat_entered = threading.Event()
+  release_heartbeat = threading.Event()
+  runner = DummyRunner(heartbeat_interval=0.01)
+
+  def blocked_touch():
+    heartbeat_entered.set()
+    release_heartbeat.wait(timeout=1)
+    return 1
+
+  runner._touch_process_row = blocked_touch
+  runner.start()
+  wait_until(heartbeat_entered.is_set)
+
+  try:
+    runner.stop()
+
+    thread = runner._heartbeat_thread
+    assert thread is not None
+    assert thread.is_alive() is True
+  finally:
+    release_heartbeat.set()
+    runner._stop_heartbeat_thread()
+
+  assert runner._heartbeat_thread is None
 
 
 def test_managed_poll_loop_reports_runner_stop_as_failure():

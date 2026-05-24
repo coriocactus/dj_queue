@@ -244,16 +244,23 @@ class BaseRunner:
     if interval <= 0:
       return
     self._heartbeat_stop_event.clear()
-    self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+    self._heartbeat_thread = threading.Thread(
+      target=self._heartbeat_loop,
+      name=f"dj_queue-heartbeat-{self.name}",
+      daemon=True,
+    )
     self._heartbeat_thread.start()
 
   def _stop_heartbeat_thread(self):
     thread = self._heartbeat_thread
     if thread is None:
-      return
+      return True
     self._heartbeat_stop_event.set()
     thread.join(timeout=max(self._effective_heartbeat_interval(), 0.1) + 0.1)
+    if thread.is_alive():
+      return False
     self._heartbeat_thread = None
+    return True
 
   def _heartbeat_loop(self):
     interval = self._effective_heartbeat_interval()
