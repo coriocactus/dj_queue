@@ -827,19 +827,22 @@ def test_dead_child_fails_claimed_jobs_and_replaces_runner():
     waitpid=waitpid,
   )
   supervisor_process = supervisor.start()
-  child_process = make_process(pid=90001, name="worker-1", supervisor=supervisor_process)
-  job = make_job(task_path="tests.tasks.echo")
-  make_claimed_execution(job=job, process=child_process)
+  try:
+    child_process = make_process(pid=90001, name="worker-1", supervisor=supervisor_process)
+    job = make_job(task_path="tests.tasks.echo")
+    make_claimed_execution(job=job, process=child_process)
 
-  replaced = supervisor.check_children()
+    replaced = supervisor.check_children()
 
-  failed_execution = FailedExecution.objects.get(job=job)
-  assert replaced == 90002
-  assert failed_execution.exception_class == (
-    f"{ProcessExitError.__module__}.{ProcessExitError.__qualname__}"
-  )
-  assert supervisor.children[90002]["kind"] == "worker"
-  assert Process.objects.filter(pk=child_process.pk).exists() is False
+    failed_execution = FailedExecution.objects.get(job=job)
+    assert replaced == 90002
+    assert failed_execution.exception_class == (
+      f"{ProcessExitError.__module__}.{ProcessExitError.__qualname__}"
+    )
+    assert supervisor.children[90002]["kind"] == "worker"
+    assert Process.objects.filter(pk=child_process.pk).exists() is False
+  finally:
+    supervisor.stop()
 
 
 def test_fork_supervisor_ignores_unknown_reaped_child_pid():
@@ -947,7 +950,10 @@ def test_sigquit_takes_immediate_exit_path():
   )
   supervisor.start()
 
-  supervisor.handle_sigquit()
+  try:
+    supervisor.handle_sigquit()
+  finally:
+    supervisor.stop()
 
   assert exited == [1]
 
