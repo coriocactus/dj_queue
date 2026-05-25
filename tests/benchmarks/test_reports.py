@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from benchmarks.catalog import SCENARIO_CONTEXT, SCENARIO_DESCRIPTIONS
-from benchmarks.reports import render_markdown
+from benchmarks.reports import render_four_horsemen_markdown, render_markdown
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -204,7 +204,81 @@ def test_render_markdown_report_accepts_run_command_override():
   assert "--run-command 'bin/benchmark.py all --backend postgres" in markdown
 
 
-def benchmark_row(*, scenario="bulk-enqueue", metadata=None, metrics=None):
+def test_render_four_horsemen_report_compares_10k_key_metric_medians():
+  markdown = render_four_horsemen_markdown(
+    {
+      "postgres": [
+        benchmark_row(size=1000, metrics={"jobs_per_second": 1.0}),
+        benchmark_row(size=10000, metrics={"jobs_per_second": 100.0}),
+        benchmark_row(size=10000, metrics={"jobs_per_second": 300.0}),
+        benchmark_row(size=10000, metrics={"jobs_per_second": 200.0}),
+        benchmark_row(
+          scenario="concurrency-contention",
+          size=10000,
+          metrics={"drain_jobs_per_second": 40.0},
+        ),
+      ],
+      "mariadb": [
+        benchmark_row(
+          size=10000,
+          metadata={"backend": "mariadb", "database": {"vendor": "mysql"}},
+          metrics={"jobs_per_second": 20.0},
+        ),
+        benchmark_row(
+          size=10000,
+          metadata={"backend": "mariadb", "database": {"vendor": "mysql"}},
+          metrics={"jobs_per_second": 10.0},
+        ),
+        benchmark_row(
+          size=10000,
+          metadata={"backend": "mariadb", "database": {"vendor": "mysql"}},
+          metrics={"jobs_per_second": 30.0},
+        ),
+      ],
+      "mysql": [
+        benchmark_row(
+          size=10000,
+          metadata={"backend": "mysql", "database": {"vendor": "mysql"}},
+          metrics={"jobs_per_second": 50.0},
+        ),
+      ],
+      "sqlite": [
+        benchmark_row(
+          size=10000,
+          metadata={
+            "backend": "sqlite",
+            "database": {
+              "vendor": "sqlite",
+              "name": str(PROJECT_ROOT / "benchmark-results" / "dj_queue_benchmark.sqlite3"),
+            },
+            "benchmark": {"worker_count": 1, "worker_threads": 1},
+          },
+          metrics={"jobs_per_second": 400.0},
+        ),
+        benchmark_row(
+          scenario="concurrency-contention",
+          size=10000,
+          metadata={"backend": "sqlite", "database": {"vendor": "sqlite"}},
+          metrics={"drain_jobs_per_second": 999.0},
+        ),
+      ],
+    }
+  )
+
+  assert "# dj_queue Four Horsemen Benchmark Report" in markdown
+  assert "## 10k median key metric comparison" in markdown
+  assert "| scenario | key metric | postgres | mariadb | mysql | sqlite |" in markdown
+  assert "| `bulk-enqueue` | `jobs_per_second` | 200.000 | 20.000 | 50.000 | 400.000 |" in markdown
+  assert "| `concurrency-contention` | `drain_jobs_per_second` |" in markdown
+  assert "not supported" in markdown
+  assert "## Metadata" in markdown
+  assert "| workers | `` | `` | `` | `1` |" in markdown
+  assert "benchmark-results/dj_queue_benchmark.sqlite3" in markdown
+  assert "## Scenario keys" in markdown
+  assert "| `bulk-enqueue` | `jobs_per_second` | bulk enqueue throughput" in markdown
+
+
+def benchmark_row(*, scenario="bulk-enqueue", size=100, metadata=None, metrics=None):
   base_metadata = {
     "backend": "postgres",
     "database": {
@@ -220,6 +294,9 @@ def benchmark_row(*, scenario="bulk-enqueue", metadata=None, metrics=None):
     "git_revision": "abc123",
   }
   if metadata:
+    if "database" in metadata:
+      base_metadata["database"].update(metadata["database"])
+      metadata = {key: value for key, value in metadata.items() if key != "database"}
     base_metadata.update(metadata)
   row_metrics = {
     "duration_seconds": 0.1,
@@ -230,7 +307,7 @@ def benchmark_row(*, scenario="bulk-enqueue", metadata=None, metrics=None):
     row_metrics.update(metrics)
   return {
     "scenario": scenario,
-    "size": 100,
+    "size": size,
     "run_index": 0,
     "metrics": row_metrics,
     "metadata": base_metadata,

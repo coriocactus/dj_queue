@@ -19,7 +19,7 @@ from benchmarks.harness import (
   preflight_persistent_connection_budget,
   reset_database,
 )
-from benchmarks.reports import render_markdown_report
+from benchmarks.reports import render_four_horsemen_report, render_markdown_report
 
 DEFAULT_QUICK_SIZES = [100, 1000]
 DEFAULT_ALL_SIZES = [1000, 10000]
@@ -130,6 +130,7 @@ def main(argv):
 def run_all_backend_benchmarks(args):
   parse_sizes(args.sizes, default=DEFAULT_ALL_SIZES)
   report_dir = Path(args.report_dir)
+  output_paths = []
   for backend in ALL_BACKENDS:
     output_path = default_output_path(backend)
     command = all_backend_command(backend, sizes=args.sizes, output_path=output_path)
@@ -138,6 +139,8 @@ def run_all_backend_benchmarks(args):
     except subprocess.CalledProcessError as exc:
       raise RuntimeError(f"benchmark failed for backend {backend!r}") from exc
     render_markdown_report(output_path, report_dir / f"{backend}.md")
+    output_paths.append(output_path)
+  render_four_horsemen_report(output_paths, report_dir / "4-horsemen.md")
   return 0
 
 

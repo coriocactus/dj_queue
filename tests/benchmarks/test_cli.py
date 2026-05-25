@@ -16,6 +16,7 @@ SPEC.loader.exec_module(benchmark_cli)
 def test_all_backends_runs_benchmarks_and_reports_with_default_outputs(monkeypatch):
   commands = []
   reports = []
+  four_horsemen_reports = []
   outputs = {
     backend: Path(f"benchmark-results/{backend}-timestamp.jsonl")
     for backend in ("postgres", "mariadb", "mysql", "sqlite")
@@ -31,6 +32,11 @@ def test_all_backends_runs_benchmarks_and_reports_with_default_outputs(monkeypat
     benchmark_cli,
     "render_markdown_report",
     lambda input_path, output_path: reports.append((input_path, output_path)),
+  )
+  monkeypatch.setattr(
+    benchmark_cli,
+    "render_four_horsemen_report",
+    lambda input_paths, output_path: four_horsemen_reports.append((input_paths, output_path)),
   )
 
   args = benchmark_cli.parse_args(["all-backends"])
@@ -107,6 +113,12 @@ def test_all_backends_runs_benchmarks_and_reports_with_default_outputs(monkeypat
     (outputs["mariadb"], Path("docs/benchmarks/mariadb.md")),
     (outputs["mysql"], Path("docs/benchmarks/mysql.md")),
     (outputs["sqlite"], Path("docs/benchmarks/sqlite.md")),
+  ]
+  assert four_horsemen_reports == [
+    (
+      [outputs["postgres"], outputs["mariadb"], outputs["mysql"], outputs["sqlite"]],
+      Path("docs/benchmarks/4-horsemen.md"),
+    )
   ]
 
 

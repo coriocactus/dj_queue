@@ -4,6 +4,7 @@ import shlex
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
+from statistics import median
 
 from benchmarks.catalog import (
   SCENARIO_CONTEXT,
@@ -27,10 +28,144 @@ def render_markdown_report(input_path, output_path, *, run_command=None):
   return output
 
 
+def render_four_horsemen_report(input_paths, output_path):
+  rows_by_backend = {}
+  for input_path in input_paths:
+    rows = read_jsonl(input_path)
+    if not rows:
+      raise ValueError(f"no benchmark rows found in {input_path}")
+    backend = rows[0]["metadata"]["backend"]
+    rows_by_backend[backend] = rows
+
+  output = Path(output_path)
+  output.parent.mkdir(parents=True, exist_ok=True)
+  output.write_text(render_four_horsemen_markdown(rows_by_backend), encoding="utf-8")
+  return output
+
+
 def read_jsonl(input_path):
   path = Path(input_path)
   with path.open(encoding="utf-8") as handle:
     return [json.loads(line) for line in handle if line.strip()]
+
+
+def render_four_horsemen_markdown(rows_by_backend):
+  backends = tuple(rows_by_backend)
+  if not backends:
+    raise ValueError("no benchmark rows found")
+
+  metadata_by_backend = {
+    backend: rows[0]["metadata"] for backend, rows in rows_by_backend.items() if rows
+  }
+  scenario_names = tuple(
+    scenario
+    for scenario in SCENARIO_CONTEXT
+    if any(
+      scenario_supported_by_backend(backend, scenario)
+      and any(row["scenario"] == scenario and row["size"] == 10000 for row in rows)
+      for backend, rows in rows_by_backend.items()
+    )
+  )
+
+  lines = [
+    "# dj_queue Four Horsemen Benchmark Report",
+    "",
+    "> Median key metric on the 10k workload across PostgreSQL, MariaDB, MySQL, and SQLite.",
+    "",
+    f"Generated: {datetime.now(UTC).isoformat()}",
+    "",
+    "## 10k median key metric comparison",
+    "",
+    "| scenario | key metric | " + " | ".join(backends) + " |",
+    "|" + "---|" * (2 + len(backends)),
+  ]
+
+  for scenario in scenario_names:
+    context = SCENARIO_CONTEXT[scenario]
+    key_metric = context["key_metric"]
+    values = [
+      four_horsemen_metric_cell(rows_by_backend[backend], scenario, key_metric, backend=backend)
+      for backend in backends
+    ]
+    lines.append(f"| `{scenario}` | `{key_metric}` | " + " | ".join(values) + " |")
+
+  lines.extend(["", "## Metadata", ""])
+  lines.extend(render_four_horsemen_metadata_table(backends, metadata_by_backend))
+  lines.extend(["", "## Scenario keys", ""])
+  lines.extend(render_four_horsemen_scenario_keys(scenario_names))
+  return "\n".join(lines)
+
+
+def four_horsemen_metric_cell(rows, scenario, key_metric, *, backend):
+  if not scenario_supported_by_backend(backend, scenario):
+    return "not supported"
+
+  values = [
+    row["metrics"][key_metric]
+    for row in rows
+    if row["scenario"] == scenario and row["size"] == 10000 and key_metric in row["metrics"]
+  ]
+  if not values:
+    return ""
+  return format_value(median(values))
+
+
+def render_four_horsemen_metadata_table(backends, metadata_by_backend):
+  lines = [
+    "| metadata | " + " | ".join(backends) + " |",
+    "|" + "---|" * (1 + len(backends)),
+  ]
+  rows = [
+    ("database", lambda metadata: metadata["database"]["vendor"]),
+    ("database name", lambda metadata: display_path(metadata["database"]["name"])),
+    ("database version", lambda metadata: metadata["database"]["version"]),
+    ("Python", lambda metadata: metadata.get("python", "")),
+    ("Django", lambda metadata: metadata.get("django", "")),
+    ("dj_queue", lambda metadata: metadata.get("dj_queue", "")),
+    ("platform", lambda metadata: metadata.get("platform", "")),
+    ("machine", lambda metadata: metadata.get("machine", "")),
+    ("revision", lambda metadata: metadata.get("git_revision", "")),
+    (
+      "workers",
+      lambda metadata: metadata.get("benchmark", {}).get("worker_count", ""),
+    ),
+    (
+      "worker threads",
+      lambda metadata: metadata.get("benchmark", {}).get("worker_threads", ""),
+    ),
+    (
+      "preserve finished jobs",
+      lambda metadata: metadata.get("benchmark", {}).get("preserve_finished_jobs", ""),
+    ),
+    (
+      "CONN_MAX_AGE",
+      lambda metadata: metadata.get("benchmark", {}).get("conn_max_age", 0),
+    ),
+  ]
+  for label, value in rows:
+    values = [format_metadata_value(value(metadata_by_backend[backend])) for backend in backends]
+    lines.append(f"| {label} | " + " | ".join(values) + " |")
+  return lines
+
+
+def render_four_horsemen_scenario_keys(scenario_names):
+  lines = [
+    "| scenario | key metric | meaning | healthy local baseline |",
+    "|---|---|---|---|",
+  ]
+  for scenario in scenario_names:
+    context = SCENARIO_CONTEXT[scenario]
+    lines.append(
+      f"| `{scenario}` | `{context['key_metric']}` | "
+      f"{context['key_metric_note']} | {context['healthy_local_baseline']} |"
+    )
+  return lines
+
+
+def format_metadata_value(value):
+  if value is None:
+    value = ""
+  return f"`{value}`"
 
 
 def render_markdown(rows, *, input_path=None, output_path=None, run_command=None):
