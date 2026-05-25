@@ -91,9 +91,10 @@ def enqueue_job(task, args, kwargs, *, backend_alias="default"):
   return job
 
 
-def enqueue_job_with_dispatch(task, args, kwargs, *, backend_alias="default"):
-  validate_queue_allowed(task.queue_name, backend_alias=backend_alias)
-  validate_priority(task.priority)
+def enqueue_job_with_dispatch(task, args, kwargs, *, backend_alias="default", validate=True):
+  if validate:
+    validate_queue_allowed(task.queue_name, backend_alias=backend_alias)
+    validate_priority(task.priority)
   alias = get_database_alias(backend_alias)
   payload = _normalize_payload(args, kwargs)
   concurrency_key = _resolve_concurrency_key(task, args, kwargs)
@@ -129,14 +130,15 @@ def enqueue_job_with_dispatch(task, args, kwargs, *, backend_alias="default"):
   return job, dispatch_outcome
 
 
-def enqueue_jobs_bulk(task_calls, *, backend_alias="default"):
+def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
   alias = get_database_alias(backend_alias)
   now = timezone.now()
   prepared = []
 
   for index, (task, args, kwargs) in enumerate(task_calls):
-    validate_queue_allowed(task.queue_name, backend_alias=backend_alias)
-    validate_priority(task.priority)
+    if validate:
+      validate_queue_allowed(task.queue_name, backend_alias=backend_alias)
+      validate_priority(task.priority)
     payload = _normalize_payload(args, kwargs)
     concurrency_key = _resolve_concurrency_key(task, args, kwargs)
     created_at = now + timedelta(microseconds=index)

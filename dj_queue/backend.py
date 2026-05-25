@@ -28,7 +28,13 @@ class DjQueueBackend(BaseTaskBackend):
 
   def enqueue(self, task, args, kwargs):
     self.validate_task(task)
-    job, dispatch_outcome = enqueue_job_with_dispatch(task, args, kwargs, backend_alias=self.alias)
+    job, dispatch_outcome = enqueue_job_with_dispatch(
+      task,
+      args,
+      kwargs,
+      backend_alias=self.alias,
+      validate=False,
+    )
     return task_result_from_enqueued_job(
       job,
       task,
@@ -49,7 +55,7 @@ class DjQueueBackend(BaseTaskBackend):
       self.validate_task(task)
       jobs.append((task, args, kwargs))
 
-    created_jobs = enqueue_jobs_bulk(jobs, backend_alias=self.alias)
+    created_jobs = enqueue_jobs_bulk(jobs, backend_alias=self.alias, validate=False)
     return [
       task_result_from_enqueued_job(
         job,
