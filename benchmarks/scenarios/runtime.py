@@ -79,9 +79,11 @@ def worker_drain(size):
 
 
 def concurrency_contention(size):
-  with Timer() as enqueue_timer:
-    for index in range(size):
-      limited.enqueue(1, value=f"limited-{index}")
+  with _capture_query_count() as captured:
+    with Timer() as enqueue_timer:
+      for index in range(size):
+        limited.enqueue(1, value=f"limited-{index}")
+  enqueue_query_count = captured["count"]
 
   blocked_count = BlockedExecution.objects.count()
   ready_count = ReadyExecution.objects.count()
@@ -114,6 +116,7 @@ def concurrency_contention(size):
   return {
     "enqueue_duration_seconds": enqueue_timer.duration,
     "enqueue_jobs_per_second": throughput(size, enqueue_timer.duration),
+    "enqueue_query_count": enqueue_query_count,
     "drain_duration_seconds": drain_timer.duration,
     "drain_jobs_per_second": throughput(size, drain_timer.duration),
     "drain_query_count": claim_query_count + execute_query_count,
@@ -158,16 +161,25 @@ def ordered_selector_claim(size):
   ReadyExecution.objects.bulk_create(ready_rows, batch_size=1000)
 
   claim_query_count = 0
+  claim_duration = 0
+  execute_query_count = 0
+  execute_duration = 0
   completed = 0
   with Timer() as timer:
     while completed < size:
       with _capture_query_count() as captured:
-        claimed_jobs = claim_ready_jobs(limit=3, queues=selectors)
+        with Timer() as claim_timer:
+          claimed_jobs = claim_ready_jobs(limit=3, queues=selectors)
       claim_query_count += captured["count"]
+      claim_duration += claim_timer.duration
       if not claimed_jobs:
         break
-      for claimed_job in claimed_jobs:
-        execute_claimed_job(claimed_job)
+      with _capture_query_count() as captured:
+        with Timer() as execute_timer:
+          for claimed_job in claimed_jobs:
+            execute_claimed_job(claimed_job)
+      execute_query_count += captured["count"]
+      execute_duration += execute_timer.duration
       completed += len(claimed_jobs)
 
   finished_count = Job.objects.filter(finished_at__isnull=False).count()
@@ -177,7 +189,10 @@ def ordered_selector_claim(size):
   return {
     "duration_seconds": timer.duration,
     "jobs_per_second": throughput(size, timer.duration),
+    "claim_duration_seconds": claim_duration,
     "claim_query_count": claim_query_count,
+    "execute_duration_seconds": execute_duration,
+    "execute_query_count": execute_query_count,
     "finished_count": finished_count,
   }
 

@@ -1,8 +1,16 @@
 import pytest
 
-from benchmarks.scenarios import runtime, scheduling
+from benchmarks.scenarios import enqueue, runtime, scheduling
 from dj_queue.models import Job
 from dj_queue.operations.jobs import ClaimedJob
+
+
+@pytest.mark.django_db
+def test_single_enqueue_reports_sampled_query_count():
+  metrics = enqueue.single_enqueue(2)
+
+  assert metrics["job_count"] == 2
+  assert metrics["query_count_sample"] > 0
 
 
 @pytest.mark.django_db
@@ -67,6 +75,7 @@ def test_concurrency_contention_uses_claimed_job_execution_path(monkeypatch):
 def test_concurrency_contention_reports_drain_query_counts():
   metrics = runtime.concurrency_contention(2)
 
+  assert metrics["enqueue_query_count"] > 0
   assert metrics["claim_query_count"] > 0
   assert metrics["execute_query_count"] > 0
   assert metrics["drain_query_count"] == (
@@ -80,3 +89,6 @@ def test_ordered_selector_claim_reports_claim_query_count():
 
   assert metrics["finished_count"] == 6
   assert metrics["claim_query_count"] > 0
+  assert metrics["claim_duration_seconds"] > 0
+  assert metrics["execute_query_count"] > 0
+  assert metrics["execute_duration_seconds"] > 0

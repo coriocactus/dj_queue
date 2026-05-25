@@ -9,10 +9,17 @@ from dj_queue.models import Job, ReadyExecution
 
 def single_enqueue(size):
   durations = []
+  query_count_sample = None
   with Timer() as timer:
     for index in range(size):
-      with Timer() as enqueue_timer:
-        result = noop.enqueue(f"single-{index}")
+      if query_count_sample is None:
+        with CaptureQueriesContext(connection) as captured:
+          with Timer() as enqueue_timer:
+            result = noop.enqueue(f"single-{index}")
+        query_count_sample = len(captured)
+      else:
+        with Timer() as enqueue_timer:
+          result = noop.enqueue(f"single-{index}")
       durations.append(enqueue_timer.duration)
       if result.status != TaskResultStatus.READY:
         raise AssertionError(f"unexpected enqueue status: {result.status}")
@@ -25,6 +32,7 @@ def single_enqueue(size):
   return {
     "duration_seconds": timer.duration,
     "jobs_per_second": throughput(size, timer.duration),
+    "query_count_sample": query_count_sample,
     "job_count": job_count,
     "ready_count": ready_count,
     **latency_summary(durations),
