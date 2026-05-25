@@ -74,11 +74,21 @@ def render_four_horsemen_markdown(rows_by_backend):
     "",
     f"Generated: {datetime.now(UTC).isoformat()}",
     "",
-    "## 10k median key metric comparison",
+    "## Metadata",
     "",
-    "| scenario | key metric | " + " | ".join(backends) + " |",
-    "|" + "---|" * (2 + len(backends)),
   ]
+  lines.extend(render_four_horsemen_metadata_table(backends, metadata_by_backend))
+  lines.extend(["", "## Scenario keys", ""])
+  lines.extend(render_four_horsemen_scenario_keys(scenario_names))
+  lines.extend(
+    [
+      "",
+      "## 10k median key metric comparison",
+      "",
+      "| scenario | key metric | " + " | ".join(backends) + " |",
+      "|" + "---|" * (2 + len(backends)),
+    ]
+  )
 
   for scenario in scenario_names:
     context = SCENARIO_CONTEXT[scenario]
@@ -88,11 +98,6 @@ def render_four_horsemen_markdown(rows_by_backend):
       for backend in backends
     ]
     lines.append(f"| `{scenario}` | `{key_metric}` | " + " | ".join(values) + " |")
-
-  lines.extend(["", "## Metadata", ""])
-  lines.extend(render_four_horsemen_metadata_table(backends, metadata_by_backend))
-  lines.extend(["", "## Scenario keys", ""])
-  lines.extend(render_four_horsemen_scenario_keys(scenario_names))
   return "\n".join(lines)
 
 

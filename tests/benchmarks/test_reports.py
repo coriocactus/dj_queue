@@ -276,6 +276,8 @@ def test_render_four_horsemen_report_compares_10k_key_metric_medians():
   assert "benchmark-results/dj_queue_benchmark.sqlite3" in markdown
   assert "## Scenario keys" in markdown
   assert "| `bulk-enqueue` | `jobs_per_second` | bulk enqueue throughput" in markdown
+  assert markdown.index("## Metadata") < markdown.index("## Scenario keys")
+  assert markdown.index("## Scenario keys") < markdown.index("## 10k median key metric comparison")
 
 
 def benchmark_row(*, scenario="bulk-enqueue", size=100, metadata=None, metrics=None):
