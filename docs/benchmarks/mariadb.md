@@ -2,7 +2,7 @@
 
 > Local development benchmark. Treat these numbers as reproducibility evidence, not a portable capacity guarantee.
 
-Generated: 2026-05-24T21:55:12.019271+00:00
+Generated: 2026-05-25T15:07:18.784735+00:00
 
 ## Environment
 
@@ -14,7 +14,7 @@ Generated: 2026-05-24T21:55:12.019271+00:00
 - dj_queue: `0.10.3`
 - platform: `macOS-26.5-arm64-arm-64bit-Mach-O`
 - machine: `arm64`
-- revision: `5dbf01bdd08f`
+- revision: `1a65bc8ef066`
 - benchmark worker count: `4`
 - benchmark worker threads: `8`
 - preserve finished jobs: `True`
@@ -29,14 +29,14 @@ Generated: 2026-05-24T21:55:12.019271+00:00
 - use case: web requests, admin actions, and small fan-out paths that submit tasks one at a time
 - mechanics: calls the public `Task.enqueue()` path once per job, including validation, job insert, ready-row insert, result mapping, and ready wakeup registration
 
-| size | run | duration_seconds | jobs_per_second | **latency_p95_ms** | ready_count | job_count | latency_mean_ms | latency_p50_ms | latency_p99_ms |
-|---|---|---|---|---|---|---|---|---|---|
-| 1000 | 0 | 7.269 | 137.572 | **11.549** | 1000 | 1000 | 7.266 | 6.562 | 15.053 |
-| 1000 | 1 | 8.292 | 120.603 | **12.537** | 1000 | 1000 | 8.288 | 7.716 | 16.503 |
-| 1000 | 2 | 8.260 | 121.067 | **13.345** | 1000 | 1000 | 8.257 | 7.509 | 15.636 |
-| 10000 | 0 | 77.410 | 129.182 | **11.938** | 10000 | 10000 | 7.738 | 7.070 | 14.463 |
-| 10000 | 1 | 74.722 | 133.830 | **11.799** | 10000 | 10000 | 7.469 | 6.744 | 14.141 |
-| 10000 | 2 | 74.365 | 134.472 | **11.538** | 10000 | 10000 | 7.433 | 6.749 | 14.000 |
+| size | run | duration_seconds | jobs_per_second | query_count_sample | **latency_p95_ms** | ready_count | job_count | latency_mean_ms | latency_p50_ms | latency_p99_ms |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1000 | 0 | 7.031 | 142.229 | 5 | **13.366** | 1000 | 1000 | 7.027 | 6.346 | 17.697 |
+| 1000 | 1 | 2.550 | 392.091 | 5 | **5.209** | 1000 | 1000 | 2.549 | 1.905 | 8.367 |
+| 1000 | 2 | 2.012 | 496.966 | 5 | **3.250** | 1000 | 1000 | 2.011 | 1.773 | 4.504 |
+| 10000 | 0 | 24.148 | 414.114 | 5 | **3.815** | 10000 | 10000 | 2.414 | 2.101 | 5.839 |
+| 10000 | 1 | 23.998 | 416.710 | 5 | **3.747** | 10000 | 10000 | 2.398 | 2.070 | 5.561 |
+| 10000 | 2 | 27.512 | 363.482 | 5 | **5.700** | 10000 | 10000 | 2.750 | 2.159 | 10.573 |
 
 ### `bulk-enqueue`: bulk immediate enqueue throughput and SQL statement count
 
@@ -47,12 +47,12 @@ Generated: 2026-05-24T21:55:12.019271+00:00
 
 | size | run | duration_seconds | **jobs_per_second** | query_count | ready_count | job_count |
 |---|---|---|---|---|---|---|
-| 1000 | 0 | 0.242 | **4127.036** | 5 | 1000 | 1000 |
-| 1000 | 1 | 0.230 | **4353.586** | 5 | 1000 | 1000 |
-| 1000 | 2 | 0.266 | **3763.512** | 5 | 1000 | 1000 |
-| 10000 | 0 | 1.340 | **7463.255** | 5 | 10000 | 10000 |
-| 10000 | 1 | 1.316 | **7601.088** | 5 | 10000 | 10000 |
-| 10000 | 2 | 1.446 | **6914.349** | 5 | 10000 | 10000 |
+| 1000 | 0 | 0.193 | **5182.714** | 5 | 1000 | 1000 |
+| 1000 | 1 | 0.169 | **5905.518** | 5 | 1000 | 1000 |
+| 1000 | 2 | 0.266 | **3757.768** | 5 | 1000 | 1000 |
+| 10000 | 0 | 1.308 | **7644.447** | 5 | 10000 | 10000 |
+| 10000 | 1 | 1.295 | **7721.364** | 5 | 10000 | 10000 |
+| 10000 | 2 | 1.279 | **7817.762** | 5 | 10000 | 10000 |
 
 ### `scheduled-promotion`: due scheduled-row promotion from a mixed due/future backlog
 
@@ -63,12 +63,12 @@ Generated: 2026-05-24T21:55:12.019271+00:00
 
 | size | run | duration_seconds | **rows_per_second** | ready_count | promoted_count | future_scheduled_count |
 |---|---|---|---|---|---|---|
-| 1000 | 0 | 0.180 | **5560.883** | 1000 | 1000 | 1000 |
-| 1000 | 1 | 0.209 | **4787.805** | 1000 | 1000 | 1000 |
-| 1000 | 2 | 0.139 | **7198.839** | 1000 | 1000 | 1000 |
-| 10000 | 0 | 1.155 | **8660.611** | 10000 | 10000 | 10000 |
-| 10000 | 1 | 1.183 | **8450.061** | 10000 | 10000 | 10000 |
-| 10000 | 2 | 1.145 | **8735.552** | 10000 | 10000 | 10000 |
+| 1000 | 0 | 0.127 | **7882.584** | 1000 | 1000 | 1000 |
+| 1000 | 1 | 0.161 | **6227.464** | 1000 | 1000 | 1000 |
+| 1000 | 2 | 0.167 | **5988.880** | 1000 | 1000 | 1000 |
+| 10000 | 0 | 1.237 | **8083.526** | 10000 | 10000 | 10000 |
+| 10000 | 1 | 1.192 | **8392.781** | 10000 | 10000 | 10000 |
+| 10000 | 2 | 1.179 | **8481.545** | 10000 | 10000 | 10000 |
 
 ### `recurring-scale`: scheduler poll cost for persisted not-due recurring rows
 
@@ -79,12 +79,12 @@ Generated: 2026-05-24T21:55:12.019271+00:00
 
 | size | run | **duration_seconds** | rows_per_second | fired_count | recurring_task_count |
 |---|---|---|---|---|---|
-| 1000 | 0 | **0.007** | 136563.833 | 0 | 1000 |
-| 1000 | 1 | **0.008** | 126023.277 | 0 | 1000 |
-| 1000 | 2 | **0.009** | 114865.516 | 0 | 1000 |
-| 10000 | 0 | **0.034** | 297685.123 | 0 | 10000 |
-| 10000 | 1 | **0.010** | 971215.598 | 0 | 10000 |
-| 10000 | 2 | **0.031** | 323749.014 | 0 | 10000 |
+| 1000 | 0 | **0.011** | 94574.945 | 0 | 1000 |
+| 1000 | 1 | **0.013** | 74294.437 | 0 | 1000 |
+| 1000 | 2 | **0.014** | 73947.181 | 0 | 1000 |
+| 10000 | 0 | **0.025** | 393147.440 | 0 | 10000 |
+| 10000 | 1 | **0.011** | 950205.253 | 0 | 10000 |
+| 10000 | 2 | **0.028** | 362289.857 | 0 | 10000 |
 
 ### `worker-drain`: async supervisor drain throughput for no-op ready jobs
 
@@ -95,12 +95,12 @@ Generated: 2026-05-24T21:55:12.019271+00:00
 
 | size | run | duration_seconds | **jobs_per_second** | finished_count | ready_count | claimed_count | completed_count | job_count | preserve_finished_jobs | runner_count |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1000 | 0 | 1.404 | **712.034** | 1000 | 0 | 0 | 1000 | 1000 | True | 4 |
-| 1000 | 1 | 1.369 | **730.614** | 1000 | 0 | 0 | 1000 | 1000 | True | 4 |
-| 1000 | 2 | 1.511 | **661.839** | 1000 | 0 | 0 | 1000 | 1000 | True | 4 |
-| 10000 | 0 | 12.698 | **787.525** | 10000 | 0 | 0 | 10000 | 10000 | True | 4 |
-| 10000 | 1 | 12.764 | **783.429** | 10000 | 0 | 0 | 10000 | 10000 | True | 4 |
-| 10000 | 2 | 12.772 | **782.934** | 10000 | 0 | 0 | 10000 | 10000 | True | 4 |
+| 1000 | 0 | 1.413 | **707.926** | 1000 | 0 | 0 | 1000 | 1000 | True | 4 |
+| 1000 | 1 | 1.357 | **736.869** | 1000 | 0 | 0 | 1000 | 1000 | True | 4 |
+| 1000 | 2 | 1.367 | **731.662** | 1000 | 0 | 0 | 1000 | 1000 | True | 4 |
+| 10000 | 0 | 12.957 | **771.795** | 10000 | 0 | 0 | 10000 | 10000 | True | 4 |
+| 10000 | 1 | 12.803 | **781.059** | 10000 | 0 | 0 | 10000 | 10000 | True | 4 |
+| 10000 | 2 | 12.761 | **783.628** | 10000 | 0 | 0 | 10000 | 10000 | True | 4 |
 
 ### `concurrency-contention`: one hot concurrency key through enqueue, block, release, and unblock
 
@@ -109,14 +109,30 @@ Generated: 2026-05-24T21:55:12.019271+00:00
 - use case: per-tenant, per-account, or external API limits where one hot key must serialize work
 - mechanics: enqueues jobs sharing one concurrency key so all but one block, then drains with `claim_ready_jobs()` and `execute_claimed_job()` to cover semaphore handoff and unblock
 
-| size | run | enqueue_jobs_per_second | **drain_jobs_per_second** | drain_query_count | claim_query_count | execute_query_count | finished_count | drain_duration_seconds | enqueue_duration_seconds |
-|---|---|---|---|---|---|---|---|---|---|
-| 1000 | 0 | 154.112 | **45.451** | 11998 | 5000 | 6998 | 1000 | 22.002 | 6.489 |
-| 1000 | 1 | 129.562 | **42.912** | 11998 | 5000 | 6998 | 1000 | 23.304 | 7.718 |
-| 1000 | 2 | 144.005 | **43.623** | 11998 | 5000 | 6998 | 1000 | 22.924 | 6.944 |
-| 10000 | 0 | 139.565 | **48.583** | 119998 | 50000 | 69998 | 10000 | 205.831 | 71.651 |
-| 10000 | 1 | 141.441 | **47.705** | 119998 | 50000 | 69998 | 10000 | 209.621 | 70.701 |
-| 10000 | 2 | 133.413 | **48.670** | 119998 | 50000 | 69998 | 10000 | 205.467 | 74.955 |
+| size | run | enqueue_jobs_per_second | enqueue_query_count | **drain_jobs_per_second** | drain_query_count | claim_query_count | execute_query_count | finished_count | drain_duration_seconds | enqueue_duration_seconds |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1000 | 0 | 171.336 | 3001 | **43.848** | 11998 | 5000 | 6998 | 1000 | 22.806 | 5.836 |
+| 1000 | 1 | 159.823 | 3001 | **41.813** | 11998 | 5000 | 6998 | 1000 | 23.916 | 6.257 |
+| 1000 | 2 | 145.630 | 3001 | **43.470** | 11998 | 5000 | 6998 | 1000 | 23.005 | 6.867 |
+| 10000 | 0 | 130.610 | 30001 | **48.694** | 119998 | 50000 | 69998 | 10000 | 205.363 | 76.564 |
+| 10000 | 1 | 160.739 | 30001 | **45.456** | 119998 | 50000 | 69998 | 10000 | 219.991 | 62.213 |
+| 10000 | 2 | 139.409 | 30001 | **46.806** | 119998 | 50000 | 69998 | 10000 | 213.647 | 71.732 |
+
+### `runtime-hot-key-contention`: async runtime drain throughput for one hot concurrency key
+
+- key metric: **`drain_jobs_per_second`** - real worker-runtime hot-key drain throughput after enqueue; higher is better
+- healthy local baseline: `>= 30 jobs/sec` for a 10k hot-key runtime drain in under 6 minutes
+- use case: runtime behavior for per-tenant, per-account, or external API limits under worker polling
+- mechanics: enqueues jobs sharing one concurrency key, starts `AsyncSupervisor`, and waits for workers to drain through claim, execution, completion, semaphore handoff, and polling
+
+| size | run | enqueue_jobs_per_second | **drain_jobs_per_second** | finished_count | ready_count | blocked_count | claimed_count | completed_count | drain_duration_seconds | enqueue_duration_seconds | job_count | preserve_finished_jobs | runner_count |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1000 | 0 | 133.588 | **73.189** | 1000 | 0 | 0 | 0 | 1000 | 13.663 | 7.486 | 1000 | True | 4 |
+| 1000 | 1 | 118.688 | **76.495** | 1000 | 0 | 0 | 0 | 1000 | 13.073 | 8.425 | 1000 | True | 4 |
+| 1000 | 2 | 131.369 | **67.380** | 1000 | 0 | 0 | 0 | 1000 | 14.841 | 7.612 | 1000 | True | 4 |
+| 10000 | 0 | 152.767 | **69.525** | 10000 | 0 | 0 | 0 | 10000 | 143.834 | 65.459 | 10000 | True | 4 |
+| 10000 | 1 | 184.212 | **66.717** | 10000 | 0 | 0 | 0 | 10000 | 149.886 | 54.285 | 10000 | True | 4 |
+| 10000 | 2 | 193.988 | **69.382** | 10000 | 0 | 0 | 0 | 10000 | 144.129 | 51.550 | 10000 | True | 4 |
 
 ### `ordered-selector-claim`: ordered exact-queue claiming and drain throughput
 
@@ -125,19 +141,19 @@ Generated: 2026-05-24T21:55:12.019271+00:00
 - use case: workers with ordered queue preferences, priority lanes, or queue-isolated tenants
 - mechanics: seeds three queues and drains with exact ordered selectors to cover selector ordering, claim locking, query shape, and completion
 
-| size | run | duration_seconds | **jobs_per_second** | claim_query_count | finished_count |
-|---|---|---|---|---|---|
-| 1000 | 0 | 10.300 | **97.083** | 2005 | 1000 |
-| 1000 | 1 | 9.187 | **108.853** | 2005 | 1000 |
-| 1000 | 2 | 10.620 | **94.163** | 2005 | 1000 |
-| 10000 | 0 | 105.729 | **94.581** | 20005 | 10000 |
-| 10000 | 1 | 106.518 | **93.881** | 20005 | 10000 |
-| 10000 | 2 | 105.104 | **95.144** | 20005 | 10000 |
+| size | run | duration_seconds | **jobs_per_second** | claim_duration_seconds | claim_query_count | execute_duration_seconds | execute_query_count | finished_count |
+|---|---|---|---|---|---|---|---|---|
+| 1000 | 0 | 9.935 | **100.650** | 4.677 | 2005 | 5.235 | 2000 | 1000 |
+| 1000 | 1 | 11.150 | **89.689** | 5.232 | 2005 | 5.892 | 2000 | 1000 |
+| 1000 | 2 | 11.812 | **84.656** | 5.310 | 2005 | 6.477 | 2000 | 1000 |
+| 10000 | 0 | 109.868 | **91.018** | 56.724 | 20005 | 52.913 | 20000 | 10000 |
+| 10000 | 1 | 112.558 | **88.843** | 57.731 | 20005 | 54.590 | 20000 | 10000 |
+| 10000 | 2 | 120.663 | **82.875** | 60.315 | 20005 | 60.100 | 20000 | 10000 |
 
 ## Reproduce
 
 ```bash
 docker compose up mariadb -d
-bin/benchmark.py all --backend mariadb --sizes 1000,10000 --warmups 1 --runs 3 --output benchmark-results/mariadb-20260524T211942Z.jsonl --conn-max-age 60
-bin/benchmark.py report benchmark-results/mariadb-20260524T211942Z.jsonl --output docs/benchmarks/mariadb.md
+bin/benchmark.py all --backend mariadb --sizes 1000,10000 --warmups 1 --runs 3 --output benchmark-results/mariadb-20260525T141948Z.jsonl --conn-max-age 60
+bin/benchmark.py report benchmark-results/mariadb-20260525T141948Z.jsonl --output docs/benchmarks/mariadb.md
 ```
