@@ -14,7 +14,7 @@ from django.utils import timezone
 from django.utils.module_loading import import_string
 
 from dj_queue.config import load_allowed_queues, load_backend_config
-from dj_queue.db import get_database_alias, locked_queryset
+from dj_queue.db import database_capabilities, get_database_alias, locked_queryset
 from dj_queue.exceptions import EnqueueError
 from dj_queue.log import event_logging_enabled, log_event
 from dj_queue.models import (
@@ -317,6 +317,7 @@ def _claim_ready_jobs_once(
 ):
 
   with transaction.atomic(using=alias):
+    claimed_insert_checks_conflicts = _claimed_insert_checks_conflicts(alias)
     queryset = (
       ReadyExecution.objects.using(alias).select_related("job").filter(backend_alias=backend_alias)
     )
@@ -330,14 +331,15 @@ def _claim_ready_jobs_once(
     if not ready_rows:
       return []
 
-    conflicting_job_ids = _job_ids_with_other_execution_state(
-      alias,
-      [row.job_id for row in ready_rows],
-      ignored_models=(ReadyExecution,),
-    )
-    if conflicting_job_ids:
-      conflicting_job_id = next(iter(conflicting_job_ids))
-      raise EnqueueError(f"job {conflicting_job_id} already has an execution-state row")
+    if not claimed_insert_checks_conflicts:
+      conflicting_job_ids = _job_ids_with_other_execution_state(
+        alias,
+        [row.job_id for row in ready_rows],
+        ignored_models=(ReadyExecution,),
+      )
+      if conflicting_job_ids:
+        conflicting_job_id = next(iter(conflicting_job_ids))
+        raise EnqueueError(f"job {conflicting_job_id} already has an execution-state row")
 
     paused_queue_names = _lock_active_pauses(
       alias,
@@ -357,10 +359,12 @@ def _claim_ready_jobs_once(
 
     claimed_at = timezone.now()
     worker_ids = (process.name,) if process is not None else ()
-    _bulk_create(
+    _create_claimed_executions(
       alias,
-      ClaimedExecution,
-      [ClaimedExecution(job=job, process=process, created_at=claimed_at) for job in jobs],
+      jobs,
+      process=process,
+      claimed_at=claimed_at,
+      check_conflicts=claimed_insert_checks_conflicts,
     )
 
   return [ClaimedJob(job=job, claimed_at=claimed_at, worker_ids=worker_ids) for job in jobs]
@@ -1090,6 +1094,105 @@ def _select_ready_rows(queryset, *, limit, queues, use_skip_locked):
   rows = list(locked_queryset(ordered, use_skip_locked=use_skip_locked)[:remaining])
   selected_rows.extend(rows)
   return selected_rows
+
+
+def _claimed_insert_checks_conflicts(alias):
+  return database_capabilities(alias).backend_family == "postgresql"
+
+
+def _create_claimed_executions(alias, jobs, *, process, claimed_at, check_conflicts):
+  if check_conflicts:
+    return _postgres_create_claimed_executions_if_no_other_state(
+      alias,
+      jobs,
+      process=process,
+      claimed_at=claimed_at,
+    )
+
+  return _bulk_create(
+    alias,
+    ClaimedExecution,
+    [ClaimedExecution(job=job, process=process, created_at=claimed_at) for job in jobs],
+  )
+
+
+def _postgres_create_claimed_executions_if_no_other_state(
+  alias,
+  jobs,
+  *,
+  process,
+  claimed_at,
+):
+  connection = connections[alias]
+  quote = connection.ops.quote_name
+  claimed_table = quote(ClaimedExecution._meta.db_table)
+  job_id_column = quote(ClaimedExecution._meta.get_field("job").column)
+  process_id_column = quote(ClaimedExecution._meta.get_field("process").column)
+  created_at_column = quote(ClaimedExecution._meta.get_field("created_at").column)
+  values_sql = ", ".join(["(%s::uuid, %s::bigint, %s::timestamptz)"] * len(jobs))
+  state_checks = " AND ".join(
+    _state_absence_for_job_id_sql(
+      model,
+      job_id_reference="claimed_input.job_id",
+      quote=quote,
+    )
+    for model in (
+      ReadyExecution,
+      ScheduledExecution,
+      ClaimedExecution,
+      BlockedExecution,
+      FailedExecution,
+    )
+  )
+  params = []
+  process_id = process.pk if process is not None else None
+  job_id_field = Job._meta.get_field("id")
+  for job in jobs:
+    params.extend(
+      [
+        job_id_field.get_db_prep_value(job.pk, connection=connection, prepared=False),
+        process_id,
+        claimed_at,
+      ]
+    )
+
+  with connection.cursor() as cursor:
+    cursor.execute(
+      f"""
+      INSERT INTO {claimed_table} (
+        {job_id_column},
+        {process_id_column},
+        {created_at_column}
+      )
+      SELECT
+        claimed_input.job_id,
+        claimed_input.process_id,
+        claimed_input.created_at
+      FROM (VALUES {values_sql}) AS claimed_input(job_id, process_id, created_at)
+      WHERE {state_checks}
+      """,
+      params,
+    )
+    created = cursor.rowcount
+
+  if created != len(jobs):
+    conflicting_job_ids = _job_ids_with_other_execution_state(alias, [job.pk for job in jobs])
+    if conflicting_job_ids:
+      conflicting_job_id = next(iter(conflicting_job_ids))
+      raise EnqueueError(f"job {conflicting_job_id} already has an execution-state row")
+    raise EnqueueError("could not claim selected jobs")
+  return None
+
+
+def _state_absence_for_job_id_sql(model, *, job_id_reference, quote):
+  state_table = quote(model._meta.db_table)
+  state_job_id_column = quote(model._meta.get_field("job").column)
+  return (
+    f"NOT EXISTS ("
+    f"SELECT 1 FROM {state_table} "
+    f"WHERE {state_table}.{state_job_id_column} = {job_id_reference}"
+    f")"
+  )
 
 
 def _select_exact_selector_rows(queryset, selectors, *, limit, use_skip_locked):
