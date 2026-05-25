@@ -84,6 +84,49 @@ def test_concurrency_contention_reports_drain_query_counts():
 
 
 @pytest.mark.django_db
+def test_runtime_hot_key_contention_uses_async_supervisor(monkeypatch):
+  events = []
+
+  class FakeSupervisor:
+    runners = (object(), object())
+
+    def start(self):
+      events.append("start")
+
+    def stop(self):
+      events.append("stop")
+
+  def fake_from_backend_config(**kwargs):
+    assert kwargs == {"backend_alias": "default", "standalone": False}
+    return FakeSupervisor()
+
+  def drain_hot_key_jobs(size, **_kwargs):
+    completed = 0
+    while completed < size:
+      claimed_jobs = runtime.claim_ready_jobs(limit=1)
+      assert claimed_jobs
+      for claimed_job in claimed_jobs:
+        runtime.execute_claimed_job(claimed_job)
+        completed += 1
+
+  monkeypatch.setattr(
+    runtime.AsyncSupervisor,
+    "from_backend_config",
+    fake_from_backend_config,
+  )
+  monkeypatch.setattr(runtime, "_wait_for_drain", drain_hot_key_jobs)
+
+  metrics = runtime.runtime_hot_key_contention(2)
+
+  assert events == ["start", "stop"]
+  assert metrics["completed_count"] == 2
+  assert metrics["blocked_count"] == 0
+  assert metrics["claimed_count"] == 0
+  assert metrics["runner_count"] == 2
+  assert Job.objects.filter(finished_at__isnull=False).count() == 2
+
+
+@pytest.mark.django_db
 def test_ordered_selector_claim_reports_claim_query_count():
   metrics = runtime.ordered_selector_claim(6)
 

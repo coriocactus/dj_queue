@@ -126,6 +126,58 @@ def concurrency_contention(size):
   }
 
 
+def runtime_hot_key_contention(size):
+  with Timer() as enqueue_timer:
+    for index in range(size):
+      limited.enqueue(1, value=f"runtime-limited-{index}")
+
+  blocked_count = BlockedExecution.objects.count()
+  ready_count = ReadyExecution.objects.count()
+  if size > 0 and (ready_count != 1 or blocked_count != size - 1):
+    raise AssertionError(f"expected one ready and {size - 1} blocked jobs")
+
+  preserve_finished_jobs = load_backend_config("default").preserve_finished_jobs
+  supervisor = AsyncSupervisor.from_backend_config(backend_alias="default", standalone=False)
+  supervisor.start()
+  runner_count = len(supervisor.runners)
+  try:
+    with Timer() as drain_timer:
+      _wait_for_drain(
+        size,
+        preserve_finished_jobs=preserve_finished_jobs,
+        timeout=max(60, size / 20),
+      )
+  finally:
+    supervisor.stop()
+
+  finished_count = Job.objects.filter(finished_at__isnull=False).count()
+  job_count = Job.objects.count()
+  completed_count = finished_count if preserve_finished_jobs else size - job_count
+  ready_count = ReadyExecution.objects.count()
+  blocked_count = BlockedExecution.objects.count()
+  claimed_count = ClaimedExecution.objects.count()
+  if completed_count != size or ready_count or blocked_count or claimed_count:
+    raise AssertionError(
+      f"expected all hot-key jobs drained, got completed={completed_count} "
+      f"ready={ready_count} blocked={blocked_count} claimed={claimed_count}"
+    )
+
+  return {
+    "enqueue_duration_seconds": enqueue_timer.duration,
+    "enqueue_jobs_per_second": throughput(size, enqueue_timer.duration),
+    "drain_duration_seconds": drain_timer.duration,
+    "drain_jobs_per_second": throughput(size, drain_timer.duration),
+    "completed_count": completed_count,
+    "finished_count": finished_count,
+    "job_count": job_count,
+    "ready_count": ready_count,
+    "blocked_count": blocked_count,
+    "claimed_count": claimed_count,
+    "runner_count": runner_count,
+    "preserve_finished_jobs": preserve_finished_jobs,
+  }
+
+
 def ordered_selector_claim(size):
   now = timezone.now()
   jobs = []

@@ -77,6 +77,17 @@ SCENARIO_CONTEXT = {
       "`claim_ready_jobs()` and `execute_claimed_job()` to cover semaphore handoff and unblock"
     ),
   },
+  "runtime-hot-key-contention": {
+    "description": "async runtime drain throughput for one hot concurrency key",
+    "key_metric": "drain_jobs_per_second",
+    "key_metric_note": "real worker-runtime hot-key drain throughput after enqueue; higher is better",
+    "healthy_local_baseline": "`>= 30 jobs/sec` for a 10k hot-key runtime drain in under 6 minutes",
+    "use_case": "runtime behavior for per-tenant, per-account, or external API limits under worker polling",
+    "mechanics": (
+      "enqueues jobs sharing one concurrency key, starts `AsyncSupervisor`, and waits for workers "
+      "to drain through claim, execution, completion, semaphore handoff, and polling"
+    ),
+  },
   "ordered-selector-claim": {
     "description": "ordered exact-queue claiming and drain throughput",
     "key_metric": "jobs_per_second",
@@ -95,7 +106,9 @@ SCENARIO_DESCRIPTIONS = {
 }
 
 EXCLUDED_SCENARIOS_BY_BACKEND = {
-  "sqlite": frozenset({"concurrency-contention", "ordered-selector-claim"}),
+  "sqlite": frozenset(
+    {"concurrency-contention", "runtime-hot-key-contention", "ordered-selector-claim"}
+  ),
 }
 
 

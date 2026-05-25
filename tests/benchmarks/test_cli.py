@@ -115,6 +115,7 @@ def test_sqlite_all_and_quick_skip_locking_scenarios():
     "single-enqueue",
     "bulk-enqueue",
     "concurrency-contention",
+    "runtime-hot-key-contention",
     "ordered-selector-claim",
   )
 
