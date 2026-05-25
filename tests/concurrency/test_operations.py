@@ -177,7 +177,8 @@ def test_execute_claimed_job_uses_terminal_update_query_budget():
   with CaptureQueriesContext(connection) as ctx:
     execute_claimed_job(claimed_job)
 
-  assert len(ctx.captured_queries) == 4
+  expected_queries = 3 if connection.vendor == "postgresql" else 4
+  assert len(ctx.captured_queries) == expected_queries
 
 
 @pytest.mark.django_db
@@ -201,7 +202,7 @@ def test_execute_claimed_job_with_waiter_avoids_nested_unblock_savepoint():
   with CaptureQueriesContext(connection) as ctx:
     execute_claimed_job(claimed_job)
 
-  expected_queries = 8 if connection.vendor == "postgresql" else 9
+  expected_queries = 7 if connection.vendor == "postgresql" else 9
   assert len(ctx.captured_queries) == expected_queries
 
 

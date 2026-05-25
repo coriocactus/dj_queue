@@ -419,13 +419,22 @@ def _complete_claimed_job(job, return_value, *, backend_alias="default", task=No
   job = _resolve_claimed_job(job, alias=alias, backend_alias=backend_alias)
 
   with transaction.atomic(using=alias):
-    _delete_claimed_execution(alias, job.id)
     now = timezone.now()
     config = load_backend_config(job.backend_alias)
 
     if config.preserve_finished_jobs:
-      _finish_job_if_no_execution_state(alias, job, return_value, finished_at=now)
+      if database_capabilities(alias).backend_family == "postgresql":
+        _delete_claimed_and_finish_job_if_no_execution_state(
+          alias,
+          job,
+          return_value,
+          finished_at=now,
+        )
+      else:
+        _delete_claimed_execution(alias, job.id)
+        _finish_job_if_no_execution_state(alias, job, return_value, finished_at=now)
     else:
+      _delete_claimed_execution(alias, job.id)
       _ensure_no_other_execution_state(alias, job, ignored_models=(ClaimedExecution,))
       job.delete(using=alias)
 
@@ -1270,6 +1279,74 @@ def _delete_claimed_execution(alias, job_id):
   deleted, _ = ClaimedExecution.objects.using(alias).filter(job_id=job_id).delete()
   if not deleted:
     raise ClaimedExecution.DoesNotExist
+
+
+def _delete_claimed_and_finish_job_if_no_execution_state(alias, job, return_value, *, finished_at):
+  connection = connections[alias]
+  quote = connection.ops.quote_name
+  claimed_table = quote(ClaimedExecution._meta.db_table)
+  claimed_job_id_column = quote(ClaimedExecution._meta.get_field("job").column)
+  jobs_table = quote(Job._meta.db_table)
+  job_id_column = quote(Job._meta.get_field("id").column)
+  backend_alias_column = quote(Job._meta.get_field("backend_alias").column)
+  finished_at_column = quote(Job._meta.get_field("finished_at").column)
+  return_value_column = quote(Job._meta.get_field("return_value").column)
+  updated_at_column = quote(Job._meta.get_field("updated_at").column)
+  state_checks = " AND ".join(
+    _state_absence_sql(model, jobs_table=jobs_table, job_id_column=job_id_column, quote=quote)
+    for model in (
+      ReadyExecution,
+      ScheduledExecution,
+      BlockedExecution,
+      FailedExecution,
+    )
+  )
+  job_id = Job._meta.get_field("id").get_db_prep_value(
+    job.pk,
+    connection=connection,
+    prepared=False,
+  )
+  prepared_return_value = Job._meta.get_field("return_value").get_db_prep_save(
+    return_value,
+    connection=connection,
+  )
+
+  with connection.cursor() as cursor:
+    cursor.execute(
+      f"""
+      WITH deleted_claim AS (
+        DELETE FROM {claimed_table}
+        WHERE {claimed_table}.{claimed_job_id_column} = %s
+        RETURNING {claimed_job_id_column}
+      ),
+      updated_job AS (
+        UPDATE {jobs_table}
+        SET
+          {finished_at_column} = %s,
+          {return_value_column} = %s,
+          {updated_at_column} = %s
+        WHERE
+          {jobs_table}.{job_id_column} = %s
+          AND {jobs_table}.{backend_alias_column} = %s
+          AND EXISTS (SELECT 1 FROM deleted_claim)
+          AND {state_checks}
+        RETURNING {job_id_column}
+      )
+      SELECT
+        (SELECT COUNT(*) FROM deleted_claim),
+        (SELECT COUNT(*) FROM updated_job)
+      """,
+      [job_id, finished_at, prepared_return_value, finished_at, job_id, job.backend_alias],
+    )
+    deleted_count, updated_count = cursor.fetchone()
+
+  if deleted_count != 1:
+    raise ClaimedExecution.DoesNotExist
+  if updated_count != 1:
+    raise EnqueueError(f"job {job.id} already has an execution-state row")
+  job.finished_at = finished_at
+  job.return_value = return_value
+  job.updated_at = finished_at
 
 
 def _finish_job_if_no_execution_state(alias, job, return_value, *, finished_at):
