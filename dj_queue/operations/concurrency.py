@@ -247,17 +247,13 @@ def unblock_next_blocked_job(
   now = timezone.now()
 
   with _operation_atomic(alias):
-    queryset = (
-      BlockedExecution.objects.using(alias)
-      .filter(backend_alias=backend_alias, concurrency_key=key)
-      .order_by("-priority", "id")
+    blocked = _consume_next_blocked_job(
+      alias,
+      backend_alias=backend_alias,
+      key=key,
+      use_skip_locked=use_skip_locked,
     )
-    blocked = locked_queryset(queryset, use_skip_locked=use_skip_locked).first()
     if blocked is None:
-      return None
-
-    consumed = _consume_selected_rows(alias, BlockedExecution, [blocked])
-    if not consumed:
       return None
 
     slot_acquired = False
@@ -287,10 +283,10 @@ def unblock_next_blocked_job(
       )
 
     mock_job = Job(
-      id=blocked.job_id,
-      queue_name=blocked.queue_name,
-      priority=blocked.priority,
-      concurrency_key=blocked.concurrency_key,
+      id=blocked["job_id"],
+      queue_name=blocked["queue_name"],
+      priority=blocked["priority"],
+      concurrency_key=blocked["concurrency_key"],
       backend_alias=backend_alias,
     )
 
@@ -299,10 +295,10 @@ def unblock_next_blocked_job(
         alias,
         mock_job,
         backend_alias=backend_alias,
-        queue_name=blocked.queue_name,
-        priority=blocked.priority,
-        concurrency_key=blocked.concurrency_key,
-        expires_at=blocked.expires_at,
+        queue_name=blocked["queue_name"],
+        priority=blocked["priority"],
+        concurrency_key=blocked["concurrency_key"],
+        expires_at=blocked["expires_at"],
         check_conflicts=False,
       )
       return None
@@ -311,8 +307,8 @@ def unblock_next_blocked_job(
       alias,
       job=mock_job,
       backend_alias=backend_alias,
-      queue_name=blocked.queue_name,
-      priority=blocked.priority,
+      queue_name=blocked["queue_name"],
+      priority=blocked["priority"],
       ready_at=now,
     )
 
@@ -321,8 +317,90 @@ def unblock_next_blocked_job(
     job_id=str(mock_job.id),
     concurrency_key=key,
   )
-  notify_ready_queues_on_commit((blocked.queue_name,), backend_alias=backend_alias)
+  notify_ready_queues_on_commit((blocked["queue_name"],), backend_alias=backend_alias)
   return mock_job
+
+
+def _consume_next_blocked_job(alias, *, backend_alias, key, use_skip_locked):
+  capabilities = database_capabilities(alias)
+  if capabilities.backend_family == "postgresql":
+    return _postgres_consume_next_blocked_job(
+      alias,
+      backend_alias=backend_alias,
+      key=key,
+      use_skip_locked=use_skip_locked and capabilities.supports_skip_locked,
+    )
+
+  queryset = (
+    BlockedExecution.objects.using(alias)
+    .filter(backend_alias=backend_alias, concurrency_key=key)
+    .order_by("-priority", "id")
+  )
+  blocked = locked_queryset(queryset, use_skip_locked=use_skip_locked).first()
+  if blocked is None:
+    return None
+
+  consumed = _consume_selected_rows(alias, BlockedExecution, [blocked])
+  if not consumed:
+    return None
+  return _blocked_execution_values(blocked)
+
+
+def _postgres_consume_next_blocked_job(alias, *, backend_alias, key, use_skip_locked):
+  connection = connections[alias]
+  quote = connection.ops.quote_name
+  table = quote(BlockedExecution._meta.db_table)
+  pk_column = quote(BlockedExecution._meta.pk.column)
+  job_id_column = quote(BlockedExecution._meta.get_field("job").column)
+  backend_alias_column = quote(BlockedExecution._meta.get_field("backend_alias").column)
+  queue_name_column = quote(BlockedExecution._meta.get_field("queue_name").column)
+  priority_column = quote(BlockedExecution._meta.get_field("priority").column)
+  concurrency_key_column = quote(BlockedExecution._meta.get_field("concurrency_key").column)
+  expires_at_column = quote(BlockedExecution._meta.get_field("expires_at").column)
+  skip_locked_sql = " SKIP LOCKED" if use_skip_locked else ""
+
+  with connection.cursor() as cursor:
+    cursor.execute(
+      f"""
+      DELETE FROM {table}
+      WHERE {table}.{pk_column} = (
+        SELECT {pk_column}
+        FROM {table}
+        WHERE {backend_alias_column} = %s AND {concurrency_key_column} = %s
+        ORDER BY {priority_column} DESC, {pk_column} ASC
+        LIMIT 1
+        FOR UPDATE{skip_locked_sql}
+      )
+      RETURNING
+        {job_id_column},
+        {queue_name_column},
+        {priority_column},
+        {concurrency_key_column},
+        {expires_at_column}
+      """,
+      [backend_alias, key],
+    )
+    row = cursor.fetchone()
+
+  if row is None:
+    return None
+  return {
+    "job_id": row[0],
+    "queue_name": row[1],
+    "priority": row[2],
+    "concurrency_key": row[3],
+    "expires_at": row[4],
+  }
+
+
+def _blocked_execution_values(blocked):
+  return {
+    "job_id": blocked.job_id,
+    "queue_name": blocked.queue_name,
+    "priority": blocked.priority,
+    "concurrency_key": blocked.concurrency_key,
+    "expires_at": blocked.expires_at,
+  }
 
 
 def _create_ready_execution_after_blocked_consume(

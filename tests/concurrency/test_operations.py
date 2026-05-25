@@ -201,7 +201,29 @@ def test_execute_claimed_job_with_waiter_avoids_nested_unblock_savepoint():
   with CaptureQueriesContext(connection) as ctx:
     execute_claimed_job(claimed_job)
 
-  assert len(ctx.captured_queries) == 9
+  expected_queries = 8 if connection.vendor == "postgresql" else 9
+  assert len(ctx.captured_queries) == expected_queries
+
+
+@pytest.mark.skipif(
+  os.environ.get("DB_BACKEND", "sqlite") != "postgres",
+  reason="requires DB_BACKEND=postgres",
+)
+@pytest.mark.django_db
+def test_execute_claimed_job_with_waiter_consumes_blocked_row_without_select_on_postgres():
+  limited.enqueue(1, value="first")
+  limited.enqueue(1, value="second")
+  claimed_job = claim_ready_jobs(limit=1)[0]
+
+  with CaptureQueriesContext(connection) as ctx:
+    execute_claimed_job(claimed_job)
+
+  blocked_selects = [
+    sql
+    for sql in queries_touching(ctx, "dj_queue_blocked_executions")
+    if sql.lstrip().upper().startswith("SELECT")
+  ]
+  assert blocked_selects == []
 
 
 @pytest.mark.django_db
