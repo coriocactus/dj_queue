@@ -2,7 +2,7 @@
 
 > Median key metric on the 10k workload across PostgreSQL, MariaDB, MySQL, and SQLite.
 
-Generated: 2026-05-26T08:09:54.743583+00:00
+Generated: 2026-05-26T20:43:57.597813+00:00
 
 ## Metadata
 
@@ -13,10 +13,10 @@ Generated: 2026-05-26T08:09:54.743583+00:00
 | database version | `PostgreSQL 17.9 (Debian 17.9-1.pgdg13+1) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit` | `10.6.25-MariaDB-ubu2204` | `8.4.8` | `3.50.4` |
 | Python | `3.14.5` | `3.14.5` | `3.14.5` | `3.14.5` |
 | Django | `6.0.5` | `6.0.5` | `6.0.5` | `6.0.5` |
-| dj_queue | `0.10.4` | `0.10.4` | `0.10.4` | `0.10.4` |
+| dj_queue | `0.10.5` | `0.10.5` | `0.10.5` | `0.10.5` |
 | platform | `macOS-26.5-arm64-arm-64bit-Mach-O` | `macOS-26.5-arm64-arm-64bit-Mach-O` | `macOS-26.5-arm64-arm-64bit-Mach-O` | `macOS-26.5-arm64-arm-64bit-Mach-O` |
 | machine | `arm64` | `arm64` | `arm64` | `arm64` |
-| revision | `bccceb8adc16` | `bccceb8adc16` | `bccceb8adc16` | `bccceb8adc16` |
+| revision | `e3d51861cac1` | `e3d51861cac1` | `e3d51861cac1` | `e3d51861cac1` |
 | workers | `4` | `4` | `4` | `1` |
 | worker threads | `8` | `8` | `8` | `1` |
 | preserve finished jobs | `True` | `True` | `True` | `True` |
@@ -39,11 +39,11 @@ Generated: 2026-05-26T08:09:54.743583+00:00
 
 | scenario | key metric | postgres | mariadb | mysql | sqlite |
 |---|---|---|---|---|---|
-| `single-enqueue` | `latency_p95_ms` | 12.186 | 11.488 | 9.515 | 1.183 |
-| `bulk-enqueue` | `jobs_per_second` | 11082.845 | 7332.151 | 6325.016 | 12216.720 |
-| `scheduled-promotion` | `rows_per_second` | 7733.341 | 7389.325 | 8327.340 | 8787.006 |
-| `recurring-scale` | `duration_seconds` | 0.009 | 0.033 | 0.024 | 0.006 |
-| `worker-drain` | `jobs_per_second` | 631.911 | 786.848 | 723.846 | 330.302 |
-| `concurrency-contention` | `drain_jobs_per_second` | 47.082 | 47.900 | 76.588 | not supported |
-| `runtime-hot-key-contention` | `drain_jobs_per_second` | 73.416 | 73.260 | 73.445 | not supported |
-| `ordered-selector-claim` | `jobs_per_second` | 103.395 | 91.310 | 124.837 | not supported |
+| `single-enqueue` | `latency_p95_ms` | 11.963 | 11.135 | 9.128 | 1.220 |
+| `bulk-enqueue` | `jobs_per_second` | 12912.228 | 8493.062 | 5873.485 | 15013.087 |
+| `scheduled-promotion` | `rows_per_second` | 9101.644 | 10262.025 | 10041.176 | 10272.011 |
+| `recurring-scale` | `duration_seconds` | 0.011 | 0.032 | 0.024 | 0.005 |
+| `worker-drain` | `jobs_per_second` | 601.910 | 765.659 | 698.084 | 295.688 |
+| `concurrency-contention` | `drain_jobs_per_second` | 48.162 | 31.956 | 47.818 | not supported |
+| `runtime-hot-key-contention` | `drain_jobs_per_second` | 86.460 | 67.675 | 74.619 | not supported |
+| `ordered-selector-claim` | `jobs_per_second` | 89.927 | 79.656 | 112.628 | not supported |
