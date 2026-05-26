@@ -14,12 +14,22 @@ from dj_queue.models import (
   ScheduledExecution,
 )
 
+EXECUTION_STATE_MODELS = (
+  ReadyExecution,
+  ScheduledExecution,
+  ClaimedExecution,
+  BlockedExecution,
+  FailedExecution,
+)
 STATE_RELATIONS = {
-  ReadyExecution: "ready_execution",
-  ScheduledExecution: "scheduled_execution",
-  ClaimedExecution: "claimed_execution",
-  BlockedExecution: "blocked_execution",
-  FailedExecution: "failed_execution",
+  model: relation_name
+  for model, relation_name in (
+    (ReadyExecution, "ready_execution"),
+    (ScheduledExecution, "scheduled_execution"),
+    (ClaimedExecution, "claimed_execution"),
+    (BlockedExecution, "blocked_execution"),
+    (FailedExecution, "failed_execution"),
+  )
 }
 
 
@@ -31,8 +41,22 @@ def _normalize_payload(args, kwargs):
 
 
 def _ensure_no_other_execution_state(alias, job, *, ignored_models=()):
-  if _job_ids_with_other_execution_state(alias, [job.pk], ignored_models=ignored_models):
-    raise EnqueueError(f"job {job.id} already has an execution-state row")
+  _ensure_job_ids_have_no_other_execution_state(
+    alias,
+    [job.pk],
+    ignored_models=ignored_models,
+  )
+
+
+def _ensure_job_ids_have_no_other_execution_state(alias, job_ids, *, ignored_models=()):
+  conflicting_job_ids = _job_ids_with_other_execution_state(
+    alias,
+    job_ids,
+    ignored_models=ignored_models,
+  )
+  if conflicting_job_ids:
+    conflicting_job_id = next(iter(conflicting_job_ids))
+    raise EnqueueError(f"job {conflicting_job_id} already has an execution-state row")
 
 
 def _job_ids_with_other_execution_state(alias, job_ids, *, ignored_models=()):
@@ -51,6 +75,34 @@ def _job_ids_with_other_execution_state(alias, job_ids, *, ignored_models=()):
     .filter(pk__in=job_ids)
     .filter(conflict_query)
     .values_list("pk", flat=True)
+  )
+
+
+def _ensure_state_rows_belong_to_backend(rows, backend_alias):
+  for row in rows:
+    if row.job.backend_alias != backend_alias:
+      raise EnqueueError(f"job {row.job_id} belongs to backend {row.job.backend_alias!r}")
+
+
+def _state_models_except(*ignored_models):
+  ignored = set(ignored_models)
+  return tuple(model for model in EXECUTION_STATE_MODELS if model not in ignored)
+
+
+def _state_absence_checks_sql(models, *, quote, job_id_expression):
+  return " AND ".join(
+    _state_absence_sql(model, quote=quote, job_id_expression=job_id_expression) for model in models
+  )
+
+
+def _state_absence_sql(model, *, quote, job_id_expression):
+  state_table = quote(model._meta.db_table)
+  state_job_id_column = quote(model._meta.get_field("job").column)
+  return (
+    f"NOT EXISTS ("
+    f"SELECT 1 FROM {state_table} "
+    f"WHERE {state_table}.{state_job_id_column} = {job_id_expression}"
+    f")"
   )
 
 

@@ -13,17 +13,18 @@ from dj_queue.log import log_event
 from dj_queue.models import (
   BlockedExecution,
   ClaimedExecution,
-  FailedExecution,
   Job,
   ReadyExecution,
-  ScheduledExecution,
   Semaphore,
 )
 from dj_queue.operations._helpers import (
   _consume_selected_rows,
   _create_blocked_execution,
   _create_ready_execution_locked,
+  _ensure_state_rows_belong_to_backend,
   _lock_active_pauses,
+  _state_absence_checks_sql,
+  _state_models_except,
   _task_option,
 )
 from dj_queue.operations._insert import create_ignore_conflicts
@@ -255,6 +256,10 @@ def unblock_next_blocked_job(
     )
     if blocked is None:
       return None
+    if blocked["job_backend_alias"] != backend_alias:
+      raise EnqueueError(
+        f"job {blocked['job_id']} belongs to backend {blocked['job_backend_alias']!r}"
+      )
 
     slot_acquired = False
     if release_slot:
@@ -333,12 +338,14 @@ def _consume_next_blocked_job(alias, *, backend_alias, key, use_skip_locked):
 
   queryset = (
     BlockedExecution.objects.using(alias)
+    .select_related("job")
     .filter(backend_alias=backend_alias, concurrency_key=key)
     .order_by("-priority", "id")
   )
   blocked = locked_queryset(queryset, use_skip_locked=use_skip_locked).first()
   if blocked is None:
     return None
+  _ensure_state_rows_belong_to_backend([blocked], backend_alias)
 
   consumed = _consume_selected_rows(alias, BlockedExecution, [blocked])
   if not consumed:
@@ -357,26 +364,39 @@ def _postgres_consume_next_blocked_job(alias, *, backend_alias, key, use_skip_lo
   priority_column = quote(BlockedExecution._meta.get_field("priority").column)
   concurrency_key_column = quote(BlockedExecution._meta.get_field("concurrency_key").column)
   expires_at_column = quote(BlockedExecution._meta.get_field("expires_at").column)
+  jobs_table = quote(Job._meta.db_table)
+  jobs_id_column = quote(Job._meta.get_field("id").column)
+  jobs_backend_alias_column = quote(Job._meta.get_field("backend_alias").column)
   skip_locked_sql = " SKIP LOCKED" if use_skip_locked else ""
 
   with connection.cursor() as cursor:
     cursor.execute(
       f"""
-      DELETE FROM {table}
-      WHERE {table}.{pk_column} = (
-        SELECT {pk_column}
+      WITH selected AS (
+        SELECT
+          {table}.{pk_column},
+          {jobs_table}.{jobs_backend_alias_column} AS job_backend_alias
         FROM {table}
-        WHERE {backend_alias_column} = %s AND {concurrency_key_column} = %s
-        ORDER BY {priority_column} DESC, {pk_column} ASC
+        JOIN {jobs_table}
+          ON {jobs_table}.{jobs_id_column} = {table}.{job_id_column}
+        WHERE {table}.{backend_alias_column} = %s
+          AND {table}.{concurrency_key_column} = %s
+        ORDER BY {table}.{priority_column} DESC, {table}.{pk_column} ASC
         LIMIT 1
-        FOR UPDATE{skip_locked_sql}
+        FOR UPDATE OF {table}{skip_locked_sql}
+      ), deleted AS (
+        DELETE FROM {table}
+        USING selected
+        WHERE {table}.{pk_column} = selected.{pk_column}
+        RETURNING
+          {table}.{job_id_column},
+          {table}.{queue_name_column},
+          {table}.{priority_column},
+          {table}.{concurrency_key_column},
+          {table}.{expires_at_column},
+          selected.job_backend_alias
       )
-      RETURNING
-        {job_id_column},
-        {queue_name_column},
-        {priority_column},
-        {concurrency_key_column},
-        {expires_at_column}
+      SELECT * FROM deleted
       """,
       [backend_alias, key],
     )
@@ -390,12 +410,14 @@ def _postgres_consume_next_blocked_job(alias, *, backend_alias, key, use_skip_lo
     "priority": row[2],
     "concurrency_key": row[3],
     "expires_at": row[4],
+    "job_backend_alias": row[5],
   }
 
 
 def _blocked_execution_values(blocked):
   return {
     "job_id": blocked.job_id,
+    "job_backend_alias": blocked.job.backend_alias,
     "queue_name": blocked.queue_name,
     "priority": blocked.priority,
     "concurrency_key": blocked.concurrency_key,
@@ -427,9 +449,11 @@ def _create_ready_execution_after_blocked_consume(
     connection=connection,
     prepared=False,
   )
-  state_models = (ReadyExecution, ScheduledExecution, ClaimedExecution, FailedExecution)
-  state_checks = " AND ".join(
-    _state_absence_sql(model, job_id_column=job_id_column, quote=quote) for model in state_models
+  state_models = _state_models_except(BlockedExecution)
+  state_checks = _state_absence_checks_sql(
+    state_models,
+    quote=quote,
+    job_id_expression="%s",
   )
 
   with connection.cursor() as cursor:
@@ -460,12 +484,6 @@ def _create_ready_execution_after_blocked_consume(
 
   if created != 1:
     raise EnqueueError(f"job {job.id} already has an execution-state row")
-
-
-def _state_absence_sql(model, *, job_id_column, quote):
-  state_table = quote(model._meta.db_table)
-  state_job_id_column = quote(model._meta.get_field("job").column)
-  return f"NOT EXISTS (SELECT 1 FROM {state_table} WHERE {state_table}.{state_job_id_column} = %s)"
 
 
 def cleanup_expired_semaphores(*, backend_alias="default"):
@@ -515,6 +533,7 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
     blocked_rows = list(locked_queryset(queryset, use_skip_locked=use_skip_locked)[:batch_size])
     if not blocked_rows:
       return []
+    _ensure_state_rows_belong_to_backend(blocked_rows, backend_alias)
     if uses_serialized_writes:
       blocked_rows = _consume_selected_rows(alias, BlockedExecution, blocked_rows)
       if not blocked_rows:

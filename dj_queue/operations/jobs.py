@@ -28,11 +28,13 @@ from dj_queue.models import (
   ScheduledExecution,
 )
 from dj_queue.operations._helpers import (
-  _ensure_no_other_execution_state,
   _consume_selected_rows,
   _create_blocked_execution,
   _create_ready_execution_locked,
   _create_scheduled_execution,
+  _ensure_job_ids_have_no_other_execution_state,
+  _ensure_no_other_execution_state,
+  _ensure_state_rows_belong_to_backend,
   _exclude_active_pauses,
   _job_ids_with_other_execution_state,
   _lock_active_pauses,
@@ -40,6 +42,8 @@ from dj_queue.operations._helpers import (
   _ready_execution_rows,
   _ready_execution_row,
   _scheduled_execution_row,
+  _state_absence_checks_sql,
+  _state_models_except,
   _task_option,
 )
 from dj_queue.operations.concurrency import (
@@ -650,6 +654,7 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
     scheduled_rows = list(locked_queryset(queryset, use_skip_locked=use_skip_locked)[:batch_size])
     if not scheduled_rows:
       return []
+    _ensure_state_rows_belong_to_backend(scheduled_rows, backend_alias)
 
     scheduled_rows = _consume_selected_rows(alias, ScheduledExecution, scheduled_rows)
     if not scheduled_rows:
@@ -708,6 +713,7 @@ def dispatch_scheduled_job_now(job_id, *, backend_alias="default"):
     ).first()
     if scheduled is None:
       raise EnqueueError("job is not scheduled")
+    _ensure_state_rows_belong_to_backend([scheduled], backend_alias)
     scheduled_rows = _consume_selected_rows(alias, ScheduledExecution, [scheduled])
     if not scheduled_rows:
       raise EnqueueError("job is not scheduled")
@@ -842,21 +848,33 @@ def _discard_state_jobs(
 
   with transaction.atomic(using=alias):
     if model is FailedExecution:
-      queryset = model.objects.using(alias).filter(job__backend_alias=backend_alias).order_by("id")
+      queryset = (
+        model.objects.using(alias)
+        .select_related("job")
+        .filter(job__backend_alias=backend_alias)
+        .order_by("id")
+      )
     else:
-      queryset = model.objects.using(alias).filter(backend_alias=backend_alias).order_by("id")
+      queryset = (
+        model.objects.using(alias)
+        .select_related("job")
+        .filter(backend_alias=backend_alias)
+        .order_by("id")
+      )
 
     if job_ids is not None:
       queryset = queryset.filter(job_id__in=job_ids)
     rows = list(locked_queryset(queryset, use_skip_locked=config.use_skip_locked)[:batch_size])
     if not rows:
       return 0
+    _ensure_state_rows_belong_to_backend(rows, backend_alias)
 
     rows = _consume_selected_rows(alias, model, rows)
     if not rows:
       return 0
 
     row_job_ids = [row.job_id for row in rows]
+    _ensure_job_ids_have_no_other_execution_state(alias, row_job_ids)
     jobs_by_id = {job.id: job for job in Job.objects.using(alias).filter(pk__in=row_job_ids)}
     jobs = [jobs_by_id[job_id] for job_id in row_job_ids]
     Job.objects.using(alias).filter(pk__in=row_job_ids).delete()
@@ -1158,19 +1176,10 @@ def _postgres_create_claimed_executions_if_no_other_state(
   process_id_column = quote(ClaimedExecution._meta.get_field("process").column)
   created_at_column = quote(ClaimedExecution._meta.get_field("created_at").column)
   values_sql = ", ".join(["(%s::uuid, %s::bigint, %s::timestamptz)"] * len(jobs))
-  state_checks = " AND ".join(
-    _state_absence_for_job_id_sql(
-      model,
-      job_id_reference="claimed_input.job_id",
-      quote=quote,
-    )
-    for model in (
-      ReadyExecution,
-      ScheduledExecution,
-      ClaimedExecution,
-      BlockedExecution,
-      FailedExecution,
-    )
+  state_checks = _state_absence_checks_sql(
+    _state_models_except(),
+    quote=quote,
+    job_id_expression="claimed_input.job_id",
   )
   params = []
   process_id = process.pk if process is not None else None
@@ -1210,17 +1219,6 @@ def _postgres_create_claimed_executions_if_no_other_state(
       raise EnqueueError(f"job {conflicting_job_id} already has an execution-state row")
     raise EnqueueError("could not claim selected jobs")
   return None
-
-
-def _state_absence_for_job_id_sql(model, *, job_id_reference, quote):
-  state_table = quote(model._meta.db_table)
-  state_job_id_column = quote(model._meta.get_field("job").column)
-  return (
-    f"NOT EXISTS ("
-    f"SELECT 1 FROM {state_table} "
-    f"WHERE {state_table}.{state_job_id_column} = {job_id_reference}"
-    f")"
-  )
 
 
 def _select_exact_selector_rows(queryset, selectors, *, limit, use_skip_locked):
@@ -1309,14 +1307,10 @@ def _delete_claimed_and_finish_job_if_no_execution_state(alias, job, return_valu
   finished_at_column = quote(Job._meta.get_field("finished_at").column)
   return_value_column = quote(Job._meta.get_field("return_value").column)
   updated_at_column = quote(Job._meta.get_field("updated_at").column)
-  state_checks = " AND ".join(
-    _state_absence_sql(model, jobs_table=jobs_table, job_id_column=job_id_column, quote=quote)
-    for model in (
-      ReadyExecution,
-      ScheduledExecution,
-      BlockedExecution,
-      FailedExecution,
-    )
+  state_checks = _state_absence_checks_sql(
+    _state_models_except(ClaimedExecution),
+    quote=quote,
+    job_id_expression=f"{jobs_table}.{job_id_column}",
   )
   job_id = Job._meta.get_field("id").get_db_prep_value(
     job.pk,
@@ -1377,12 +1371,11 @@ def _finish_job_if_no_execution_state(
   finished_at_column = quote(Job._meta.get_field("finished_at").column)
   return_value_column = quote(Job._meta.get_field("return_value").column)
   updated_at_column = quote(Job._meta.get_field("updated_at").column)
-  state_models = [ReadyExecution, ScheduledExecution, BlockedExecution, FailedExecution]
-  if include_claimed:
-    state_models.insert(2, ClaimedExecution)
-  state_checks = " AND ".join(
-    _state_absence_sql(model, jobs_table=jobs_table, job_id_column=job_id_column, quote=quote)
-    for model in state_models
+  ignored_models = () if include_claimed else (ClaimedExecution,)
+  state_checks = _state_absence_checks_sql(
+    _state_models_except(*ignored_models),
+    quote=quote,
+    job_id_expression=f"{jobs_table}.{job_id_column}",
   )
   job_id = Job._meta.get_field("id").get_db_prep_value(
     job.pk,
@@ -1416,17 +1409,6 @@ def _finish_job_if_no_execution_state(
   job.finished_at = finished_at
   job.return_value = return_value
   job.updated_at = finished_at
-
-
-def _state_absence_sql(model, *, jobs_table, job_id_column, quote):
-  state_table = quote(model._meta.db_table)
-  state_job_id_column = quote(model._meta.get_field("job").column)
-  return (
-    f"NOT EXISTS ("
-    f"SELECT 1 FROM {state_table} "
-    f"WHERE {state_table}.{state_job_id_column} = {jobs_table}.{job_id_column}"
-    f")"
-  )
 
 
 def _bulk_create(alias, model, objects):

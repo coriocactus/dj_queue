@@ -6,7 +6,10 @@ from django.utils import timezone
 from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias, locked_queryset
 from dj_queue.models import FailedExecution, Job, RecurringExecution
-from dj_queue.operations._helpers import _consume_selected_rows
+from dj_queue.operations._helpers import (
+  _consume_selected_rows,
+  _ensure_job_ids_have_no_other_execution_state,
+)
 
 
 def clear_finished_jobs(
@@ -35,11 +38,13 @@ def clear_finished_jobs(
   if task_path is not None:
     queryset = queryset.filter(task_path=task_path)
 
-  job_ids = list(queryset.values_list("pk", flat=True)[:batch_size])
-  if not job_ids:
-    return 0
+  with transaction.atomic(using=alias):
+    job_ids = list(queryset.values_list("pk", flat=True)[:batch_size])
+    if not job_ids:
+      return 0
 
-  Job.objects.using(alias).filter(backend_alias=backend_alias, pk__in=job_ids).delete()
+    _ensure_job_ids_have_no_other_execution_state(alias, job_ids)
+    Job.objects.using(alias).filter(backend_alias=backend_alias, pk__in=job_ids).delete()
   return len(job_ids)
 
 
@@ -82,6 +87,7 @@ def clear_failed_jobs(
       return 0
 
     job_ids = [failed.job_id for failed in failed_rows]
+    _ensure_job_ids_have_no_other_execution_state(alias, job_ids)
     Job.objects.using(alias).filter(backend_alias=backend_alias, pk__in=job_ids).delete()
 
   return len(job_ids)
