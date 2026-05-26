@@ -8,19 +8,22 @@ except ImportError:
 else:
   from dj_queue.metrics import metric_families
 
+  METRIC_TYPES = {"gauge": GaugeMetricFamily}
+
   class DjQueueCollector:
     """Prometheus collector that exposes dj_queue metrics from the shared observability snapshot."""
 
     def collect(self):
       for family in metric_families():
-        gauge = GaugeMetricFamily(
+        metric_class = METRIC_TYPES[family.metric_type]
+        metric = metric_class(
           family.name,
           family.help_text,
           labels=list(family.labels),
         )
         for sample in family.samples:
-          gauge.add_metric(list(sample.labels), sample.value)
-        yield gauge
+          metric.add_metric(list(sample.labels), sample.value)
+        yield metric
 
   registry = CollectorRegistry(auto_describe=False)
   registry.register(DjQueueCollector())

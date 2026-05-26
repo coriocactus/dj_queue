@@ -34,6 +34,7 @@ def test_metric_families_project_snapshot_without_prometheus_dependency():
   )
   by_name = {family.name: family for family in families}
 
+  assert {family.metric_type for family in families} == {"gauge"}
   assert by_name["dj_queue_queue_jobs"].samples[0] == MetricSample(
     labels=("default", "alpha", "ready"),
     value=2,

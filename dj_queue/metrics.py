@@ -14,6 +14,7 @@ class MetricSample:
 class MetricFamily:
   name: str
   help_text: str
+  metric_type: str
   labels: tuple[str, ...]
   samples: tuple[MetricSample, ...]
 
@@ -109,54 +110,63 @@ def metric_families(*, snapshots=None):
     MetricFamily(
       name="dj_queue_queue_jobs",
       help_text="Current job count by backend, queue, and state",
+      metric_type="gauge",
       labels=("backend", "queue", "state"),
       samples=tuple(queue_jobs),
     ),
     MetricFamily(
       name="dj_queue_queue_paused",
       help_text="Whether a queue is paused for a backend",
+      metric_type="gauge",
       labels=("backend", "queue"),
       samples=tuple(queue_paused),
     ),
     MetricFamily(
       name="dj_queue_queue_latency_seconds",
       help_text="Latency of the oldest ready job in a backend queue",
+      metric_type="gauge",
       labels=("backend", "queue"),
       samples=tuple(queue_latency),
     ),
     MetricFamily(
       name="dj_queue_queue_live_workers",
       help_text="Live workers that can service a backend queue",
+      metric_type="gauge",
       labels=("backend", "queue"),
       samples=tuple(queue_workers),
     ),
     MetricFamily(
       name="dj_queue_runner_processes",
       help_text="Current runner process count by backend and liveness",
+      metric_type="gauge",
       labels=("backend", "status"),
       samples=tuple(runner_processes),
     ),
     MetricFamily(
       name="dj_queue_runner_processes_by_kind",
       help_text="Current runner process count by backend, kind, and liveness",
+      metric_type="gauge",
       labels=("backend", "kind", "status"),
       samples=tuple(runner_processes_by_kind),
     ),
     MetricFamily(
       name="dj_queue_recurring_tasks",
       help_text="Current recurring task count by backend",
+      metric_type="gauge",
       labels=("backend",),
       samples=tuple(recurring_tasks),
     ),
     MetricFamily(
       name="dj_queue_semaphores",
       help_text="Current semaphore count by queue database",
+      metric_type="gauge",
       labels=("queue_database",),
       samples=tuple(semaphores),
     ),
     MetricFamily(
       name="dj_queue_process_rows",
       help_text="Current process row count by backend",
+      metric_type="gauge",
       labels=("backend",),
       samples=tuple(process_rows),
     ),

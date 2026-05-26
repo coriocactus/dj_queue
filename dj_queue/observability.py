@@ -29,6 +29,9 @@ from dj_queue.queue_selectors import queue_matches_selectors
 from dj_queue.queue_state import queue_state_count_fields, queue_state_counts
 
 
+_NOT_PROVIDED = object()
+
+
 @dataclass(frozen=True, slots=True)
 class BackendChoice:
   alias: str
@@ -207,7 +210,6 @@ def queue_rows(*, backend_alias, now, process_cutoff):
       failed_count=failed_counts.get(queue_name, 0),
       finished_count=finished_counts.get(queue_name, 0),
       paused=queue_name in paused_queues,
-      recurring=queue_name in recurring_queues,
       oldest_ready_at=oldest_ready.get(queue_name),
       oldest_scheduled_at=oldest_scheduled.get(queue_name),
       oldest_blocked_at=oldest_blocked.get(queue_name),
@@ -229,11 +231,10 @@ def queue_snapshot(
   blocked_count=None,
   failed_count=None,
   finished_count=None,
-  paused=None,
-  recurring=None,
-  oldest_ready_at=None,
-  oldest_scheduled_at=None,
-  oldest_blocked_at=None,
+  paused=_NOT_PROVIDED,
+  oldest_ready_at=_NOT_PROVIDED,
+  oldest_scheduled_at=_NOT_PROVIDED,
+  oldest_blocked_at=_NOT_PROVIDED,
   live_workers=None,
 ):
   alias = get_database_alias(backend_alias)
@@ -245,37 +246,20 @@ def queue_snapshot(
     blocked_count = state_counts["blocked"]
     failed_count = state_counts["failed"]
     finished_count = state_counts["finished"]
-  if paused is None:
-    paused = (
-      Pause.objects.using(alias)
-      .filter(
-        backend_alias=backend_alias,
-        queue_name=queue_name,
-      )
-      .exists()
+  if paused is _NOT_PROVIDED:
+    paused = queue_is_paused(backend_alias=backend_alias, queue_name=queue_name)
+  if oldest_ready_at is _NOT_PROVIDED:
+    oldest_ready_at = oldest_ready_at_for_queue(
+      backend_alias=backend_alias,
+      queue_name=queue_name,
     )
-  if recurring is None:
-    recurring = (
-      RecurringTask.objects.using(alias)
-      .filter(
-        backend_alias=backend_alias,
-        queue_name=queue_name,
-      )
-      .exists()
-    )
-  if oldest_ready_at is None:
-    oldest_ready_at = (
-      ReadyExecution.objects.using(alias)
-      .filter(backend_alias=backend_alias, queue_name=queue_name)
-      .aggregate(oldest=Min(Coalesce("latency_started_at", "created_at")))["oldest"]
-    )
-  if oldest_scheduled_at is None:
+  if oldest_scheduled_at is _NOT_PROVIDED:
     oldest_scheduled_at = (
       ScheduledExecution.objects.using(alias)
       .filter(backend_alias=backend_alias, queue_name=queue_name)
       .aggregate(oldest=Min("scheduled_at"))["oldest"]
     )
-  if oldest_blocked_at is None:
+  if oldest_blocked_at is _NOT_PROVIDED:
     oldest_blocked_at = (
       BlockedExecution.objects.using(alias)
       .filter(backend_alias=backend_alias, queue_name=queue_name)
@@ -291,9 +275,13 @@ def queue_snapshot(
       )
     )
 
-  latency_seconds = None
-  if oldest_ready_at is not None and paused is False:
-    latency_seconds = max((now - oldest_ready_at).total_seconds(), 0.0)
+  latency_seconds = queue_latency_seconds(
+    backend_alias=backend_alias,
+    queue_name=queue_name,
+    now=now,
+    paused=paused,
+    oldest_ready_at=oldest_ready_at,
+  )
 
   state_count_fields = queue_state_count_fields(
     {
@@ -319,6 +307,46 @@ def queue_snapshot(
       if queue_matches_selectors(queue_name, worker.metadata.get("queues") or ("*",))
     ),
   }
+
+
+def queue_is_paused(*, backend_alias, queue_name):
+  alias = get_database_alias(backend_alias)
+  return (
+    Pause.objects.using(alias)
+    .filter(
+      backend_alias=backend_alias,
+      queue_name=queue_name,
+    )
+    .exists()
+  )
+
+
+def queue_latency_seconds(
+  *, backend_alias, queue_name, now=None, paused=None, oldest_ready_at=_NOT_PROVIDED
+):
+  if now is None:
+    now = timezone.now()
+  if paused is None:
+    paused = queue_is_paused(backend_alias=backend_alias, queue_name=queue_name)
+  if paused:
+    return None
+  if oldest_ready_at is _NOT_PROVIDED:
+    oldest_ready_at = oldest_ready_at_for_queue(
+      backend_alias=backend_alias,
+      queue_name=queue_name,
+    )
+  if oldest_ready_at is None:
+    return None
+  return max((now - oldest_ready_at).total_seconds(), 0.0)
+
+
+def oldest_ready_at_for_queue(*, backend_alias, queue_name):
+  alias = get_database_alias(backend_alias)
+  return (
+    ReadyExecution.objects.using(alias)
+    .filter(backend_alias=backend_alias, queue_name=queue_name)
+    .aggregate(oldest=Min(Coalesce("latency_started_at", "created_at")))["oldest"]
+  )
 
 
 def process_rows(*, backend_alias, now, process_cutoff, scope):
@@ -412,6 +440,8 @@ def semaphore_rows_for_backend(*, backend_alias):
   )
   return [
     {
+      "scope": "queue_database",
+      "queue_database_alias": alias,
       "key": semaphore.key,
       "available_slots": semaphore.value,
       "limit": semaphore.limit,

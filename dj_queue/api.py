@@ -1,14 +1,13 @@
 from datetime import timedelta
 from functools import partial
 
-from django.db.models.functions import Coalesce
 from django.db import transaction
 from django.utils import timezone
 
 from dj_queue import observability
 from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias
-from dj_queue.models import Pause, ReadyExecution
+from dj_queue.models import ReadyExecution
 from dj_queue.operations.jobs import (
   ClaimedJob,
   claim_ready_jobs,
@@ -53,30 +52,25 @@ class QueueInfo:
 
   @property
   def latency(self):
-    if self.paused:
+    paused = observability.queue_is_paused(
+      backend_alias=self.backend_alias,
+      queue_name=self.queue_name,
+    )
+    if paused:
       return None
 
-    oldest = (
-      self._ready_queryset()
-      .annotate(latency_at=Coalesce("latency_started_at", "created_at"))
-      .order_by("latency_at", "created_at")
-      .values_list("latency_at", flat=True)
-      .first()
+    latency = observability.queue_latency_seconds(
+      backend_alias=self.backend_alias,
+      queue_name=self.queue_name,
+      paused=False,
     )
-    if oldest is None:
-      return 0.0
-    return max((timezone.now() - oldest).total_seconds(), 0.0)
+    return 0.0 if latency is None else latency
 
   @property
   def paused(self):
-    alias = get_database_alias(self.backend_alias)
-    return (
-      Pause.objects.using(alias)
-      .filter(
-        backend_alias=self.backend_alias,
-        queue_name=self.queue_name,
-      )
-      .exists()
+    return observability.queue_is_paused(
+      backend_alias=self.backend_alias,
+      queue_name=self.queue_name,
     )
 
   def pause(self):

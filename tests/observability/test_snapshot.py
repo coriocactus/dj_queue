@@ -95,6 +95,8 @@ def test_backend_snapshot_scopes_pause_and_recurring_rows_to_backend(settings):
   assert snapshot["queue_rows"][0]["paused"] is True
   assert [row["key"] for row in snapshot["recurring_rows"]] == ["nightly"]
   assert [row["key"] for row in snapshot["semaphore_rows"]] == ["account:1"]
+  assert snapshot["semaphore_rows"][0]["scope"] == "queue_database"
+  assert snapshot["semaphore_rows"][0]["queue_database_alias"] == "default"
 
 
 def test_configured_backend_aliases_ignore_non_dj_queue_backends(settings):
