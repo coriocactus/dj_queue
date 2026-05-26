@@ -8,6 +8,7 @@ import pytest
 from django.utils import timezone
 
 from dj_queue.config import WorkerConfig
+from dj_queue.exceptions import ProcessExitError
 from dj_queue.models import ClaimedExecution, FailedExecution, Job, Process, ReadyExecution
 from dj_queue.operations.jobs import (
   ClaimedJob,
@@ -60,6 +61,19 @@ class FakeWakeupBackend:
 
   def stop(self):
     self.stopped += 1
+
+
+class FailingSubmitPool:
+  max_workers = 1
+  idle_capacity = 1
+
+  def submit(self, *_args, **_kwargs):
+    raise RuntimeError("pool closed")
+
+  def shutdown(self, timeout, *, on_drained=None):
+    if on_drained is not None:
+      on_drained()
+    return True
 
 
 def make_ready_job(task=echo, **overrides):
@@ -214,6 +228,38 @@ def test_worker_executes_success_path():
   assert fresh_job.finished_at is not None
   assert fresh_job.return_value == "done"
   assert ClaimedExecution.objects.filter(job=job).exists() is False
+  worker.stop()
+
+
+def test_worker_fails_claimed_job_when_submit_fails():
+  job = make_ready_job(args=["submit-fails"])
+  worker = make_worker(pool=FailingSubmitPool())
+  worker.start()
+
+  submitted = worker.poll_once()
+
+  assert submitted == []
+  assert ClaimedExecution.objects.filter(job=job).exists() is False
+  failed_execution = FailedExecution.objects.get(job=job)
+  assert failed_execution.exception_class == (
+    f"{ProcessExitError.__module__}.{ProcessExitError.__qualname__}"
+  )
+  worker.stop()
+
+
+def test_worker_fails_claimed_job_when_execution_future_raises():
+  job = make_ready_job(args=["future-fails"])
+  worker = make_worker()
+  worker.start()
+  claimed_job = claim_ready_jobs(limit=1, process=worker.process)[0]
+  future = Future()
+  future.set_exception(RuntimeError("persist failed"))
+
+  worker._handle_future(future, claimed_job)
+
+  assert ClaimedExecution.objects.filter(job=job).exists() is False
+  failed_execution = FailedExecution.objects.get(job=job)
+  assert failed_execution.message == "persist failed"
   worker.stop()
 
 

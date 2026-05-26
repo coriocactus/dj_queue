@@ -112,6 +112,28 @@ def test_runner_liveness_check_uses_app_executor(monkeypatch):
   assert entered.count(test_thread) == 1
 
 
+def test_runner_poll_loop_routes_liveness_errors(monkeypatch):
+  handled = []
+  runner = DummyRunner(heartbeat_interval=60)
+  runner.start()
+
+  def fail_liveness():
+    raise RuntimeError("liveness failed")
+
+  monkeypatch.setattr(runner, "should_continue", fail_liveness)
+  monkeypatch.setattr(
+    "dj_queue.runtime.base.handle_thread_error",
+    lambda error, **kwargs: handled.append((str(error), kwargs["context"])),
+  )
+
+  try:
+    assert runner.run_poll_loop() is False
+  finally:
+    runner.stop()
+
+  assert handled == [("liveness failed", "worker.liveness")]
+
+
 def test_runner_stop_joins_heartbeat_thread():
   runner = DummyRunner(heartbeat_interval=60)
   runner.start()

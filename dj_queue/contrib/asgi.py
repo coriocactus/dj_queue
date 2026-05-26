@@ -104,8 +104,10 @@ class DjQueueLifespan:
 
     receive_queue = asyncio.Queue()
     send_queue = asyncio.Queue()
-    app_task = await self._start_wrapped_lifespan_app(scope, receive_queue.get, send_queue.put)
     wrapped_app_supports_lifespan = self.forward_wrapped_lifespan
+    app_task = None
+    if wrapped_app_supports_lifespan:
+      app_task = await self._start_wrapped_lifespan_app(scope, receive_queue.get, send_queue.put)
 
     try:
       while True:
@@ -137,12 +139,12 @@ class DjQueueLifespan:
           if response is None:
             response = {"type": "lifespan.shutdown.complete"}
           await send(response)
-          if wrapped_app_supports_lifespan:
+          if wrapped_app_supports_lifespan and app_task is not None:
             await app_task
           return
     finally:
       await self._stop_supervisor()
-      if not app_task.done():
+      if app_task is not None and not app_task.done():
         app_task.cancel()
         with suppress(asyncio.CancelledError):
           await app_task

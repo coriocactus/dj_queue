@@ -96,7 +96,7 @@ def test_gunicorn_post_fork_starts_one_embedded_supervisor(monkeypatch):
   monkeypatch.setattr(
     gunicorn,
     "_try_acquire_supervisor_lock",
-    lambda: locks.pop(0) if locks else None,
+    lambda **_kwargs: locks.pop(0) if locks else None,
   )
   monkeypatch.setattr(gunicorn, "_release_supervisor_lock", lambda lock: released.append(lock))
 
@@ -161,7 +161,7 @@ def test_gunicorn_embedded_supervisor_poll_survives_errors(monkeypatch):
   monkeypatch.setattr(
     gunicorn,
     "_try_acquire_supervisor_lock",
-    lambda: object(),
+    lambda **_kwargs: object(),
   )
   monkeypatch.setattr(
     gunicorn,
@@ -217,7 +217,7 @@ def test_gunicorn_retries_lock_until_replacement_worker_can_start(monkeypatch):
   monkeypatch.setattr(
     gunicorn,
     "_try_acquire_supervisor_lock",
-    lambda: locks.pop(0) if available["open"] and locks else None,
+    lambda **_kwargs: locks.pop(0) if available["open"] and locks else None,
   )
   monkeypatch.setattr(gunicorn, "_release_supervisor_lock", lambda lock: released.append(lock))
 
@@ -269,7 +269,7 @@ def test_gunicorn_worker_exit_waits_for_poll_thread_before_releasing_lock(monkey
 
   from dj_queue.contrib import gunicorn
 
-  monkeypatch.setattr(gunicorn, "_try_acquire_supervisor_lock", lambda: object())
+  monkeypatch.setattr(gunicorn, "_try_acquire_supervisor_lock", lambda **_kwargs: object())
   monkeypatch.setattr(gunicorn, "_release_supervisor_lock", lambda lock: released.append(lock))
   worker = type("Worker", (), {"age": 1})()
 
@@ -500,7 +500,7 @@ def test_asgi_lifespan_can_skip_wrapped_lifespan_forwarding_explicitly(monkeypat
 
   asyncio.run(app({"type": "lifespan"}, receive, send))
 
-  assert events == ["start", "wrapped-app-started", "stop"]
+  assert events == ["start", "stop"]
   assert sent_messages == [
     {"type": "lifespan.startup.complete"},
     {"type": "lifespan.shutdown.complete"},

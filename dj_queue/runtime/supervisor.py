@@ -20,6 +20,7 @@ from dj_queue.operations.jobs import (
 )
 from dj_queue.runtime.base import BaseRunner, app_executor
 from dj_queue.runtime.connection_budget import warn_if_persistent_connection_budget_is_tight
+from dj_queue.runtime.errors import handle_thread_error
 from dj_queue.runtime.pidfile import PidFile
 from dj_queue.runtime.topology import runner_definitions
 
@@ -100,8 +101,18 @@ class Supervisor(BaseRunner):
   def poll_once(self):
     pruned_processes = []
     if self._housekeeping_due():
-      pruned_processes = self.prune_stale_process_rows()
-      self._last_housekeeping_at = time.monotonic()
+      try:
+        pruned_processes = self.prune_stale_process_rows()
+      except Exception as error:
+        handle_thread_error(
+          error,
+          context="supervisor.housekeeping",
+          backend_alias=self.backend_alias,
+        )
+        self._last_housekeeping_at = time.monotonic()
+        return []
+      else:
+        self._last_housekeeping_at = time.monotonic()
     for process in pruned_processes:
       log_event(
         "process.pruned",
@@ -250,18 +261,28 @@ class AsyncSupervisor(Supervisor):
           return
         if drained is False and not self._wait_for_runner_stop(runner):
           return
-        log_event(
-          "process.replaced",
-          backend_alias=self.backend_alias,
-          process_name=runner.name,
-          kind=runner.process_kind,
-        )
-        replacement = self._rebuild_runner(runner)
-        self._replace_runner(runner, replacement)
-        if self.stop_requested():
-          return
-        runner = replacement
-        runner.start()
+        while not self.stop_requested():
+          replacement = self._rebuild_runner(runner)
+          try:
+            replacement.start()
+          except Exception as error:
+            handle_thread_error(
+              error,
+              context="supervisor.replace",
+              backend_alias=self.backend_alias,
+            )
+            replacement.stop()
+            time.sleep(self.polling_interval)
+            continue
+          self._replace_runner(runner, replacement)
+          log_event(
+            "process.replaced",
+            backend_alias=self.backend_alias,
+            process_name=runner.name,
+            kind=runner.process_kind,
+          )
+          runner = replacement
+          break
     finally:
       if not self.stop_requested():
         runner.stop()

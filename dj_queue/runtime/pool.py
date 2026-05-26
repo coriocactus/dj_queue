@@ -23,9 +23,15 @@ class WorkerPool:
 
   def submit(self, fn, *args, **kwargs):
     with self._lock:
+      if self._closing.is_set():
+        raise RuntimeError("worker pool is shutting down")
       self._in_flight += 1
 
-    future = self._executor.submit(self._run, fn, args, kwargs)
+    try:
+      future = self._executor.submit(self._run, fn, args, kwargs)
+    except Exception:
+      self._forget_unsubmitted_work()
+      raise
     with self._lock:
       self._futures.add(future)
     future.add_done_callback(self._complete)
@@ -67,6 +73,17 @@ class WorkerPool:
     callback = None
     with self._lock:
       self._futures.discard(future)
+      self._in_flight -= 1
+      if self._in_flight == 0 and not self._futures:
+        callback = self._on_drained
+        self._on_drained = None
+    if callback is not None:
+      callback()
+    self._wake_up()
+
+  def _forget_unsubmitted_work(self):
+    callback = None
+    with self._lock:
       self._in_flight -= 1
       if self._in_flight == 0 and not self._futures:
         callback = self._on_drained

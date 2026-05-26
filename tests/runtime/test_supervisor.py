@@ -390,6 +390,28 @@ def test_supervisor_poll_once_prunes_when_housekeeping_interval_elapsed(monkeypa
   assert supervisor._last_housekeeping_at == 160
 
 
+def test_supervisor_poll_once_keeps_running_after_housekeeping_error(monkeypatch):
+  handled = []
+  supervisor = make_supervisor()
+  supervisor._last_housekeeping_at = 100
+
+  monkeypatch.setattr(Supervisor, "housekeeping_interval", property(lambda self: 60))
+  monkeypatch.setattr("dj_queue.runtime.supervisor.time.monotonic", lambda: 160)
+  monkeypatch.setattr(
+    supervisor,
+    "prune_stale_process_rows",
+    lambda now=None: (_ for _ in ()).throw(RuntimeError("prune failed")),
+  )
+  monkeypatch.setattr(
+    "dj_queue.runtime.supervisor.handle_thread_error",
+    lambda error, **kwargs: handled.append((str(error), kwargs["context"])),
+  )
+
+  assert supervisor.poll_once() == []
+  assert supervisor._last_housekeeping_at == 160
+  assert handled == [("prune failed", "supervisor.housekeeping")]
+
+
 @pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
 def test_async_supervisor_starts_configured_runners_in_one_pid():
   supervisor = build_async_supervisor(

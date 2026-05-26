@@ -1,9 +1,11 @@
 import os
 import socket
 import threading
+import traceback
 
 from dj_queue.config import load_backend_config
-from dj_queue.operations.jobs import claim_ready_jobs, execute_claimed_job
+from dj_queue.exceptions import ProcessExitError
+from dj_queue.operations.jobs import claim_ready_jobs, execute_claimed_job, fail_claimed_job
 from dj_queue.runtime.base import BaseRunner, app_executor
 from dj_queue.runtime.errors import handle_thread_error
 from dj_queue.runtime.notify import build_wakeup_backend
@@ -71,10 +73,18 @@ class Worker(BaseRunner):
         backend_alias=self.backend_alias,
       )
 
+    submitted_jobs = []
     for claimed_job in claimed_jobs:
-      future = self.pool.submit(self._execute_job, claimed_job)
-      future.add_done_callback(self._handle_future)
-    return claimed_jobs
+      try:
+        future = self.pool.submit(self._execute_job, claimed_job)
+      except Exception as exc:
+        self._handle_submit_error(claimed_job, exc)
+        continue
+      future.add_done_callback(
+        lambda future, claimed_job=claimed_job: self._handle_future(future, claimed_job)
+      )
+      submitted_jobs.append(claimed_job)
+    return submitted_jobs
 
   def stop(self, *, timeout=None):
     if timeout is None:
@@ -112,9 +122,38 @@ class Worker(BaseRunner):
     with app_executor():
       return execute_claimed_job(claimed_job, backend_alias=self.backend_alias)
 
-  def _handle_future(self, future):
+  def _handle_future(self, future, claimed_job=None):
     try:
       future.result()
     except Exception as exc:
       with app_executor():
+        if claimed_job is not None:
+          self._fail_claimed_job_after_worker_error(claimed_job, exc)
         handle_thread_error(exc, context="worker.execute", backend_alias=self.backend_alias)
+      self.request_stop()
+
+  def _handle_submit_error(self, claimed_job, error):
+    with app_executor():
+      self._fail_claimed_job_after_worker_error(
+        claimed_job,
+        ProcessExitError("worker stopped before job submission"),
+      )
+      handle_thread_error(error, context="worker.submit", backend_alias=self.backend_alias)
+    self.request_stop()
+
+  def _fail_claimed_job_after_worker_error(self, claimed_job, error):
+    try:
+      fail_claimed_job(
+        claimed_job,
+        error,
+        traceback_text="".join(
+          traceback.format_exception(type(error), error, error.__traceback__)
+        ),
+        backend_alias=self.backend_alias,
+      )
+    except Exception as cleanup_error:
+      handle_thread_error(
+        cleanup_error,
+        context="worker.execute.cleanup",
+        backend_alias=self.backend_alias,
+      )

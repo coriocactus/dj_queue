@@ -1,5 +1,7 @@
 import threading
 
+import pytest
+
 from dj_queue.runtime.pool import WorkerPool
 
 
@@ -64,3 +66,13 @@ def test_worker_pool_closes_running_thread_connection_after_timeout(monkeypatch)
   release.set()
   future.result(timeout=1)
   wait_until(lambda: len(closed_threads) == 1)
+
+
+def test_worker_pool_rejects_submission_after_shutdown():
+  pool = WorkerPool(1, wake_up=lambda: None)
+
+  assert pool.shutdown(timeout=1) is True
+
+  with pytest.raises(RuntimeError, match="worker pool is shutting down"):
+    pool.submit(lambda: None)
+  assert pool.idle_capacity == 1

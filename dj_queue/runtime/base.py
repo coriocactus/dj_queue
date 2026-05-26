@@ -120,10 +120,18 @@ class BaseRunner:
       close_old_connections()
 
   def run_poll_loop(self):
-    while self.should_continue():
+    while True:
+      should_continue = self._should_continue_handled()
+      if should_continue is None:
+        return False
+      if not should_continue:
+        return True
       if not self._poll_once_handled():
         return False
-      if not self.should_continue():
+      should_continue = self._should_continue_handled()
+      if should_continue is None:
+        return False
+      if not should_continue:
         break
       self.sleeper.sleep(self.polling_interval)
     return True
@@ -182,6 +190,17 @@ class BaseRunner:
       )
       return False
     return True
+
+  def _should_continue_handled(self):
+    try:
+      return self.should_continue()
+    except Exception as error:
+      handle_thread_error(
+        error,
+        context=f"{self.hook_prefix}.liveness",
+        backend_alias=self.backend_alias,
+      )
+      return None
 
   def process_metadata(self):
     return {}

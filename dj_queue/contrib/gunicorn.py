@@ -1,4 +1,5 @@
 import fcntl
+import hashlib
 import tempfile
 import threading
 from pathlib import Path
@@ -6,7 +7,7 @@ from pathlib import Path
 from dj_queue.runtime.errors import handle_thread_error
 from dj_queue.runtime.supervisor import AsyncSupervisor
 
-LOCK_PATH = Path(tempfile.gettempdir()) / "dj_queue_gunicorn_supervisor.lock"
+LOCK_PATH_PREFIX = "dj_queue_gunicorn_supervisor"
 LOCK_RETRY_INTERVAL = 1.0
 
 
@@ -20,7 +21,7 @@ def _set_supervisor_state(worker, **state):
 
 
 def _start_embedded_supervisor(worker, *, backend_alias="default"):
-  lock_file = _try_acquire_supervisor_lock()
+  lock_file = _try_acquire_supervisor_lock(backend_alias=backend_alias)
   if lock_file is None:
     return None
 
@@ -70,7 +71,12 @@ def _start_lock_retry_loop(worker, *, backend_alias="default"):
     while retry_stop.wait(LOCK_RETRY_INTERVAL) is False:
       if getattr(worker, "_dj_queue_supervisor", None) is not None:
         return
-      if _start_embedded_supervisor(worker, backend_alias=backend_alias) is not None:
+      try:
+        supervisor = _start_embedded_supervisor(worker, backend_alias=backend_alias)
+      except Exception as error:
+        handle_thread_error(error, context="gunicorn.supervisor", backend_alias=backend_alias)
+        continue
+      if supervisor is not None:
         retry_stop.set()
         return
 
@@ -81,7 +87,8 @@ def _start_lock_retry_loop(worker, *, backend_alias="default"):
   retry_thread.start()
 
 
-def post_fork(_server, worker):
+def post_fork(server, worker):
+  backend_alias = _backend_alias(server, worker)
   _set_supervisor_state(
     worker,
     supervisor=None,
@@ -91,11 +98,11 @@ def post_fork(_server, worker):
     supervisor_retry_stop=None,
     supervisor_retry_thread=None,
   )
-  supervisor = _start_embedded_supervisor(worker)
+  supervisor = _start_embedded_supervisor(worker, backend_alias=backend_alias)
   if supervisor is not None:
     return supervisor
 
-  _start_lock_retry_loop(worker)
+  _start_lock_retry_loop(worker, backend_alias=backend_alias)
   return None
 
 
@@ -133,9 +140,22 @@ def worker_exit(_server, worker):
   return None
 
 
-def _try_acquire_supervisor_lock():
-  LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
-  lock_file = LOCK_PATH.open("a+")
+def _backend_alias(server, worker):
+  return getattr(worker, "dj_queue_backend_alias", None) or getattr(
+    server, "dj_queue_backend_alias", "default"
+  )
+
+
+def _supervisor_lock_path(*, backend_alias):
+  lock_scope = f"{Path.cwd()}:{backend_alias}"
+  digest = hashlib.sha256(lock_scope.encode()).hexdigest()[:12]
+  return Path(tempfile.gettempdir()) / f"{LOCK_PATH_PREFIX}_{backend_alias}_{digest}.lock"
+
+
+def _try_acquire_supervisor_lock(*, backend_alias="default"):
+  lock_path = _supervisor_lock_path(backend_alias=backend_alias)
+  lock_path.parent.mkdir(parents=True, exist_ok=True)
+  lock_file = lock_path.open("a+")
   try:
     fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
   except BlockingIOError:
