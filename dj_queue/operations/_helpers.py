@@ -271,7 +271,7 @@ def _ready_execution_fields(
   created_at=None,
 ):
   fields = {
-    "job": job,
+    "job_id": job.id,
     "backend_alias": _execution_backend_alias(job, backend_alias),
     "queue_name": _execution_queue_name(job, queue_name),
     "priority": _execution_priority(job, priority),
@@ -284,7 +284,7 @@ def _ready_execution_fields(
 
 def _scheduled_execution_fields(job, *, backend_alias, scheduled_at=None, created_at=None):
   fields = {
-    "job": job,
+    "job_id": job.id,
     "backend_alias": _execution_backend_alias(job, backend_alias),
     "queue_name": job.queue_name,
     "priority": job.priority,
@@ -305,7 +305,7 @@ def _blocked_execution_fields(
   priority=None,
 ):
   return {
-    "job": job,
+    "job_id": job.id,
     "backend_alias": _execution_backend_alias(job, backend_alias),
     "queue_name": _execution_queue_name(job, queue_name),
     "priority": _execution_priority(job, priority),

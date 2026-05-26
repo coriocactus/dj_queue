@@ -126,6 +126,7 @@ def enqueue_job_with_dispatch(task, args, kwargs, *, backend_alias="default", va
   if event_logging_enabled(backend_alias=backend_alias):
     log_event(
       "job.enqueued",
+      backend_alias=backend_alias,
       job_id=str(job.id),
       task_path=job.task_path,
       queue_name=job.queue_name,
@@ -196,6 +197,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
         job = entry["job"]
         log_event(
           "job.enqueued",
+          backend_alias=backend_alias,
           job_id=str(job.id),
           task_path=job.task_path,
           queue_name=job.queue_name,
@@ -261,6 +263,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
       job = entry["job"]
       log_event(
         "job.enqueued",
+        backend_alias=backend_alias,
         job_id=str(job.id),
         task_path=job.task_path,
         queue_name=job.queue_name,
@@ -305,6 +308,7 @@ def claim_ready_jobs(
     for claimed_job in claimed_jobs:
       log_event(
         "job.claimed",
+        backend_alias=backend_alias,
         job_id=str(claimed_job.job.id),
         queue_name=claimed_job.job.queue_name,
         priority=claimed_job.job.priority,
@@ -455,7 +459,12 @@ def _complete_claimed_job(job, return_value, *, backend_alias="default", task=No
 
     _release_concurrency_slot(job, task=task)
   if event_logging_enabled(backend_alias=backend_alias):
-    log_event("job.executed", job_id=str(job.id), status="success")
+    log_event(
+      "job.executed",
+      backend_alias=backend_alias,
+      job_id=str(job.id),
+      status="success",
+    )
   return job
 
 
@@ -478,7 +487,7 @@ def _fail_claimed_job(job, error, *, traceback_text="", backend_alias="default",
     _delete_claimed_execution(alias, job.id)
     _ensure_no_other_execution_state(alias, job, ignored_models=(ClaimedExecution,))
     FailedExecution.objects.using(alias).create(
-      job=job,
+      job_id=job.id,
       exception_class=_exception_path(error),
       message=str(error),
       traceback=traceback_text,
@@ -488,6 +497,7 @@ def _fail_claimed_job(job, error, *, traceback_text="", backend_alias="default",
   if event_logging_enabled(backend_alias=backend_alias):
     log_event(
       "job.failed",
+      backend_alias=backend_alias,
       job_id=str(job.id),
       exception_class=_exception_path(error),
       message=str(error),
@@ -523,7 +533,9 @@ def fail_claimed_jobs_for_process(
 
   alias = get_database_alias(backend_alias)
   job_ids = list(
-    ClaimedExecution.objects.using(alias).filter(process=process).values_list("job_id", flat=True)
+    ClaimedExecution.objects.using(alias)
+    .filter(process_id=process.id)
+    .values_list("job_id", flat=True)
   )
   failed_jobs = _fail_claimed_job_ids(
     job_ids,
@@ -612,7 +624,7 @@ def prune_stale_processes(
     for process in stale_processes:
       job_ids = list(
         ClaimedExecution.objects.using(alias)
-        .filter(process=process)
+        .filter(process_id=process.id)
         .values_list("job_id", flat=True)
       )
       deleted, _ = (
@@ -729,6 +741,7 @@ def dispatch_scheduled_job_now(job_id, *, backend_alias="default"):
   if event_logging_enabled(backend_alias=backend_alias):
     log_event(
       "job.dispatched_now",
+      backend_alias=backend_alias,
       job_id=str(job.id),
       queue_name=job.queue_name,
       priority=job.priority,
@@ -760,7 +773,13 @@ def retry_failed_job(job_id, *, backend_alias="default"):
     notify_ready_queues_on_commit((job.queue_name,), backend_alias=backend_alias)
 
   if event_logging_enabled(backend_alias=backend_alias):
-    log_event("job.retried", job_id=str(job.id), queue_name=job.queue_name, priority=job.priority)
+    log_event(
+      "job.retried",
+      backend_alias=backend_alias,
+      job_id=str(job.id),
+      queue_name=job.queue_name,
+      priority=job.priority,
+    )
   return job
 
 
@@ -808,7 +827,11 @@ def retry_failed_jobs(*, job_ids=None, batch_size=500, backend_alias="default"):
   if event_logging_enabled(backend_alias=backend_alias):
     for job in jobs:
       log_event(
-        "job.retried", job_id=str(job.id), queue_name=job.queue_name, priority=job.priority
+        "job.retried",
+        backend_alias=backend_alias,
+        job_id=str(job.id),
+        queue_name=job.queue_name,
+        priority=job.priority,
       )
   return len(jobs)
 
@@ -886,7 +909,12 @@ def _discard_state_jobs(
   should_log = event_logging_enabled(backend_alias=backend_alias)
   for job in jobs:
     if should_log:
-      log_event("job.discarded", job_id=str(job.id), reason=reason)
+      log_event(
+        "job.discarded",
+        backend_alias=backend_alias,
+        job_id=str(job.id),
+        reason=reason,
+      )
   return len(jobs)
 
 
@@ -1155,10 +1183,13 @@ def _create_claimed_executions(alias, jobs, *, process, claimed_at, check_confli
       claimed_at=claimed_at,
     )
 
+  process_id = process.id if process is not None else None
   return _bulk_create(
     alias,
     ClaimedExecution,
-    [ClaimedExecution(job=job, process=process, created_at=claimed_at) for job in jobs],
+    [
+      ClaimedExecution(job_id=job.id, process_id=process_id, created_at=claimed_at) for job in jobs
+    ],
   )
 
 

@@ -319,6 +319,7 @@ def unblock_next_blocked_job(
 
   log_event(
     "job.unblocked",
+    backend_alias=backend_alias,
     job_id=str(mock_job.id),
     concurrency_key=key,
   )
@@ -585,7 +586,12 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
           blocked.save(using=alias, update_fields=["expires_at"])
 
   for job in promoted_jobs:
-    log_event("job.unblocked", job_id=str(job.id), concurrency_key=job.concurrency_key)
+    log_event(
+      "job.unblocked",
+      backend_alias=backend_alias,
+      job_id=str(job.id),
+      concurrency_key=job.concurrency_key,
+    )
     notify_ready_queues_on_commit((job.queue_name,), backend_alias=backend_alias)
   return promoted_jobs
 
