@@ -1,24 +1,36 @@
 from django.db import connections
-from django.db.models import AutoField
-from django.db.models.constants import OnConflict
-from django.db.models.sql import InsertQuery
+
+from dj_queue.db import database_capabilities
 
 
 def create_ignore_conflicts(model, /, *, using, **fields):
   obj = model(**fields)
-  queryset = model.objects.using(using).all()
-  _objs_with_pk, objs_without_pk = queryset._prepare_for_bulk_create([obj])
-  insert_fields = [field for field in model._meta.concrete_fields if not field.generated]
-  if objs_without_pk:
-    insert_fields = [field for field in insert_fields if not isinstance(field, AutoField)]
-  query = InsertQuery(model, on_conflict=OnConflict.IGNORE)
-  query.insert_values(insert_fields, [obj], raw=False)
-  compiler = query.get_compiler(using=using)
-  rowcount = 0
+  connection = connections[using]
+  quote = connection.ops.quote_name
+  insert_fields = [
+    field
+    for field in model._meta.concrete_fields
+    if not field.generated and not _is_auto_field(field)
+  ]
+  columns = ", ".join(quote(field.column) for field in insert_fields)
+  placeholders = ", ".join(["%s"] * len(insert_fields))
+  params = [
+    field.get_db_prep_save(field.pre_save(obj, add=True), connection=connection)
+    for field in insert_fields
+  ]
 
-  with connections[using].cursor() as cursor:
-    for sql, params in compiler.as_sql():
-      cursor.execute(sql, params)
-      rowcount += cursor.rowcount
+  table = quote(model._meta.db_table)
+  if database_capabilities(using).backend_family in {"mysql", "mariadb"}:
+    sql = f"INSERT IGNORE INTO {table} ({columns}) VALUES ({placeholders})"
+  else:
+    sql = f"INSERT INTO {table} ({columns}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
+
+  with connection.cursor() as cursor:
+    cursor.execute(sql, params)
+    rowcount = cursor.rowcount
 
   return rowcount > 0
+
+
+def _is_auto_field(field):
+  return field.get_internal_type() in {"AutoField", "BigAutoField", "SmallAutoField"}
