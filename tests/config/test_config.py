@@ -695,6 +695,27 @@ def test_runtime_numeric_options_validate(settings, setting_name, value):
     load_backend_config()
 
 
+def test_runtime_numeric_options_accept_fractional_seconds(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {
+        "process_heartbeat_interval": 0.25,
+        "process_alive_threshold": 1.5,
+        "shutdown_timeout": 0.5,
+        "dispatchers": {"concurrency_maintenance_interval": 0.5},
+      },
+    },
+  }
+
+  config = load_backend_config()
+
+  assert config.process_heartbeat_interval == 0.25
+  assert config.process_alive_threshold == 1.5
+  assert config.shutdown_timeout == 0.5
+  assert config.dispatchers[0].concurrency_maintenance_interval == 0.5
+
+
 @pytest.mark.parametrize(
   "setting_name",
   (
@@ -744,6 +765,79 @@ def test_nested_runtime_numeric_options_validate(settings, options, setting_name
   with pytest.raises(ImproperlyConfigured) as exc_info:
     load_backend_config()
   assert setting_name in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+  ("option_name", "value"),
+  (
+    ("database_alias", 1),
+    ("supervisor_pidfile", 1),
+    ("on_thread_error", 1),
+  ),
+)
+def test_string_options_reject_non_strings(settings, option_name, value):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {option_name: value},
+    },
+  }
+
+  with pytest.raises(ImproperlyConfigured, match=option_name):
+    load_backend_config()
+
+
+@pytest.mark.parametrize(
+  "tasks_settings",
+  (
+    {
+      "default": {
+        "BACKEND": "dj_queue.backend.DjQueueBackend",
+        "QUEUES": [1],
+        "OPTIONS": {},
+      }
+    },
+    {
+      "default": {
+        "BACKEND": "dj_queue.backend.DjQueueBackend",
+        "OPTIONS": {"workers": {"queues": [1]}},
+      }
+    },
+  ),
+)
+def test_queue_selectors_must_be_strings(settings, tasks_settings):
+  settings.TASKS = tasks_settings
+
+  with pytest.raises(ImproperlyConfigured, match="sequence of strings"):
+    load_backend_config()
+
+
+@pytest.mark.parametrize(
+  ("recurring", "setting_name"),
+  (
+    ({1: {"task_path": "tests.tasks.echo", "schedule": "* * * * *"}}, "recurring task key"),
+    ({"daily": {"task_path": 1, "schedule": "* * * * *"}}, "task_path"),
+    ({"daily": {"task_path": "tests.tasks.echo", "schedule": 1}}, "schedule"),
+    (
+      {"daily": {"task_path": "tests.tasks.echo", "schedule": "* * * * *", "args": "x"}},
+      "args",
+    ),
+    (
+      {"daily": {"task_path": "tests.tasks.echo", "schedule": "* * * * *", "kwargs": []}},
+      "kwargs",
+    ),
+  ),
+)
+def test_static_recurring_entries_reject_sloppy_shapes(settings, recurring, setting_name):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {"recurring": recurring},
+    },
+  }
+
+  with pytest.raises(ImproperlyConfigured, match=setting_name):
+    load_backend_config()
 
 
 def test_load_backend_config_caches_repeated_inputs(settings, monkeypatch):

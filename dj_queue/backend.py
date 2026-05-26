@@ -21,6 +21,11 @@ class DjQueueBackend(BaseTaskBackend):
   supports_get_result = True
   supports_priority = True
 
+  def __init__(self, alias, params):
+    if not params.get("QUEUES"):
+      params = {**params, "QUEUES": []}
+    super().__init__(alias, params)
+
   def validate_task(self, task):
     validate_queue_allowed(task.queue_name, backend_alias=self.alias)
     validate_priority(task.priority)

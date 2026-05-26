@@ -11,7 +11,7 @@ from django.tasks.exceptions import TaskResultDoesNotExist
 from django.utils import timezone
 
 from dj_queue.api import enqueue_on_commit
-from dj_queue.backend import _async_backend_call
+from dj_queue.backend import DjQueueBackend, _async_backend_call
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import (
   ClaimedExecution,
@@ -102,6 +102,15 @@ def snapshot_jobs():
     )
     for job in Job.objects.order_by("created_at")
   ]
+
+
+def test_backend_missing_queues_means_any_queue():
+  backend = DjQueueBackend(
+    "default",
+    {"BACKEND": "dj_queue.backend.DjQueueBackend", "OPTIONS": {}},
+  )
+
+  assert backend.queues == set()
 
 
 @pytest.mark.django_db

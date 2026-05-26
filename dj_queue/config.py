@@ -82,7 +82,7 @@ class DispatcherConfig(ConfigValue):
   batch_size: int = 500
   polling_interval: float = 1
   concurrency_maintenance: bool = True
-  concurrency_maintenance_interval: int = 600
+  concurrency_maintenance_interval: float = 600
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,9 +112,9 @@ class BackendConfig(ConfigValue):
   dispatchers: tuple[DispatcherConfig, ...] = (DispatcherConfig(),)
   scheduler: SchedulerConfig | None = field(default_factory=SchedulerConfig)
   recurring: dict[str, RecurringTaskConfig] = field(default_factory=dict)
-  process_heartbeat_interval: int = 60
-  process_alive_threshold: int = 300
-  shutdown_timeout: int = 5
+  process_heartbeat_interval: float = 60
+  process_alive_threshold: float = 300
+  shutdown_timeout: float = 5
   supervisor_pidfile: str | None = None
   preserve_finished_jobs: bool = True
   clear_finished_jobs_after: int | None = 86400
@@ -248,7 +248,9 @@ def _load_backend_config_uncached(
       resolved_options["process_alive_threshold"], "process_alive_threshold"
     ),
     shutdown_timeout=_nonnegative_float(resolved_options["shutdown_timeout"], "shutdown_timeout"),
-    supervisor_pidfile=resolved_options["supervisor_pidfile"],
+    supervisor_pidfile=_optional_string_option(
+      resolved_options["supervisor_pidfile"], "supervisor_pidfile"
+    ),
     preserve_finished_jobs=preserve_finished_jobs,
     clear_finished_jobs_after=_optional_nonnegative_int(
       resolved_options["clear_finished_jobs_after"], "clear_finished_jobs_after"
@@ -264,7 +266,7 @@ def _load_backend_config_uncached(
       resolved_options["default_concurrency_duration"],
       "default_concurrency_duration",
     ),
-    database_alias=str(resolved_options["database_alias"]),
+    database_alias=_string_option(resolved_options["database_alias"], "database_alias"),
     use_skip_locked=_bool_option(resolved_options["use_skip_locked"], "use_skip_locked"),
     listen_notify=_bool_option(resolved_options["listen_notify"], "listen_notify"),
     silence_polling=_bool_option(resolved_options["silence_polling"], "silence_polling"),
@@ -428,7 +430,7 @@ def _validated_callback_path(callback_path: Any) -> str | None:
   if callback_path in (None, ""):
     return None
 
-  callback_path = str(callback_path)
+  callback_path = _string_option(callback_path, "on_thread_error")
   try:
     import_string(callback_path)
   except ImportError as exc:
@@ -546,24 +548,31 @@ def _build_recurring_config(
 
   recurring: dict[str, RecurringTaskConfig] = {}
   for key, raw_entry in raw_recurring.items():
+    key = _string_option(key, "recurring task key")
     if not isinstance(raw_entry, Mapping):
       raise ImproperlyConfigured("recurring entries must be mappings")
 
-    task_path = raw_entry.get("task_path")
-    schedule = raw_entry.get("schedule")
-    if not task_path or not schedule:
+    raw_task_path = raw_entry.get("task_path")
+    raw_schedule = raw_entry.get("schedule")
+    if raw_task_path in (None, "") or raw_schedule in (None, ""):
       raise ImproperlyConfigured(f"recurring task {key!r} requires task_path and schedule")
-    if not is_valid_cron(str(schedule)):
+    task_path = _string_option(raw_task_path, f"recurring task {key!r} task_path")
+    schedule = _string_option(raw_schedule, f"recurring task {key!r} schedule")
+    if not is_valid_cron(schedule):
       raise ImproperlyConfigured(f"recurring task {key!r} has an invalid cron schedule")
 
-    queue_name = str(raw_entry.get("queue_name", "default"))
+    queue_name = _string_option(
+      raw_entry.get("queue_name", "default"), f"recurring task {key!r} queue_name"
+    )
     priority = _priority_int(raw_entry.get("priority", 0), f"recurring task {key!r} priority")
     if allowed_queues and queue_name not in allowed_queues:
       raise ImproperlyConfigured(
         f"recurring task {key!r} is invalid: queue {queue_name!r} is not allowed for backend {backend_alias!r}"
       )
+    args = _tuple_option(raw_entry.get("args", []), f"recurring task {key!r} args")
+    kwargs = _dict_option(raw_entry.get("kwargs", {}), f"recurring task {key!r} kwargs")
     try:
-      task = import_string(str(task_path))
+      task = import_string(task_path)
     except ImportError as exc:
       raise ImproperlyConfigured(f"recurring task {key!r} is invalid: {exc}") from exc
     if not hasattr(task, "using"):
@@ -571,15 +580,17 @@ def _build_recurring_config(
         f"recurring task {key!r} is invalid: task_path must reference a Django task"
       )
 
-    recurring[str(key)] = RecurringTaskConfig(
-      key=str(key),
-      task_path=str(task_path),
-      schedule=str(schedule),
-      args=tuple(raw_entry.get("args", [])),
-      kwargs=dict(raw_entry.get("kwargs", {})),
+    recurring[key] = RecurringTaskConfig(
+      key=key,
+      task_path=task_path,
+      schedule=schedule,
+      args=args,
+      kwargs=kwargs,
       queue_name=queue_name,
       priority=priority,
-      description=str(raw_entry.get("description", "")),
+      description=_string_option(
+        raw_entry.get("description", ""), f"recurring task {key!r} description"
+      ),
     )
   return recurring
 
@@ -612,9 +623,36 @@ def _as_string_tuple(value: Any) -> tuple[str, ...]:
     return ()
   if isinstance(value, str):
     return (value,)
-  if not isinstance(value, Sequence):
+  if not isinstance(value, Sequence) or isinstance(value, (bytes, bytearray)):
     raise ImproperlyConfigured("expected a string or a sequence of strings")
-  return tuple(str(item) for item in value)
+  values = tuple(value)
+  if not all(isinstance(item, str) for item in values):
+    raise ImproperlyConfigured("expected a string or a sequence of strings")
+  return values
+
+
+def _string_option(value: Any, setting_name: str) -> str:
+  if not isinstance(value, str):
+    raise ImproperlyConfigured(f"dj_queue {setting_name} must be a string")
+  return value
+
+
+def _optional_string_option(value: Any, setting_name: str) -> str | None:
+  if value is None:
+    return None
+  return _string_option(value, setting_name)
+
+
+def _tuple_option(value: Any, setting_name: str) -> tuple[Any, ...]:
+  if isinstance(value, str) or not isinstance(value, Sequence):
+    raise ImproperlyConfigured(f"dj_queue {setting_name} must be a sequence")
+  return tuple(value)
+
+
+def _dict_option(value: Any, setting_name: str) -> dict[str, Any]:
+  if not isinstance(value, Mapping):
+    raise ImproperlyConfigured(f"dj_queue {setting_name} must be a mapping")
+  return dict(value)
 
 
 def _optional_nonnegative_int(value: Any, setting_name: str) -> int | None:
