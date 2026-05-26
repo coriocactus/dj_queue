@@ -44,7 +44,7 @@ from dj_queue.queue_state import (
 )
 
 
-class DjQueueFirstAdminSite(admin.AdminSite):
+class DjQueueAdminSiteMixin:
   def _dashboard_app_url(self):
     return reverse("admin:dj_queue_dashboard_changelist", current_app=self.name)
 
@@ -65,7 +65,18 @@ class DjQueueFirstAdminSite(admin.AdminSite):
     return super().app_index(request, app_label, extra_context=extra_context)
 
 
-admin.site.__class__ = DjQueueFirstAdminSite
+def _install_dj_queue_admin_site(site):
+  if isinstance(site, DjQueueAdminSiteMixin):
+    return
+
+  site.__class__ = type(
+    f"DjQueue{site.__class__.__name__}",
+    (DjQueueAdminSiteMixin, site.__class__),
+    {"__module__": __name__},
+  )
+
+
+_install_dj_queue_admin_site(admin.site)
 
 
 def _format_admin_datetime(value):

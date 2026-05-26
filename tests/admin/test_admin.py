@@ -1,11 +1,13 @@
 from datetime import timedelta
 
 import pytest
+from django.contrib import admin as django_admin
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from django.utils.html import format_html
 from django.utils import timezone
 
+from dj_queue.admin import DjQueueAdminSiteMixin, _install_dj_queue_admin_site
 from dj_queue.models import (
   BlockedExecution,
   FailedExecution,
@@ -1035,6 +1037,23 @@ def test_admin_index_hides_raw_dj_queue_models(admin_client):
   assert dj_queue_app["app_url"] == reverse("admin:dj_queue_dashboard_changelist")
   object_names = [model.get("object_name") for model in dj_queue_app["models"]]
   assert object_names == ["Dashboard"]
+
+
+def test_admin_site_install_preserves_custom_admin_site_class():
+  class CustomAdminSite(django_admin.AdminSite):
+    def custom_marker(self):
+      return "custom"
+
+  site = CustomAdminSite(name="custom")
+
+  _install_dj_queue_admin_site(site)
+  installed_class = site.__class__
+  _install_dj_queue_admin_site(site)
+
+  assert site.__class__ is installed_class
+  assert isinstance(site, DjQueueAdminSiteMixin)
+  assert isinstance(site, CustomAdminSite)
+  assert site.custom_marker() == "custom"
 
 
 def test_dj_queue_app_index_redirects_to_dashboard(admin_client):
