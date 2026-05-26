@@ -42,7 +42,7 @@ from dj_queue.operations.jobs import (
 )
 import dj_queue.operations.jobs as job_operations
 from dj_queue.api import QueueInfo
-from tests.tasks import echo, limited, other_queue
+from tests.tasks import echo, limited, limited_discard, other_queue
 
 
 def make_job(task=echo, **overrides):
@@ -559,6 +559,32 @@ def test_dispatcher_promotes_expired_blocked_jobs():
 
 
 @pytest.mark.django_db
+def test_promote_expired_blocked_jobs_rejects_conflicting_execution_state():
+  job = make_job(task=limited, args=[1], kwargs={"value": "later"}, concurrency_key="account:1")
+  BlockedExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+    concurrency_key=job.concurrency_key,
+    expires_at=timezone.now() - timedelta(seconds=1),
+  )
+  FailedExecution.objects.create(
+    job=job,
+    exception_class="builtins.ValueError",
+    message="boom",
+    traceback="traceback",
+  )
+
+  with pytest.raises(EnqueueError, match="already has an execution-state row"):
+    promote_expired_blocked_jobs(batch_size=10)
+
+  assert BlockedExecution.objects.filter(job=job).exists() is True
+  assert ReadyExecution.objects.filter(job=job).exists() is False
+  assert FailedExecution.objects.filter(job=job).exists() is True
+
+
+@pytest.mark.django_db
 def test_expired_semaphore_cleanup_preserves_active_claimed_key():
   first = limited.enqueue(1, value="first")
   second = limited.enqueue(1, value="second")
@@ -1002,6 +1028,49 @@ def test_claim_ready_jobs_rejects_conflicting_state_with_fixed_query_budget():
 
 
 @pytest.mark.django_db
+def test_claim_ready_jobs_rejects_process_from_another_backend():
+  job = make_job()
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+  process = Process.objects.create(
+    backend_alias="secondary",
+    kind="Worker",
+    pid=12345,
+    hostname="localhost",
+    name="secondary-worker",
+    metadata={},
+    last_heartbeat_at=timezone.now(),
+  )
+
+  with pytest.raises(EnqueueError, match="belongs to backend 'secondary'"):
+    claim_ready_jobs(limit=1, process=process)
+
+  assert ReadyExecution.objects.filter(job=job).exists() is True
+  assert ClaimedExecution.objects.filter(job=job).exists() is False
+
+
+@pytest.mark.django_db
+def test_claim_ready_jobs_rejects_mismatched_ready_row_backend_alias():
+  job = make_job(backend_alias="secondary")
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias="default",
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+
+  with pytest.raises(EnqueueError, match="belongs to backend 'secondary'"):
+    claim_ready_jobs(limit=1, backend_alias="default")
+
+  assert ReadyExecution.objects.filter(job=job).exists() is True
+  assert ClaimedExecution.objects.filter(job=job).exists() is False
+
+
+@pytest.mark.django_db
 def test_promote_scheduled_jobs_rejects_job_with_conflicting_execution_state():
   job = make_job(scheduled_at=timezone.now() - timedelta(seconds=1))
   ScheduledExecution.objects.create(
@@ -1020,6 +1089,75 @@ def test_promote_scheduled_jobs_rejects_job_with_conflicting_execution_state():
 
   with pytest.raises(EnqueueError, match="already has an execution-state row"):
     promote_scheduled_jobs(batch_size=10)
+
+
+@pytest.mark.django_db
+def test_promote_scheduled_concurrency_job_rejects_conflicting_execution_state():
+  job = make_job(
+    task=limited,
+    args=[1],
+    kwargs={"value": "later"},
+    scheduled_at=timezone.now() - timedelta(seconds=1),
+    concurrency_key="account:1",
+  )
+  ScheduledExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+    scheduled_at=job.scheduled_at,
+  )
+  FailedExecution.objects.create(
+    job=job,
+    exception_class="builtins.ValueError",
+    message="boom",
+    traceback="traceback",
+  )
+
+  with pytest.raises(EnqueueError, match="already has an execution-state row"):
+    promote_scheduled_jobs(batch_size=10)
+
+  assert ScheduledExecution.objects.filter(job=job).exists() is True
+  assert ReadyExecution.objects.filter(job=job).exists() is False
+  assert FailedExecution.objects.filter(job=job).exists() is True
+
+
+@pytest.mark.django_db
+def test_promote_scheduled_discard_job_rejects_conflicting_execution_state():
+  job = make_job(
+    task=limited_discard,
+    args=[1],
+    kwargs={"value": "later"},
+    scheduled_at=timezone.now() - timedelta(seconds=1),
+    concurrency_key="account:1",
+  )
+  ScheduledExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+    scheduled_at=job.scheduled_at,
+  )
+  FailedExecution.objects.create(
+    job=job,
+    exception_class="builtins.ValueError",
+    message="boom",
+    traceback="traceback",
+  )
+  Semaphore.objects.create(
+    key="account:1",
+    value=0,
+    limit=1,
+    expires_at=timezone.now() + timedelta(seconds=60),
+  )
+
+  with pytest.raises(EnqueueError, match="already has an execution-state row"):
+    promote_scheduled_jobs(batch_size=10)
+
+  job.refresh_from_db()
+  assert job.finished_at is None
+  assert ScheduledExecution.objects.filter(job=job).exists() is True
+  assert FailedExecution.objects.filter(job=job).exists() is True
 
 
 @pytest.mark.django_db

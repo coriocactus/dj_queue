@@ -299,7 +299,7 @@ def unblock_next_blocked_job(
         priority=blocked["priority"],
         concurrency_key=blocked["concurrency_key"],
         expires_at=blocked["expires_at"],
-        check_conflicts=False,
+        check_conflicts=True,
       )
       return None
 
@@ -545,7 +545,7 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
           queue_name=queue_name,
           priority=priority,
           ready_at=now,
-          check_conflicts=False,
+          check_conflicts=True,
         )
         promoted_jobs.append(job)
       else:
@@ -559,7 +559,7 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
             priority=blocked.priority,
             concurrency_key=blocked.concurrency_key,
             expires_at=expires_at,
-            check_conflicts=False,
+            check_conflicts=True,
           )
         else:
           blocked.expires_at = expires_at

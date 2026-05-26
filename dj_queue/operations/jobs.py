@@ -319,6 +319,9 @@ def _claim_ready_jobs_once(
 ):
 
   with transaction.atomic(using=alias):
+    if process is not None and process.backend_alias != backend_alias:
+      raise EnqueueError(f"process {process.name!r} belongs to backend {process.backend_alias!r}")
+
     claimed_insert_checks_conflicts = _claimed_insert_checks_conflicts(alias)
     queryset = (
       ReadyExecution.objects.using(alias).select_related("job").filter(backend_alias=backend_alias)
@@ -332,6 +335,14 @@ def _claim_ready_jobs_once(
     )
     if not ready_rows:
       return []
+
+    mismatched_row = next(
+      (row for row in ready_rows if row.job.backend_alias != backend_alias), None
+    )
+    if mismatched_row is not None:
+      raise EnqueueError(
+        f"job {mismatched_row.job_id} belongs to backend {mismatched_row.job.backend_alias!r}"
+      )
 
     if not claimed_insert_checks_conflicts:
       conflicting_job_ids = _job_ids_with_other_execution_state(
@@ -523,7 +534,10 @@ def fail_claimed_jobs_for_process(
 
 def fail_claimed_jobs_for_pid(pid, error, *, traceback_text="", backend_alias="default"):
   alias = get_database_alias(backend_alias)
-  process = Process.objects.using(alias).filter(pid=pid, backend_alias=backend_alias).first()
+  processes = list(Process.objects.using(alias).filter(pid=pid, backend_alias=backend_alias)[:2])
+  if len(processes) != 1:
+    return []
+  process = processes[0]
   return fail_claimed_jobs_for_process(
     process,
     error,
@@ -670,7 +684,7 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
     for job in jobs:
       if job.pk in direct_job_ids:
         continue
-      dispatch_outcome = _dispatch_existing_job(job, check_conflicts=False)
+      dispatch_outcome = _dispatch_existing_job(job)
       if dispatch_outcome.should_notify:
         ready_queue_names.append(job.queue_name)
 
@@ -949,14 +963,17 @@ def _dispatch_job(job, *, task, backend_alias, now=None, check_conflicts=True):
       backend_alias=backend_alias,
       queue_name=job.queue_name,
       ready_at=now,
-      check_conflicts=False,
+      check_conflicts=check_conflicts,
     )
     return DispatchOutcome.READY
 
   if on_conflict == "discard":
-    job.finished_at = now
-    job.return_value = None
-    job.save(using=alias, update_fields=["finished_at", "return_value", "updated_at"])
+    if check_conflicts:
+      _finish_job_if_no_execution_state(alias, job, None, finished_at=now, include_claimed=True)
+    else:
+      job.finished_at = now
+      job.return_value = None
+      job.save(using=alias, update_fields=["finished_at", "return_value", "updated_at"])
     return DispatchOutcome.DISCARDED
 
   _create_blocked_execution(
@@ -1349,7 +1366,9 @@ def _delete_claimed_and_finish_job_if_no_execution_state(alias, job, return_valu
   job.updated_at = finished_at
 
 
-def _finish_job_if_no_execution_state(alias, job, return_value, *, finished_at):
+def _finish_job_if_no_execution_state(
+  alias, job, return_value, *, finished_at, include_claimed=False
+):
   connection = connections[alias]
   quote = connection.ops.quote_name
   jobs_table = quote(Job._meta.db_table)
@@ -1358,14 +1377,12 @@ def _finish_job_if_no_execution_state(alias, job, return_value, *, finished_at):
   finished_at_column = quote(Job._meta.get_field("finished_at").column)
   return_value_column = quote(Job._meta.get_field("return_value").column)
   updated_at_column = quote(Job._meta.get_field("updated_at").column)
+  state_models = [ReadyExecution, ScheduledExecution, BlockedExecution, FailedExecution]
+  if include_claimed:
+    state_models.insert(2, ClaimedExecution)
   state_checks = " AND ".join(
     _state_absence_sql(model, jobs_table=jobs_table, job_id_column=job_id_column, quote=quote)
-    for model in (
-      ReadyExecution,
-      ScheduledExecution,
-      BlockedExecution,
-      FailedExecution,
-    )
+    for model in state_models
   )
   job_id = Job._meta.get_field("id").get_db_prep_value(
     job.pk,

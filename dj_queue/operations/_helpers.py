@@ -220,7 +220,7 @@ def _ready_execution_fields(
 ):
   fields = {
     "job": job,
-    "backend_alias": backend_alias,
+    "backend_alias": _execution_backend_alias(job, backend_alias),
     "queue_name": _execution_queue_name(job, queue_name),
     "priority": _execution_priority(job, priority),
     "latency_started_at": ready_at,
@@ -233,7 +233,7 @@ def _ready_execution_fields(
 def _scheduled_execution_fields(job, *, backend_alias, scheduled_at=None, created_at=None):
   fields = {
     "job": job,
-    "backend_alias": backend_alias,
+    "backend_alias": _execution_backend_alias(job, backend_alias),
     "queue_name": job.queue_name,
     "priority": job.priority,
     "scheduled_at": scheduled_at if scheduled_at is not None else job.scheduled_at,
@@ -254,12 +254,18 @@ def _blocked_execution_fields(
 ):
   return {
     "job": job,
-    "backend_alias": backend_alias,
+    "backend_alias": _execution_backend_alias(job, backend_alias),
     "queue_name": _execution_queue_name(job, queue_name),
     "priority": _execution_priority(job, priority),
     "concurrency_key": concurrency_key if concurrency_key is not None else job.concurrency_key,
     "expires_at": expires_at,
   }
+
+
+def _execution_backend_alias(job, backend_alias):
+  if job.backend_alias != backend_alias:
+    raise EnqueueError(f"job {job.id} belongs to backend {job.backend_alias!r}")
+  return job.backend_alias
 
 
 def _execution_queue_name(job, queue_name):
