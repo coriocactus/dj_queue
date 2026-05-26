@@ -121,11 +121,6 @@ class ReadyExecution(models.Model):
   class Meta:
     db_table = "dj_queue_ready_executions"
     indexes = [
-      models.Index(fields=["backend_alias", "priority", "id"], name="djq_re_b_prio_idx"),
-      models.Index(
-        fields=["backend_alias", "queue_name", "priority", "id"],
-        name="djq_re_b_queue_idx",
-      ),
       models.Index(
         fields=["backend_alias", "-priority", "id"],
         name="djq_re_b_prio_d_idx",
@@ -152,10 +147,6 @@ class ScheduledExecution(models.Model):
   class Meta:
     db_table = "dj_queue_scheduled_executions"
     indexes = [
-      models.Index(
-        fields=["backend_alias", "scheduled_at", "priority", "id"],
-        name="djq_se_b_due_idx",
-      ),
       models.Index(
         fields=["backend_alias", "scheduled_at", "-priority", "id"],
         name="djq_se_b_due_d_idx",
@@ -199,14 +190,6 @@ class BlockedExecution(models.Model):
   class Meta:
     db_table = "dj_queue_blocked_executions"
     indexes = [
-      models.Index(
-        fields=["backend_alias", "concurrency_key", "priority", "id"],
-        name="djq_bl_b_conc_idx",
-      ),
-      models.Index(
-        fields=["backend_alias", "expires_at", "concurrency_key"],
-        name="djq_bl_b_exp_conc_idx",
-      ),
       models.Index(
         fields=["backend_alias", "concurrency_key", "-priority", "id"],
         name="djq_bl_b_conc_d_idx",
