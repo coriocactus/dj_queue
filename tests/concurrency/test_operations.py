@@ -90,6 +90,18 @@ def test_semaphore_acquire_reconciles_increased_limit():
 
 
 @pytest.mark.django_db
+def test_semaphore_acquire_reconciles_reduced_limit_when_saturated():
+  assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True
+  assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True
+
+  assert semaphore_acquire("account:resize", limit=1, duration_seconds=60) is False
+
+  semaphore = Semaphore.objects.get(key="account:resize")
+  assert semaphore.limit == 1
+  assert semaphore.value == 0
+
+
+@pytest.mark.django_db
 def test_semaphore_release_reconciles_reduced_limit():
   assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True
   assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True
@@ -1180,6 +1192,19 @@ def test_cleanup_expired_semaphores():
   assert deleted == 1
   assert Semaphore.objects.filter(key="expired").exists() is False
   assert Semaphore.objects.filter(key="fresh").exists() is True
+
+
+@pytest.mark.skipif(
+  os.environ.get("DB_BACKEND", "sqlite") != "postgres",
+  reason="requires DB_BACKEND=postgres",
+)
+@pytest.mark.django_db(transaction=True)
+def test_postgres_semaphore_acquire_uses_one_semaphore_query_per_attempt():
+  with CaptureQueriesContext(connection) as ctx:
+    assert semaphore_acquire("account:postgres-upsert", limit=1, duration_seconds=60) is True
+    assert semaphore_acquire("account:postgres-upsert", limit=1, duration_seconds=60) is False
+
+  assert len(queries_touching(ctx, "dj_queue_semaphores")) == 2
 
 
 @pytest.mark.skipif(

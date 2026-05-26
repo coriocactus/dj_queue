@@ -51,6 +51,14 @@ def semaphore_acquire(
       expires_at=expires_at,
       now=now,
     )
+  if backend_family == "postgresql":
+    return _postgresql_semaphore_acquire(
+      alias,
+      key,
+      limit=limit,
+      expires_at=expires_at,
+      now=now,
+    )
 
   with _operation_atomic(alias):
     if create_ignore_conflicts(
@@ -84,6 +92,76 @@ def semaphore_acquire(
       updated_at=now,
     )
   return False
+
+
+def _postgresql_semaphore_acquire(alias, key, *, limit, expires_at, now):
+  connection = connections[alias]
+  quote = connection.ops.quote_name
+  table = quote(Semaphore._meta.db_table)
+  key_column = quote("key")
+  value_column = quote("value")
+  limit_column = quote("limit")
+  expires_at_column = quote("expires_at")
+  created_at_column = quote("created_at")
+  updated_at_column = quote("updated_at")
+  conflicted_available = (
+    f"LEAST(EXCLUDED.{limit_column}, "
+    f"GREATEST(0, {table}.{value_column} + EXCLUDED.{limit_column} - {table}.{limit_column}))"
+  )
+  current_available = f"LEAST(%s, GREATEST(0, {value_column} + %s - {limit_column}))"
+
+  with connection.cursor() as cursor:
+    cursor.execute(
+      f"""
+      WITH acquired AS (
+        INSERT INTO {table} (
+          {key_column},
+          {value_column},
+          {limit_column},
+          {expires_at_column},
+          {created_at_column},
+          {updated_at_column}
+        )
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT ({key_column}) DO UPDATE
+        SET
+          {value_column} = {conflicted_available} - 1,
+          {limit_column} = EXCLUDED.{limit_column},
+          {expires_at_column} = EXCLUDED.{expires_at_column},
+          {updated_at_column} = EXCLUDED.{updated_at_column}
+        WHERE {table}.{value_column} > {table}.{limit_column} - EXCLUDED.{limit_column}
+        RETURNING TRUE AS acquired
+      ), reconciled AS (
+        UPDATE {table}
+        SET
+          {value_column} = {current_available},
+          {limit_column} = %s,
+          {updated_at_column} = %s
+        WHERE {key_column} = %s
+          AND NOT EXISTS (SELECT 1 FROM acquired)
+        RETURNING FALSE AS acquired
+      )
+      SELECT acquired FROM acquired
+      UNION ALL
+      SELECT acquired FROM reconciled
+      """,
+      [
+        key,
+        limit - 1,
+        limit,
+        expires_at,
+        now,
+        now,
+        limit,
+        limit,
+        limit,
+        now,
+        key,
+      ],
+    )
+    row = cursor.fetchone()
+
+  return bool(row and row[0])
 
 
 def _mysql_family_semaphore_acquire(alias, key, *, limit, expires_at, now):
