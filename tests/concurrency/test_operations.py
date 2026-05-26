@@ -218,7 +218,7 @@ def test_execute_claimed_job_with_waiter_avoids_nested_unblock_savepoint():
   with CaptureQueriesContext(connection) as ctx:
     execute_claimed_job(claimed_job)
 
-  expected_queries = 7 if connection.vendor == "postgresql" else 9
+  expected_queries = 6 if connection.vendor == "postgresql" else 9
   assert len(ctx.captured_queries) == expected_queries
 
 

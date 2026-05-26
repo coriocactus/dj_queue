@@ -326,12 +326,27 @@ def unblock_next_blocked_job(
   now = timezone.now()
 
   with _operation_atomic(alias):
-    blocked = _consume_next_blocked_job(
-      alias,
-      backend_alias=backend_alias,
-      key=key,
-      use_skip_locked=use_skip_locked,
-    )
+    capabilities = database_capabilities(alias)
+    postgres_release_slot = release_slot and capabilities.backend_family == "postgresql"
+    if postgres_release_slot:
+      blocked = _postgres_consume_next_blocked_job_with_released_slot(
+        alias,
+        backend_alias=backend_alias,
+        key=key,
+        limit=limit,
+        duration_seconds=duration_seconds,
+        now=now,
+        use_skip_locked=use_skip_locked and capabilities.supports_skip_locked,
+      )
+      slot_acquired = bool(blocked and blocked.pop("slot_acquired"))
+    else:
+      blocked = _consume_next_blocked_job(
+        alias,
+        backend_alias=backend_alias,
+        key=key,
+        use_skip_locked=use_skip_locked,
+      )
+      slot_acquired = False
     if blocked is None:
       return None
     if blocked["job_backend_alias"] != backend_alias:
@@ -339,8 +354,7 @@ def unblock_next_blocked_job(
         f"job {blocked['job_id']} belongs to backend {blocked['job_backend_alias']!r}"
       )
 
-    slot_acquired = False
-    if release_slot:
+    if release_slot and not postgres_release_slot:
       slot_acquired = _handoff_released_claimed_slot(
         alias,
         key,
@@ -374,6 +388,8 @@ def unblock_next_blocked_job(
     )
 
     if not slot_acquired:
+      if postgres_release_slot:
+        return None
       _create_blocked_execution(
         alias,
         mock_job,
@@ -403,6 +419,122 @@ def unblock_next_blocked_job(
   )
   notify_ready_queues_on_commit((blocked["queue_name"],), backend_alias=backend_alias)
   return mock_job
+
+
+def _postgres_consume_next_blocked_job_with_released_slot(
+  alias,
+  *,
+  backend_alias,
+  key,
+  limit,
+  duration_seconds,
+  now,
+  use_skip_locked,
+):
+  connection = connections[alias]
+  quote = connection.ops.quote_name
+  blocked_table = quote(BlockedExecution._meta.db_table)
+  blocked_pk_column = quote(BlockedExecution._meta.pk.column)
+  blocked_job_id_column = quote(BlockedExecution._meta.get_field("job").column)
+  blocked_backend_alias_column = quote(BlockedExecution._meta.get_field("backend_alias").column)
+  blocked_queue_name_column = quote(BlockedExecution._meta.get_field("queue_name").column)
+  blocked_priority_column = quote(BlockedExecution._meta.get_field("priority").column)
+  blocked_concurrency_key_column = quote(
+    BlockedExecution._meta.get_field("concurrency_key").column
+  )
+  blocked_expires_at_column = quote(BlockedExecution._meta.get_field("expires_at").column)
+  jobs_table = quote(Job._meta.db_table)
+  jobs_id_column = quote(Job._meta.get_field("id").column)
+  jobs_backend_alias_column = quote(Job._meta.get_field("backend_alias").column)
+  semaphore_table = quote(Semaphore._meta.db_table)
+  semaphore_key_column = quote(Semaphore._meta.get_field("key").column)
+  semaphore_value_column = quote(Semaphore._meta.get_field("value").column)
+  semaphore_limit_column = quote(Semaphore._meta.get_field("limit").column)
+  semaphore_expires_at_column = quote(Semaphore._meta.get_field("expires_at").column)
+  semaphore_updated_at_column = quote(Semaphore._meta.get_field("updated_at").column)
+  skip_locked_sql = " SKIP LOCKED" if use_skip_locked else ""
+  expires_at = now + timedelta(seconds=duration_seconds)
+  released_available = (
+    f"LEAST(%s, GREATEST(0, "
+    f"{semaphore_table}.{semaphore_value_column} + %s - "
+    f"{semaphore_table}.{semaphore_limit_column} + 1))"
+  )
+
+  with connection.cursor() as cursor:
+    cursor.execute(
+      f"""
+      WITH selected AS (
+        SELECT
+          {blocked_table}.{blocked_pk_column},
+          {blocked_table}.{blocked_job_id_column},
+          {blocked_table}.{blocked_queue_name_column},
+          {blocked_table}.{blocked_priority_column},
+          {blocked_table}.{blocked_concurrency_key_column},
+          {blocked_table}.{blocked_expires_at_column},
+          {jobs_table}.{jobs_backend_alias_column} AS job_backend_alias
+        FROM {blocked_table}
+        JOIN {jobs_table}
+          ON {jobs_table}.{jobs_id_column} = {blocked_table}.{blocked_job_id_column}
+        WHERE {blocked_table}.{blocked_backend_alias_column} = %s
+          AND {blocked_table}.{blocked_concurrency_key_column} = %s
+        ORDER BY {blocked_table}.{blocked_priority_column} DESC, {blocked_table}.{blocked_pk_column} ASC
+        LIMIT 1
+        FOR UPDATE OF {blocked_table}{skip_locked_sql}
+      ), slot AS (
+        UPDATE {semaphore_table}
+        SET
+          {semaphore_value_column} = {released_available} - 1,
+          {semaphore_limit_column} = %s,
+          {semaphore_expires_at_column} = %s,
+          {semaphore_updated_at_column} = %s
+        WHERE {semaphore_table}.{semaphore_key_column} = %s
+          AND EXISTS (SELECT 1 FROM selected)
+          AND {semaphore_table}.{semaphore_value_column} > {semaphore_table}.{semaphore_limit_column} - %s - 1
+        RETURNING TRUE AS acquired
+      ), deleted AS (
+        DELETE FROM {blocked_table}
+        USING selected, slot
+        WHERE {blocked_table}.{blocked_pk_column} = selected.{blocked_pk_column}
+        RETURNING {blocked_table}.{blocked_pk_column}
+      )
+      SELECT
+        selected.{blocked_job_id_column},
+        selected.{blocked_queue_name_column},
+        selected.{blocked_priority_column},
+        selected.{blocked_concurrency_key_column},
+        selected.{blocked_expires_at_column},
+        selected.job_backend_alias,
+        EXISTS (SELECT 1 FROM slot) AS slot_acquired,
+        EXISTS (SELECT 1 FROM deleted) AS deleted
+      FROM selected
+      """,
+      [
+        backend_alias,
+        key,
+        limit,
+        limit,
+        limit,
+        expires_at,
+        now,
+        key,
+        limit,
+      ],
+    )
+    row = cursor.fetchone()
+
+  if row is None:
+    return None
+  if row[6] and not row[7]:
+    raise EnqueueError("could not consume selected blocked job")
+  return {
+    "job_id": row[0],
+    "queue_name": row[1],
+    "priority": row[2],
+    "concurrency_key": row[3],
+    "expires_at": row[4],
+    "job_backend_alias": row[5],
+    "slot_acquired": row[6],
+  }
 
 
 def _consume_next_blocked_job(alias, *, backend_alias, key, use_skip_locked):
