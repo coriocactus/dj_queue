@@ -123,18 +123,22 @@ def test_claim_ready_jobs_retries_transient_database_deadlock(monkeypatch):
     priority=job.priority,
   )
   calls = 0
-  original_consume_selected_rows = job_operations._consume_selected_rows
+  if connection.vendor == "postgresql":
+    target = "_postgres_consume_ready_and_create_claimed_executions"
+  else:
+    target = "_consume_selected_rows"
+  original_consume = getattr(job_operations, target)
 
-  def consume_with_deadlock_once(alias, model, rows):
+  def consume_with_deadlock_once(*args, **kwargs):
     nonlocal calls
     calls += 1
     if calls == 1:
       raise OperationalError(
         "(1213, 'Deadlock found when trying to get lock; try restarting transaction')"
       )
-    return original_consume_selected_rows(alias, model, rows)
+    return original_consume(*args, **kwargs)
 
-  monkeypatch.setattr(job_operations, "_consume_selected_rows", consume_with_deadlock_once)
+  monkeypatch.setattr(job_operations, target, consume_with_deadlock_once)
 
   claimed_jobs = claim_ready_jobs(limit=1)
 
@@ -822,7 +826,7 @@ def test_claim_ready_jobs_uses_fixed_query_budget_for_successful_claim():
   with CaptureQueriesContext(connection) as ctx:
     claim_ready_jobs(limit=1)
 
-  expected_queries = 6 if connection.vendor == "postgresql" else 7
+  expected_queries = 5 if connection.vendor == "postgresql" else 7
   assert len(ctx.captured_queries) == expected_queries
 
 
@@ -1035,7 +1039,7 @@ def test_claim_ready_jobs_rejects_conflicting_state_with_fixed_query_budget():
     with pytest.raises(EnqueueError, match="already has an execution-state row"):
       claim_ready_jobs(limit=1)
 
-  expected_queries = 8 if connection.vendor == "postgresql" else 5
+  expected_queries = 7 if connection.vendor == "postgresql" else 5
   assert len(ctx.captured_queries) == expected_queries
 
 

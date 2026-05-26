@@ -372,21 +372,28 @@ def _claim_ready_jobs_once(
       if not ready_rows:
         return []
 
-    ready_rows = _consume_selected_rows(alias, ReadyExecution, ready_rows)
-    if not ready_rows:
-      return []
-
     jobs = [row.job for row in ready_rows]
 
     claimed_at = timezone.now()
     worker_ids = (process.name,) if process is not None else ()
-    _create_claimed_executions(
-      alias,
-      jobs,
-      process=process,
-      claimed_at=claimed_at,
-      check_conflicts=claimed_insert_checks_conflicts,
-    )
+    if claimed_insert_checks_conflicts:
+      _postgres_consume_ready_and_create_claimed_executions(
+        alias,
+        ready_rows,
+        process=process,
+        claimed_at=claimed_at,
+      )
+    else:
+      ready_rows = _consume_selected_rows(alias, ReadyExecution, ready_rows)
+      if not ready_rows:
+        return []
+      jobs = [row.job for row in ready_rows]
+      _create_claimed_executions(
+        alias,
+        jobs,
+        process=process,
+        claimed_at=claimed_at,
+      )
 
   return [ClaimedJob(job=job, claimed_at=claimed_at, worker_ids=worker_ids) for job in jobs]
 
@@ -1174,15 +1181,7 @@ def _claimed_insert_checks_conflicts(alias):
   return database_capabilities(alias).backend_family == "postgresql"
 
 
-def _create_claimed_executions(alias, jobs, *, process, claimed_at, check_conflicts):
-  if check_conflicts:
-    return _postgres_create_claimed_executions_if_no_other_state(
-      alias,
-      jobs,
-      process=process,
-      claimed_at=claimed_at,
-    )
-
+def _create_claimed_executions(alias, jobs, *, process, claimed_at):
   process_id = process.id if process is not None else None
   return _bulk_create(
     alias,
@@ -1193,42 +1192,49 @@ def _create_claimed_executions(alias, jobs, *, process, claimed_at, check_confli
   )
 
 
-def _postgres_create_claimed_executions_if_no_other_state(
+def _postgres_consume_ready_and_create_claimed_executions(
   alias,
-  jobs,
+  ready_rows,
   *,
   process,
   claimed_at,
 ):
   connection = connections[alias]
   quote = connection.ops.quote_name
+  ready_table = quote(ReadyExecution._meta.db_table)
+  ready_pk_column = quote(ReadyExecution._meta.pk.column)
+  ready_job_id_column = quote(ReadyExecution._meta.get_field("job").column)
   claimed_table = quote(ClaimedExecution._meta.db_table)
-  job_id_column = quote(ClaimedExecution._meta.get_field("job").column)
+  claimed_job_id_column = quote(ClaimedExecution._meta.get_field("job").column)
   process_id_column = quote(ClaimedExecution._meta.get_field("process").column)
   created_at_column = quote(ClaimedExecution._meta.get_field("created_at").column)
-  values_sql = ", ".join(["(%s::uuid, %s::bigint, %s::timestamptz)"] * len(jobs))
+  values_sql = ", ".join(["(%s::bigint)"] * len(ready_rows))
   state_checks = _state_absence_checks_sql(
-    _state_models_except(),
+    _state_models_except(ReadyExecution),
     quote=quote,
     job_id_expression="claimed_input.job_id",
   )
-  params = []
   process_id = process.pk if process is not None else None
-  job_id_field = Job._meta.get_field("id")
-  for job in jobs:
-    params.extend(
-      [
-        job_id_field.get_db_prep_value(job.pk, connection=connection, prepared=False),
-        process_id,
-        claimed_at,
-      ]
-    )
 
   with connection.cursor() as cursor:
     cursor.execute(
       f"""
+      WITH selected_ready(id) AS (
+        VALUES {values_sql}
+      ), deleted_ready AS (
+        DELETE FROM {ready_table}
+        USING selected_ready
+        WHERE {ready_table}.{ready_pk_column} = selected_ready.id
+        RETURNING {ready_table}.{ready_job_id_column}
+      ), claimed_input AS (
+        SELECT
+          deleted_ready.{ready_job_id_column} AS job_id,
+          %s::bigint AS process_id,
+          %s::timestamptz AS created_at
+        FROM deleted_ready
+      )
       INSERT INTO {claimed_table} (
-        {job_id_column},
+        {claimed_job_id_column},
         {process_id_column},
         {created_at_column}
       )
@@ -1236,15 +1242,17 @@ def _postgres_create_claimed_executions_if_no_other_state(
         claimed_input.job_id,
         claimed_input.process_id,
         claimed_input.created_at
-      FROM (VALUES {values_sql}) AS claimed_input(job_id, process_id, created_at)
+      FROM claimed_input
       WHERE {state_checks}
+      RETURNING {claimed_job_id_column}
       """,
-      params,
+      [*[row.pk for row in ready_rows], process_id, claimed_at],
     )
-    created = cursor.rowcount
+    created_job_ids = [row[0] for row in cursor.fetchall()]
 
-  if created != len(jobs):
-    conflicting_job_ids = _job_ids_with_other_execution_state(alias, [job.pk for job in jobs])
+  if len(created_job_ids) != len(ready_rows):
+    job_ids = [row.job_id for row in ready_rows]
+    conflicting_job_ids = _job_ids_with_other_execution_state(alias, job_ids)
     if conflicting_job_ids:
       conflicting_job_id = next(iter(conflicting_job_ids))
       raise EnqueueError(f"job {conflicting_job_id} already has an execution-state row")
