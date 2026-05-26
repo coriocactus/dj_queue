@@ -35,11 +35,11 @@ def metric_families(*, snapshots=None):
   seen_queue_databases = set()
 
   for snapshot in snapshots:
-    backend_alias = snapshot["backend_alias"]
-    queue_database_alias = snapshot["queue_database_alias"]
-    runner_metrics = snapshot["runner_metrics"]
+    backend_alias = snapshot.backend_alias
+    queue_database_alias = snapshot.queue_database_alias
+    runner_metrics = snapshot.runner_metrics
 
-    for queue in snapshot["queue_rows"]:
+    for queue in snapshot.queue_rows:
       for definition in QUEUE_STATE_DEFINITIONS:
         queue_jobs.append(
           MetricSample(
@@ -86,13 +86,13 @@ def metric_families(*, snapshots=None):
     recurring_tasks.append(
       MetricSample(
         labels=(backend_alias,),
-        value=len(snapshot["recurring_rows"]),
+        value=len(snapshot.recurring_rows),
       )
     )
     process_rows.append(
       MetricSample(
         labels=(backend_alias,),
-        value=len(snapshot["process_rows"]),
+        value=len(snapshot.process_rows),
       )
     )
 
@@ -102,7 +102,7 @@ def metric_families(*, snapshots=None):
     semaphores.append(
       MetricSample(
         labels=(queue_database_alias,),
-        value=len(snapshot["semaphore_rows"]),
+        value=len(snapshot.semaphore_rows),
       )
     )
 

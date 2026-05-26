@@ -4,7 +4,7 @@ import pytest
 from django.utils import timezone
 
 from dj_queue import observability
-from dj_queue.models import Pause, Process, RecurringTask, Semaphore
+from dj_queue.models import Pause, Process, ReadyExecution, RecurringTask, Semaphore
 from tests.factories import make_ready_job
 
 
@@ -55,6 +55,22 @@ def test_backend_snapshot_filters_workers_to_backend(settings):
   assert snapshot["queue_rows"][0]["live_worker_count"] == 1
   assert [row["name"] for row in snapshot["process_rows"]] == ["default-worker"]
   assert snapshot["process_rows"][0]["backend_alias"] == "default"
+
+
+def test_queue_rows_use_canonical_job_queue_names():
+  now = timezone.now()
+  ready = make_ready_job(queue_name="canonical")
+  ReadyExecution.objects.filter(job=ready).update(queue_name="drifted")
+
+  rows = observability.queue_rows(
+    backend_alias="default",
+    now=now,
+    process_cutoff=now - timedelta(minutes=1),
+  )
+
+  assert [row["name"] for row in rows] == ["canonical"]
+  assert rows[0]["ready_count"] == 1
+  assert rows[0]["latency_seconds"] is not None
 
 
 def test_backend_snapshot_scopes_pause_and_recurring_rows_to_backend(settings):

@@ -1,17 +1,26 @@
+from datetime import timedelta
+
 import pytest
 from django.utils import timezone
 
-from dj_queue.models import Job
+from dj_queue.models import Job, ReadyExecution
 from dj_queue.queue_state import (
   QUEUE_STATE_COUNT_KEYS,
   filter_queue_state,
   queue_state_count_fields,
   queue_state_count_key,
   queue_state_counts,
+  queue_state_summaries_by_queue,
   queue_state_queryset,
   status_rank_expression,
 )
-from tests.factories import make_ready_job, make_scheduled_job
+from tests.factories import (
+  make_blocked_job,
+  make_failed_job,
+  make_job,
+  make_ready_job,
+  make_scheduled_job,
+)
 
 
 pytestmark = pytest.mark.django_db
@@ -38,6 +47,38 @@ def test_queue_state_counts_and_count_fields_follow_state_definitions():
   assert queue_state_count_key("ready") == "ready_count"
   assert set(queue_state_count_fields(counts)) == set(QUEUE_STATE_COUNT_KEYS)
   assert queue_state_count_fields(counts)["ready_count"] == 1
+
+
+def test_queue_state_summaries_by_queue_follow_canonical_job_rows():
+  now = timezone.now()
+  ready = make_ready_job(queue_name="alpha")
+  ReadyExecution.objects.filter(job=ready).update(
+    queue_name="drifted",
+    created_at=now - timedelta(seconds=20),
+    latency_started_at=now - timedelta(seconds=10),
+  )
+  make_blocked_job(
+    queue_name="alpha",
+    concurrency_key="account:1",
+    expires_at=now + timedelta(minutes=1),
+  )
+  make_scheduled_job(queue_name="beta", scheduled_at=now + timedelta(minutes=5))
+  make_failed_job(queue_name="beta")
+  make_job(queue_name="alpha", finished_at=now)
+  make_ready_job(queue_name="ignored", backend_alias="other")
+
+  summaries = queue_state_summaries_by_queue(backend_alias="default")
+
+  assert sorted(summaries) == ["alpha", "beta"]
+  alpha = summaries["alpha"]
+  assert alpha.count("ready") == 1
+  assert alpha.count("blocked") == 1
+  assert alpha.count("finished") == 1
+  assert alpha.count("failed") == 0
+  assert alpha.count_fields()["ready_count"] == 1
+  assert alpha.oldest_ready_at == now - timedelta(seconds=10)
+  assert summaries["beta"].count("scheduled") == 1
+  assert summaries["beta"].count("failed") == 1
 
 
 def test_filter_queue_state_uses_the_canonical_state_definition():

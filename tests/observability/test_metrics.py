@@ -1,13 +1,15 @@
+from dj_queue.observability import BackendSnapshot
 from dj_queue.metrics import MetricSample, metric_families
 
 
 def test_metric_families_project_snapshot_without_prometheus_dependency():
   families = metric_families(
     snapshots=[
-      {
-        "backend_alias": "default",
-        "queue_database_alias": "queue",
-        "queue_rows": [
+      BackendSnapshot(
+        backend_alias="default",
+        queue_database_alias="queue",
+        process_alive_threshold=60,
+        queue_rows=(
           {
             "name": "alpha",
             "ready_count": 2,
@@ -19,17 +21,17 @@ def test_metric_families_project_snapshot_without_prometheus_dependency():
             "paused": False,
             "latency_seconds": 4.5,
             "live_worker_count": 1,
-          }
-        ],
-        "runner_metrics": {
+          },
+        ),
+        runner_metrics={
           "live": 1,
           "stale": 0,
           "by_kind": {"Worker": {"live": 1, "stale": 0}},
         },
-        "recurring_rows": [{"key": "nightly"}],
-        "semaphore_rows": [{"key": "account:1"}],
-        "process_rows": [{"name": "worker-1"}],
-      }
+        recurring_rows=({"key": "nightly"},),
+        semaphore_rows=({"key": "account:1"},),
+        process_rows=({"name": "worker-1"},),
+      )
     ]
   )
   by_name = {family.name: family for family in families}

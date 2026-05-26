@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from django.conf import settings
-from django.db.models import Count, Max, Min
-from django.db.models.functions import Coalesce
+from django.db.models import Count, Max
 from django.utils import timezone
 
 from dj_queue.config import configured_backend_aliases as configured_dj_queue_backend_aliases
@@ -14,19 +13,18 @@ from dj_queue.cron import next_cron_run
 from dj_queue.db import get_database_alias
 from dj_queue.models import (
   BlockedExecution,
-  ClaimedExecution,
-  FailedExecution,
-  Job,
   Pause,
   Process,
-  ReadyExecution,
   RecurringExecution,
   RecurringTask,
-  ScheduledExecution,
   Semaphore,
 )
 from dj_queue.queue_selectors import queue_matches_selectors
-from dj_queue.queue_state import queue_state_count_fields, queue_state_counts
+from dj_queue.queue_state import (
+  empty_queue_state_summary,
+  queue_state_summaries_by_queue,
+  queue_state_summary,
+)
 
 
 _NOT_PROVIDED = object()
@@ -36,6 +34,35 @@ _NOT_PROVIDED = object()
 class BackendChoice:
   alias: str
   database_alias: str
+
+
+@dataclass(frozen=True, slots=True)
+class BackendSnapshot:
+  backend_alias: str
+  queue_database_alias: str
+  process_alive_threshold: int
+  queue_rows: tuple[dict, ...]
+  process_rows: tuple[dict, ...]
+  recurring_rows: tuple[dict, ...]
+  semaphore_rows: tuple[dict, ...]
+  runner_metrics: dict
+
+  def __getitem__(self, key):
+    try:
+      return getattr(self, key)
+    except AttributeError as exc:
+      raise KeyError(key) from exc
+
+  def stats_row(self):
+    return {
+      "backend_alias": self.backend_alias,
+      "queue_database_alias": self.queue_database_alias,
+      "process_alive_threshold": self.process_alive_threshold,
+      "queues": self.queue_rows,
+      "runner_metrics": self.runner_metrics,
+      "recurring": self.recurring_rows,
+      "semaphores": self.semaphore_rows,
+    }
 
 
 def configured_backend_aliases():
@@ -70,16 +97,16 @@ def backend_snapshot(*, backend_alias, now=None):
   semaphore_rows = semaphore_rows_for_backend(backend_alias=backend_alias)
   runner_metrics = process_counts(backend_process_rows)
 
-  return {
-    "backend_alias": backend_alias,
-    "queue_database_alias": queue_database_alias,
-    "process_alive_threshold": config.process_alive_threshold,
-    "queue_rows": queue_state_rows,
-    "process_rows": backend_process_rows,
-    "recurring_rows": recurring_rows,
-    "semaphore_rows": semaphore_rows,
-    "runner_metrics": runner_metrics,
-  }
+  return BackendSnapshot(
+    backend_alias=backend_alias,
+    queue_database_alias=queue_database_alias,
+    process_alive_threshold=config.process_alive_threshold,
+    queue_rows=tuple(queue_state_rows),
+    process_rows=tuple(backend_process_rows),
+    recurring_rows=tuple(recurring_rows),
+    semaphore_rows=tuple(semaphore_rows),
+    runner_metrics=runner_metrics,
+  )
 
 
 def all_backend_snapshots(*, now=None):
@@ -90,20 +117,7 @@ def all_backend_snapshots(*, now=None):
 
 def stats_payload(*, now=None):
   snapshots = all_backend_snapshots(now=now)
-  return {
-    "backends": [
-      {
-        "backend_alias": snapshot["backend_alias"],
-        "queue_database_alias": snapshot["queue_database_alias"],
-        "process_alive_threshold": snapshot["process_alive_threshold"],
-        "queues": snapshot["queue_rows"],
-        "runner_metrics": snapshot["runner_metrics"],
-        "recurring": snapshot["recurring_rows"],
-        "semaphores": snapshot["semaphore_rows"],
-      }
-      for snapshot in snapshots
-    ]
-  }
+  return {"backends": [snapshot.stats_row() for snapshot in snapshots]}
 
 
 def process_counts(process_rows):
@@ -123,32 +137,8 @@ def process_counts(process_rows):
 
 def queue_rows(*, backend_alias, now, process_cutoff):
   alias = get_database_alias(backend_alias)
-  queue_names = set()
-
-  ready_counts = _counts_by_value(
-    ReadyExecution.objects.using(alias).filter(backend_alias=backend_alias),
-    field_name="queue_name",
-  )
-  claimed_counts = _counts_by_value(
-    ClaimedExecution.objects.using(alias).filter(job__backend_alias=backend_alias),
-    field_name="job__queue_name",
-  )
-  scheduled_counts = _counts_by_value(
-    ScheduledExecution.objects.using(alias).filter(backend_alias=backend_alias),
-    field_name="queue_name",
-  )
-  blocked_counts = _counts_by_value(
-    BlockedExecution.objects.using(alias).filter(backend_alias=backend_alias),
-    field_name="queue_name",
-  )
-  failed_counts = _counts_by_value(
-    FailedExecution.objects.using(alias).filter(job__backend_alias=backend_alias),
-    field_name="job__queue_name",
-  )
-  finished_counts = _counts_by_value(
-    Job.objects.using(alias).filter(backend_alias=backend_alias, finished_at__isnull=False),
-    field_name="queue_name",
-  )
+  state_summaries = queue_state_summaries_by_queue(backend_alias=backend_alias)
+  queue_names = set(state_summaries)
   paused_queues = set(
     Pause.objects.using(alias)
     .filter(backend_alias=backend_alias)
@@ -160,40 +150,12 @@ def queue_rows(*, backend_alias, now, process_cutoff):
     .values_list("queue_name", flat=True)
   )
 
-  oldest_ready = {
-    row["queue_name"]: row["oldest"]
-    for row in ReadyExecution.objects.using(alias)
-    .filter(backend_alias=backend_alias)
-    .values("queue_name")
-    .annotate(oldest=Min(Coalesce("latency_started_at", "created_at")))
-  }
-  oldest_scheduled = {
-    row["queue_name"]: row["oldest"]
-    for row in ScheduledExecution.objects.using(alias)
-    .filter(backend_alias=backend_alias)
-    .values("queue_name")
-    .annotate(oldest=Min("scheduled_at"))
-  }
-  oldest_blocked = {
-    row["queue_name"]: row["oldest"]
-    for row in BlockedExecution.objects.using(alias)
-    .filter(backend_alias=backend_alias)
-    .values("queue_name")
-    .annotate(oldest=Min("expires_at"))
-  }
-
   live_workers = list(
     _live_processes_for_backend(
       alias=alias, backend_alias=backend_alias, kind="Worker", process_cutoff=process_cutoff
     )
   )
 
-  queue_names.update(ready_counts)
-  queue_names.update(claimed_counts)
-  queue_names.update(scheduled_counts)
-  queue_names.update(blocked_counts)
-  queue_names.update(failed_counts)
-  queue_names.update(finished_counts)
   queue_names.update(paused_queues)
   queue_names.update(recurring_queues)
 
@@ -203,16 +165,8 @@ def queue_rows(*, backend_alias, now, process_cutoff):
       queue_name=queue_name,
       now=now,
       process_cutoff=process_cutoff,
-      ready_count=ready_counts.get(queue_name, 0),
-      claimed_count=claimed_counts.get(queue_name, 0),
-      scheduled_count=scheduled_counts.get(queue_name, 0),
-      blocked_count=blocked_counts.get(queue_name, 0),
-      failed_count=failed_counts.get(queue_name, 0),
-      finished_count=finished_counts.get(queue_name, 0),
+      state_summary=state_summaries.get(queue_name) or empty_queue_state_summary(queue_name),
       paused=queue_name in paused_queues,
-      oldest_ready_at=oldest_ready.get(queue_name),
-      oldest_scheduled_at=oldest_scheduled.get(queue_name),
-      oldest_blocked_at=oldest_blocked.get(queue_name),
       live_workers=live_workers,
     )
     for queue_name in sorted(queue_names)
@@ -225,12 +179,7 @@ def queue_snapshot(
   queue_name,
   now,
   process_cutoff,
-  ready_count=None,
-  claimed_count=None,
-  scheduled_count=None,
-  blocked_count=None,
-  failed_count=None,
-  finished_count=None,
+  state_summary=None,
   paused=_NOT_PROVIDED,
   oldest_ready_at=_NOT_PROVIDED,
   oldest_scheduled_at=_NOT_PROVIDED,
@@ -238,33 +187,16 @@ def queue_snapshot(
   live_workers=None,
 ):
   alias = get_database_alias(backend_alias)
-  if ready_count is None:
-    state_counts = queue_state_counts(backend_alias=backend_alias, queue_name=queue_name)
-    ready_count = state_counts["ready"]
-    claimed_count = state_counts["claimed"]
-    scheduled_count = state_counts["scheduled"]
-    blocked_count = state_counts["blocked"]
-    failed_count = state_counts["failed"]
-    finished_count = state_counts["finished"]
+  if state_summary is None:
+    state_summary = queue_state_summary(backend_alias=backend_alias, queue_name=queue_name)
   if paused is _NOT_PROVIDED:
     paused = queue_is_paused(backend_alias=backend_alias, queue_name=queue_name)
   if oldest_ready_at is _NOT_PROVIDED:
-    oldest_ready_at = oldest_ready_at_for_queue(
-      backend_alias=backend_alias,
-      queue_name=queue_name,
-    )
+    oldest_ready_at = state_summary.oldest_ready_at
   if oldest_scheduled_at is _NOT_PROVIDED:
-    oldest_scheduled_at = (
-      ScheduledExecution.objects.using(alias)
-      .filter(backend_alias=backend_alias, queue_name=queue_name)
-      .aggregate(oldest=Min("scheduled_at"))["oldest"]
-    )
+    oldest_scheduled_at = state_summary.oldest_scheduled_at
   if oldest_blocked_at is _NOT_PROVIDED:
-    oldest_blocked_at = (
-      BlockedExecution.objects.using(alias)
-      .filter(backend_alias=backend_alias, queue_name=queue_name)
-      .aggregate(oldest=Min("expires_at"))["oldest"]
-    )
+    oldest_blocked_at = state_summary.oldest_blocked_at
   if live_workers is None:
     live_workers = list(
       _live_processes_for_backend(
@@ -283,16 +215,7 @@ def queue_snapshot(
     oldest_ready_at=oldest_ready_at,
   )
 
-  state_count_fields = queue_state_count_fields(
-    {
-      "ready": ready_count,
-      "claimed": claimed_count,
-      "scheduled": scheduled_count,
-      "blocked": blocked_count,
-      "failed": failed_count,
-      "finished": finished_count,
-    }
-  )
+  state_count_fields = state_summary.count_fields()
 
   return {
     "name": queue_name,
@@ -341,12 +264,7 @@ def queue_latency_seconds(
 
 
 def oldest_ready_at_for_queue(*, backend_alias, queue_name):
-  alias = get_database_alias(backend_alias)
-  return (
-    ReadyExecution.objects.using(alias)
-    .filter(backend_alias=backend_alias, queue_name=queue_name)
-    .aggregate(oldest=Min(Coalesce("latency_started_at", "created_at")))["oldest"]
-  )
+  return queue_state_summary(backend_alias=backend_alias, queue_name=queue_name).oldest_ready_at
 
 
 def process_rows(*, backend_alias, now, process_cutoff, scope):
