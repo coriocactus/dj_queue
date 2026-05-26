@@ -149,12 +149,14 @@ def load_backend_config(
   if tasks_settings is None:
     tasks_settings = getattr(settings, "TASKS", {})
 
+  ensure_dj_queue_backend_alias(tasks_settings, backend_alias)
+  backend_block = _backend_block(tasks_settings, backend_alias)
   env_values = {key: env.get(key) for key in CONFIG_ENV_KEYS if env.get(key) is not None}
   cache_key = (
     backend_alias,
     _cache_key(cli_overrides),
     _cache_key(env_values),
-    _cache_key(tasks_settings),
+    _cache_key(backend_block),
   )
   if cache_key not in _BACKEND_CONFIG_CACHE:
     _BACKEND_CONFIG_CACHE[cache_key] = _load_backend_config_uncached(

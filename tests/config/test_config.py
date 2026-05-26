@@ -878,6 +878,27 @@ def test_load_backend_config_rejects_non_json_config_values(settings):
     load_backend_config()
 
 
+def test_load_backend_config_ignores_non_json_values_on_other_backends(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {
+        "database_alias": "default",
+      },
+    },
+    "other": {
+      "BACKEND": "other.backend.Backend",
+      "OPTIONS": {
+        "callback": object(),
+      },
+    },
+  }
+
+  config = load_backend_config()
+
+  assert config.database_alias == "default"
+
+
 def test_load_backend_config_cache_invalidates_when_settings_change(settings):
   settings.TASKS = {
     "default": {
