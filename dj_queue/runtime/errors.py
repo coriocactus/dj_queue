@@ -25,7 +25,6 @@ def handle_thread_error(error, *, context="", backend_alias="default"):
           "thread_error_type": error.__class__.__name__,
         },
       )
-      return
 
   logger.error(
     "dj_queue infrastructure error",

@@ -35,3 +35,8 @@ def test_on_thread_error_callback_failure_is_isolated(settings, caplog):
     handle_thread_error(error, context="heartbeat")
 
   assert "on_thread_error callback raised" in caplog.text
+  assert [record.event for record in caplog.records] == [
+    "dj_queue.thread_error_callback_failed",
+    "dj_queue.thread_error",
+  ]
+  assert caplog.records[-1].thread_error_type == "RuntimeError"
