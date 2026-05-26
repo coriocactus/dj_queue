@@ -10,6 +10,7 @@ from django.utils import timezone
 from dj_queue.api import schedule_recurring_task, unschedule_recurring_task
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import FailedExecution, Job, Process, RecurringExecution, RecurringTask
+from dj_queue.operations.recurring import fire_recurring_task
 from dj_queue.runtime.scheduler import Scheduler
 from tests.tasks import echo
 
@@ -401,6 +402,89 @@ def test_scheduler_reschedules_changed_dynamic_task():
     RecurringTask.objects.get(backend_alias="default", key="dynamic-task").schedule == "* * * * *"
   )
   scheduler.stop()
+
+
+def test_fire_recurring_task_ignores_deleted_row_loaded_before_fire():
+  now = fixed_now()
+  recurring_task = RecurringTask.objects.create(
+    backend_alias="default",
+    key="dynamic-task",
+    task_path="tests.tasks.echo",
+    payload={"args": ["stale"], "kwargs": {}},
+    schedule="* * * * *",
+    queue_name="default",
+    priority=0,
+    static=False,
+  )
+  loaded_task = RecurringTask.objects.get(pk=recurring_task.pk)
+  recurring_task.delete()
+
+  execution = fire_recurring_task(
+    loaded_task,
+    now.replace(second=0, microsecond=0),
+  )
+
+  assert execution is None
+  assert Job.objects.count() == 0
+  assert RecurringExecution.objects.count() == 0
+
+
+def test_fire_recurring_task_uses_locked_current_definition():
+  now = fixed_now()
+  recurring_task = RecurringTask.objects.create(
+    backend_alias="default",
+    key="dynamic-task",
+    task_path="tests.tasks.echo",
+    payload={"args": ["stale"], "kwargs": {}},
+    schedule="* * * * *",
+    queue_name="default",
+    priority=0,
+    static=False,
+  )
+  loaded_task = RecurringTask.objects.get(pk=recurring_task.pk)
+  RecurringTask.objects.filter(pk=recurring_task.pk).update(
+    payload={"args": ["updated"], "kwargs": {}},
+    queue_name="updated-queue",
+    priority=5,
+  )
+
+  execution = fire_recurring_task(
+    loaded_task,
+    now.replace(second=0, microsecond=0),
+  )
+
+  assert execution is not None
+  assert execution.job.payload == {"args": ["updated"], "kwargs": {}}
+  assert execution.job.queue_name == "updated-queue"
+  assert execution.job.priority == 5
+
+
+def test_fire_recurring_task_skips_stale_run_after_schedule_change():
+  now = fixed_now()
+  recurring_task = RecurringTask.objects.create(
+    backend_alias="default",
+    key="dynamic-task",
+    task_path="tests.tasks.echo",
+    payload={"args": ["stale"], "kwargs": {}},
+    schedule="* * * * *",
+    queue_name="default",
+    priority=0,
+    static=False,
+  )
+  loaded_task = RecurringTask.objects.get(pk=recurring_task.pk)
+  RecurringTask.objects.filter(pk=recurring_task.pk).update(
+    schedule="0 0 1 1 *",
+    next_run_at=None,
+  )
+
+  execution = fire_recurring_task(
+    loaded_task,
+    now.replace(second=0, microsecond=0),
+  )
+
+  assert execution is None
+  assert Job.objects.count() == 0
+  assert RecurringExecution.objects.count() == 0
 
 
 def test_scheduler_does_not_rewind_persisted_next_run_at_when_row_already_advanced():
