@@ -268,8 +268,8 @@ def dashboard_context(*, backend_alias, query_params=None):
     query_params = {}
 
   snapshot = observability.backend_snapshot(backend_alias=backend_alias)
-  queue_rows = snapshot["queue_rows"]
-  process_rows = snapshot["process_rows"]
+  queue_rows = snapshot.queue_rows
+  process_rows = snapshot.process_rows
   recurring_rows = [
     {
       **row,
@@ -278,7 +278,7 @@ def dashboard_context(*, backend_alias, query_params=None):
         recurring_task_key=row["key"],
       ),
     }
-    for row in snapshot["recurring_rows"]
+    for row in snapshot.recurring_rows
   ]
   semaphore_rows = [
     {
@@ -288,14 +288,14 @@ def dashboard_context(*, backend_alias, query_params=None):
         concurrency_key=row["key"],
       ),
     }
-    for row in snapshot["semaphore_rows"]
+    for row in snapshot.semaphore_rows
   ]
 
   return {
     "backend_alias": backend_alias,
     "backend_choices": backend_choices(),
     "config": config,
-    "queue_database_alias": snapshot["queue_database_alias"],
+    "queue_database_alias": snapshot.queue_database_alias,
     "summary_cards": _summary_cards(
       backend_alias=backend_alias,
       queue_rows=queue_rows,
@@ -305,7 +305,7 @@ def dashboard_context(*, backend_alias, query_params=None):
     ),
     "backend_facts": _backend_facts(
       config=config,
-      queue_database_alias=snapshot["queue_database_alias"],
+      queue_database_alias=snapshot.queue_database_alias,
       recurring_count=len(recurring_rows),
       semaphore_count=len(semaphore_rows),
     ),
