@@ -646,6 +646,7 @@ def test_async_supervisor_sigterm_is_idempotent():
     wait_until(lambda: Process.objects.filter(supervisor=process).count() == 2)
     first = supervisor.handle_sigterm()
     second = supervisor.handle_sigterm()
+    assert supervisor.stop_requested() is True
   finally:
     supervisor.stop()
 
@@ -689,6 +690,7 @@ def test_async_supervisor_stop_preserves_undrained_worker_until_work_finishes(mo
     monkeypatch.setattr(worker, "_execute_job", blocking_job)
 
     worker.pool.submit(worker._execute_job, "slow-job")
+    assert supervisor.runner_threads[0].daemon is False
 
     supervisor.stop()
 
@@ -747,6 +749,33 @@ def test_fork_supervisor_stop_waits_for_child_exit_before_hard_kill():
   def waitpid(_pid, _flags):
     if waitpid_results:
       return waitpid_results.pop(0)
+    raise ChildProcessError
+
+  supervisor = build_fork_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[], recurring={}),
+    launcher=lambda spec: 80001,
+    waitpid=waitpid,
+    killer=lambda pid, sig: killed.append((pid, sig)),
+  )
+  supervisor_process = supervisor.start()
+  child_process = make_process(pid=80001, name="worker-1", supervisor=supervisor_process)
+  job = make_job(task_path="tests.tasks.echo")
+  make_claimed_execution(job=job, process=child_process)
+
+  supervisor.stop()
+
+  assert killed == [(80001, signal.SIGTERM)]
+  assert supervisor.children == {}
+  assert FailedExecution.objects.get(job=job).exception_class == (
+    f"{ProcessExitError.__module__}.{ProcessExitError.__qualname__}"
+  )
+  assert Process.objects.filter(pk=child_process.pk).exists() is False
+
+
+def test_fork_supervisor_stop_fails_claimed_jobs_when_child_map_is_stale():
+  killed = []
+
+  def waitpid(_pid, _flags):
     raise ChildProcessError
 
   supervisor = build_fork_supervisor(
@@ -955,8 +984,12 @@ def test_repeated_sigterm_is_idempotent():
   )
   supervisor.start()
 
-  first = supervisor.handle_sigterm()
-  second = supervisor.handle_sigterm()
+  try:
+    first = supervisor.handle_sigterm()
+    second = supervisor.handle_sigterm()
+    assert supervisor.stop_requested() is True
+  finally:
+    supervisor.stop()
 
   assert first is True
   assert second is False

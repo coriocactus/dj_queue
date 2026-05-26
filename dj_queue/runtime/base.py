@@ -138,7 +138,7 @@ class BaseRunner:
 
   def run_managed_poll_loop(self, *, host_stop_requested):
     while not self.stop_requested() and not host_stop_requested():
-      if not self._poll_once_handled():
+      if not self.poll_once_if_running():
         return False
       if self.stop_requested() or host_stop_requested():
         break
@@ -178,6 +178,12 @@ class BaseRunner:
 
   def poll_once(self):
     raise NotImplementedError
+
+  def poll_once_if_running(self):
+    should_continue = self._should_continue_handled()
+    if should_continue is None or not should_continue:
+      return False
+    return self._poll_once_handled()
 
   def _poll_once_handled(self):
     try:

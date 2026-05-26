@@ -122,7 +122,8 @@ def _notify(channel, payload, *, backend_alias):
   try:
     with connections[get_database_alias(backend_alias)].cursor() as cursor:
       cursor.execute("SELECT pg_notify(%s, %s)", [channel, payload])
-  except Exception:
+  except Exception as error:
+    handle_thread_error(error, context="producer.notify", backend_alias=backend_alias)
     return None
   return None
 

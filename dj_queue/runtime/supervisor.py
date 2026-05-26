@@ -230,7 +230,7 @@ class AsyncSupervisor(Supervisor):
       return False
 
     self._graceful_shutdown_requested = True
-    self.stop()
+    self.request_stop()
     return True
 
   def handle_sigquit(self, *_args):
@@ -242,7 +242,7 @@ class AsyncSupervisor(Supervisor):
 
     for runner in self._build_runners():
       runner.start()
-      thread = threading.Thread(target=self._run_managed_runner, args=(runner,), daemon=True)
+      thread = threading.Thread(target=self._run_managed_runner, args=(runner,))
       self.runners.append(runner)
       self.runner_threads.append(thread)
       thread.start()
@@ -433,7 +433,7 @@ class ForkSupervisor(Supervisor):
       return False
 
     self._graceful_shutdown_requested = True
-    self.stop()
+    self.request_stop()
     return True
 
   def handle_sigquit(self, *_args):
@@ -478,6 +478,8 @@ class ForkSupervisor(Supervisor):
       try:
         pid, _status = self._waitpid(-1, os.WNOHANG)
       except ChildProcessError:
+        for child_pid, spec in tuple(self.children.items()):
+          self._fail_claimed_jobs_for_child(child_pid, spec)
         self.children.clear()
         return None
 

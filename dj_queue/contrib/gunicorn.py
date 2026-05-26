@@ -21,11 +21,17 @@ def _set_supervisor_state(worker, **state):
 
 
 def _start_embedded_supervisor(worker, *, backend_alias="default"):
+  if getattr(worker, "_dj_queue_supervisor_exiting", False):
+    return None
+
   lock_file = _try_acquire_supervisor_lock(backend_alias=backend_alias)
   if lock_file is None:
     return None
 
   try:
+    if getattr(worker, "_dj_queue_supervisor_exiting", False):
+      _release_supervisor_lock(lock_file)
+      return None
     supervisor = build_supervisor(backend_alias=backend_alias)
     poll_stop = threading.Event()
     _set_supervisor_state(
@@ -35,6 +41,17 @@ def _start_embedded_supervisor(worker, *, backend_alias="default"):
       supervisor_poll_stop=poll_stop,
     )
     supervisor.start()
+    if getattr(worker, "_dj_queue_supervisor_exiting", False):
+      supervisor.stop()
+      _release_supervisor_lock(lock_file)
+      _set_supervisor_state(
+        worker,
+        supervisor_lock=None,
+        supervisor=None,
+        supervisor_poll_stop=None,
+        supervisor_poll_thread=None,
+      )
+      return None
   except Exception:
     _release_supervisor_lock(lock_file)
     _set_supervisor_state(
@@ -50,7 +67,9 @@ def _start_embedded_supervisor(worker, *, backend_alias="default"):
     stop_event = worker._dj_queue_supervisor_poll_stop
     while stop_event.wait(supervisor.polling_interval) is False:
       try:
-        supervisor.poll_once()
+        poll_once = getattr(supervisor, "poll_once_if_running", supervisor.poll_once)
+        if poll_once() is False:
+          return
       except Exception as error:
         handle_thread_error(
           error,
@@ -97,6 +116,7 @@ def post_fork(server, worker):
     supervisor_poll_thread=None,
     supervisor_retry_stop=None,
     supervisor_retry_thread=None,
+    supervisor_exiting=False,
   )
   supervisor = _start_embedded_supervisor(worker, backend_alias=backend_alias)
   if supervisor is not None:
@@ -107,10 +127,7 @@ def post_fork(server, worker):
 
 
 def worker_exit(_server, worker):
-  supervisor = getattr(worker, "_dj_queue_supervisor", None)
-  lock_file = getattr(worker, "_dj_queue_supervisor_lock", None)
-  stop_event = getattr(worker, "_dj_queue_supervisor_poll_stop", None)
-  poll_thread = getattr(worker, "_dj_queue_supervisor_poll_thread", None)
+  worker._dj_queue_supervisor_exiting = True
   retry_stop = getattr(worker, "_dj_queue_supervisor_retry_stop", None)
   retry_thread = getattr(worker, "_dj_queue_supervisor_retry_thread", None)
 
@@ -120,6 +137,11 @@ def worker_exit(_server, worker):
     retry_thread.join(timeout=1)
     worker._dj_queue_supervisor_retry_thread = None
   worker._dj_queue_supervisor_retry_stop = None
+
+  supervisor = getattr(worker, "_dj_queue_supervisor", None)
+  lock_file = getattr(worker, "_dj_queue_supervisor_lock", None)
+  stop_event = getattr(worker, "_dj_queue_supervisor_poll_stop", None)
+  poll_thread = getattr(worker, "_dj_queue_supervisor_poll_thread", None)
 
   if stop_event is not None:
     stop_event.set()

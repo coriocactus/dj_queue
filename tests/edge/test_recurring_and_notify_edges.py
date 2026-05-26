@@ -326,6 +326,30 @@ def test_notify_ready_queues_sends_one_queue_payload(monkeypatch):
   assert backend_alias == "default"
 
 
+def test_notify_ready_queues_reports_send_failures(monkeypatch):
+  errors = []
+
+  class BrokenConnection:
+    def cursor(self):
+      raise RuntimeError("notify failed")
+
+  monkeypatch.setattr("dj_queue.runtime.notify.supports_listen_notify", lambda alias: True)
+  monkeypatch.setattr(
+    "dj_queue.runtime.notify.get_database_alias", lambda backend_alias: "default"
+  )
+  monkeypatch.setattr("dj_queue.runtime.notify.connections", {"default": BrokenConnection()})
+  monkeypatch.setattr(
+    "dj_queue.runtime.notify.handle_thread_error",
+    lambda error, **kwargs: errors.append((error, kwargs)),
+  )
+
+  notify_ready_queues(("default",), backend_alias="default")
+
+  assert [
+    (str(error), kwargs["context"], kwargs["backend_alias"]) for error, kwargs in errors
+  ] == [("notify failed", "producer.notify", "default")]
+
+
 def test_notify_wakeup_backend_ignores_non_matching_queue_payload():
   wakes = []
   backend = NotifyWakeupBackend(

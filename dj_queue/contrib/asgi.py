@@ -24,13 +24,18 @@ class DjQueueLifespan:
       self.supervisor is not None and self._poll_stop is not None and not self._poll_stop.is_set()
     ):
       try:
-        await asyncio.to_thread(self.supervisor.poll_once)
+        poll_once = getattr(self.supervisor, "poll_once_if_running", self.supervisor.poll_once)
+        keep_polling = await asyncio.to_thread(poll_once)
       except Exception as error:
         handle_thread_error(
           error,
           context="supervisor.run",
           backend_alias=self.supervisor.backend_alias,
         )
+        keep_polling = True
+
+      if keep_polling is False:
+        return
 
       if self.supervisor is None or self._poll_stop is None or self._poll_stop.is_set():
         return

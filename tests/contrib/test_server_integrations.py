@@ -289,6 +289,48 @@ def test_gunicorn_worker_exit_waits_for_poll_thread_before_releasing_lock(monkey
   assert released == [acquired_lock]
 
 
+def test_gunicorn_start_aborts_when_worker_exits_during_supervisor_start(monkeypatch):
+  events = []
+  released = []
+
+  class StubSupervisor:
+    polling_interval = 0.01
+    backend_alias = "default"
+
+    def __init__(self, worker):
+      self.worker = worker
+
+    def start(self):
+      events.append("start")
+      self.worker._dj_queue_supervisor_exiting = True
+
+    def poll_once(self):
+      events.append("poll")
+
+    def stop(self):
+      events.append("stop")
+
+  from dj_queue.contrib import gunicorn
+
+  worker = type("Worker", (), {"age": 1, "_dj_queue_supervisor_exiting": False})()
+  lock = object()
+  monkeypatch.setattr(gunicorn, "_try_acquire_supervisor_lock", lambda **_kwargs: lock)
+  monkeypatch.setattr(gunicorn, "_release_supervisor_lock", lambda lock: released.append(lock))
+  monkeypatch.setattr(
+    gunicorn,
+    "build_supervisor",
+    lambda backend_alias="default": StubSupervisor(worker),
+  )
+
+  supervisor = gunicorn._start_embedded_supervisor(worker)
+
+  assert supervisor is None
+  assert events == ["start", "stop"]
+  assert released == [lock]
+  assert worker._dj_queue_supervisor is None
+  assert worker._dj_queue_supervisor_lock is None
+
+
 def test_asgi_lifespan_startup_and_shutdown_wrap_supervisor(monkeypatch):
   events = []
 
