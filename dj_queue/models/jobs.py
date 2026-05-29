@@ -1,8 +1,9 @@
 import uuid
+from itertools import combinations
 
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import models
-from django.db.models import Case, IntegerField, Q, Value, When
+from django.db.models import Q
 
 JOB_STATUS_RELATIONS = (
   ("ready", "ready_execution"),
@@ -34,11 +35,7 @@ class JobQuerySet(models.QuerySet):
     return self.filter(finished_at__isnull=False)
 
   def invalid_execution_state(self):
-    state_count = _live_execution_state_count_expression()
-    return self.alias(_live_execution_state_count=state_count).filter(
-      Q(_live_execution_state_count__gt=1)
-      | Q(finished_at__isnull=False, _live_execution_state_count__gt=0)
-    )
+    return self.filter(invalid_execution_state_query())
 
 
 class Job(models.Model):
@@ -137,16 +134,31 @@ class Job(models.Model):
     return True
 
 
-def _live_execution_state_count_expression():
-  expression = None
-  for _status_name, relation_name in JOB_STATUS_RELATIONS:
-    flag = Case(
-      When(**{f"{relation_name}__isnull": False}, then=Value(1)),
-      default=Value(0),
-      output_field=IntegerField(),
+def invalid_execution_state_query():
+  relation_names = tuple(relation_name for _status_name, relation_name in JOB_STATUS_RELATIONS)
+  query = None
+  for first_relation, second_relation in combinations(relation_names, 2):
+    query = _or_query(
+      query,
+      Q(
+        **{
+          f"{first_relation}__isnull": False,
+          f"{second_relation}__isnull": False,
+        }
+      ),
     )
-    expression = flag if expression is None else expression + flag
-  return expression
+  for relation_name in relation_names:
+    query = _or_query(
+      query,
+      Q(finished_at__isnull=False, **{f"{relation_name}__isnull": False}),
+    )
+  return query or Q(pk__in=[])
+
+
+def _or_query(current, next_query):
+  if current is None:
+    return next_query
+  return current | next_query
 
 
 class ReadyExecution(models.Model):

@@ -18,6 +18,7 @@ def test_metric_families_project_snapshot_without_prometheus_dependency():
             "blocked_count": 0,
             "failed_count": 0,
             "finished_count": 3,
+            "invalid_count": 0,
             "paused": False,
             "latency_seconds": 4.5,
             "live_worker_count": 1,

@@ -3,7 +3,7 @@ from datetime import timedelta
 import pytest
 from django.utils import timezone
 
-from dj_queue.models import Job, ReadyExecution
+from dj_queue.models import FailedExecution, Job, ReadyExecution
 from dj_queue.queue_state import (
   QUEUE_STATE_COUNT_KEYS,
   filter_queue_state,
@@ -48,6 +48,32 @@ def test_queue_state_counts_and_count_fields_follow_state_definitions():
   assert queue_state_count_key("ready") == "ready_count"
   assert set(queue_state_count_fields(counts)) == set(QUEUE_STATE_COUNT_KEYS)
   assert queue_state_count_fields(counts)["ready_count"] == 1
+
+
+def test_queue_state_counts_report_invalid_jobs_without_double_counting():
+  job = make_job()
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+  FailedExecution.objects.create(
+    job=job,
+    exception_class="builtins.ValueError",
+    message="boom",
+    traceback="traceback",
+  )
+
+  counts = queue_state_counts(backend_alias="default", queue_name="default")
+
+  assert counts["ready"] == 0
+  assert counts["failed"] == 0
+  assert counts["invalid"] == 1
+  assert list(queue_state_queryset(backend_alias="default", queue_name="default", state="ready")) == []
+  assert list(queue_state_queryset(backend_alias="default", queue_name="default", state="invalid")) == [
+    job
+  ]
 
 
 def test_queue_state_summaries_by_queue_follow_canonical_job_rows():

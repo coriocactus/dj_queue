@@ -1,11 +1,12 @@
 from dataclasses import dataclass
 from datetime import datetime
 
-from django.db.models import Case, Count, IntegerField, Min, Value, When
+from django.db.models import Case, Count, IntegerField, Min, Q, Value, When
 from django.db.models.functions import Coalesce
 
 from dj_queue.db import get_database_alias
 from dj_queue.models import Job
+from dj_queue.models.jobs import INVALID_JOB_STATUS, invalid_execution_state_query
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +87,13 @@ QUEUE_STATE_DEFINITIONS = (
     query_order=("-finished_at", "id"),
     rank=5,
   ),
+  QueueStateDefinition(
+    name=INVALID_JOB_STATUS,
+    label=INVALID_JOB_STATUS,
+    query_filter={},
+    query_order=("id",),
+    rank=6,
+  ),
 )
 
 QUEUE_STATE_BY_NAME = {definition.name: definition for definition in QUEUE_STATE_DEFINITIONS}
@@ -114,13 +122,13 @@ def queue_state_count_fields(counts):
 
 def filter_queue_state(queryset, state):
   definition = queue_state_definition(state)
-  return queryset.filter(**definition.query_filter)
+  return _filter_state_queryset(queryset, definition)
 
 
 def queue_state_queryset(*, backend_alias, queue_name, state):
   alias = get_database_alias(backend_alias)
   definition = queue_state_definition(state)
-  return (
+  queryset = (
     Job.objects.using(alias)
     .filter(backend_alias=backend_alias, queue_name=queue_name)
     .select_related(
@@ -130,9 +138,8 @@ def queue_state_queryset(*, backend_alias, queue_name, state):
       "blocked_execution",
       "failed_execution",
     )
-    .filter(**definition.query_filter)
-    .order_by(*definition.query_order)
   )
+  return _filter_state_queryset(queryset, definition).order_by(*definition.query_order)
 
 
 def queue_state_counts(*, backend_alias, queue_name):
@@ -179,7 +186,7 @@ def queue_state_summaries_by_queue(*, backend_alias):
 
   for definition in QUEUE_STATE_DEFINITIONS:
     for row in (
-      base_queryset.filter(**definition.query_filter)
+      _filter_state_queryset(base_queryset, definition)
       .values("queue_name")
       .annotate(count=Count("id"))
     ):
@@ -228,7 +235,7 @@ def empty_queue_state_summary(queue_name):
 def status_rank_expression():
   return Case(
     *(
-      When(**definition.query_filter, then=Value(definition.rank))
+      When(_state_query(definition), then=Value(definition.rank))
       for definition in QUEUE_STATE_DEFINITIONS
     ),
     default=Value(99),
@@ -238,7 +245,7 @@ def status_rank_expression():
 
 def _queue_state_counts(base_queryset):
   return {
-    definition.name: base_queryset.filter(**definition.query_filter).count()
+    definition.name: _filter_state_queryset(base_queryset, definition).count()
     for definition in QUEUE_STATE_DEFINITIONS
   }
 
@@ -251,7 +258,7 @@ def _state_counts_tuple(counts):
 
 def _oldest_value(base_queryset, *, state, expression):
   definition = queue_state_definition(state)
-  return base_queryset.filter(**definition.query_filter).aggregate(oldest=Min(expression))[
+  return _filter_state_queryset(base_queryset, definition).aggregate(oldest=Min(expression))[
     "oldest"
   ]
 
@@ -260,7 +267,7 @@ def _oldest_values_by_queue(base_queryset, *, state, expression):
   definition = queue_state_definition(state)
   return {
     row["queue_name"]: row["oldest"]
-    for row in base_queryset.filter(**definition.query_filter)
+    for row in _filter_state_queryset(base_queryset, definition)
     .values("queue_name")
     .annotate(oldest=Min(expression))
   }
@@ -268,3 +275,15 @@ def _oldest_values_by_queue(base_queryset, *, state, expression):
 
 def _ready_latency_expression():
   return Coalesce("ready_execution__latency_started_at", "ready_execution__created_at")
+
+
+def _filter_state_queryset(queryset, definition):
+  if definition.name == INVALID_JOB_STATUS:
+    return queryset.filter(invalid_execution_state_query())
+  return queryset.filter(**definition.query_filter).exclude(invalid_execution_state_query())
+
+
+def _state_query(definition):
+  if definition.name == INVALID_JOB_STATUS:
+    return invalid_execution_state_query()
+  return Q(**definition.query_filter) & ~invalid_execution_state_query()

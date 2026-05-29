@@ -22,6 +22,7 @@ QUEUE_JOB_ACTIONS = {
     {"name": "discard", "label": "discard selected"},
   ),
   "finished": ({"name": "enqueue", "label": "enqueue selected again"},),
+  "invalid": (),
 }
 
 

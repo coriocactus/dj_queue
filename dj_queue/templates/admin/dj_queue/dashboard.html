@@ -591,6 +591,7 @@
                   <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=blocked">{{ queue.blocked_count }}</a></td>
                   <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=failed">{{ queue.failed_count }}</a></td>
                   <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=finished">{{ queue.finished_count }}</a></td>
+                  <td><a href="{% url 'admin:dj_queue_dashboard_queue' queue.name %}?backend={{ backend_alias }}&state=invalid">{{ queue.invalid_count }}</a></td>
                   <td>{{ queue.paused|yesno:"yes,no" }}</td>
                   <td>{% if queue.latency_seconds != None %}{{ queue.latency_seconds|floatformat:1 }}s{% else %}-{% endif %}</td>
                   <td>{{ queue.live_worker_count }}</td>

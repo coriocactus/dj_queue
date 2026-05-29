@@ -221,6 +221,14 @@ QUEUE_PAGE_SORTS = {
       },
     }
   },
+  "invalid": {
+    "fields": {
+      "id": {"label": "id", "key": "id", "default_desc": False},
+      "task": {"label": "task", "key": "task_path", "default_desc": False},
+      "priority": {"label": "priority", "key": "priority", "default_desc": True},
+      "created": {"label": "created", "key": "created_at", "default_desc": True},
+    }
+  },
 }
 
 
@@ -443,6 +451,7 @@ def _summary_cards(*, backend_alias, queue_rows, process_rows, recurring_rows, s
   scheduled_count = sum(row[queue_state_count_key("scheduled")] for row in queue_rows)
   failed_count = sum(row[queue_state_count_key("failed")] for row in queue_rows)
   blocked_count = sum(row[queue_state_count_key("blocked")] for row in queue_rows)
+  invalid_count = sum(row[queue_state_count_key("invalid")] for row in queue_rows)
   live_processes = sum(1 for row in process_rows if row["is_live"])
   stale_processes = len(process_rows) - live_processes
 
@@ -459,16 +468,21 @@ def _summary_cards(*, backend_alias, queue_rows, process_rows, recurring_rows, s
     },
     {
       "label": "attention",
-      "value": failed_count + blocked_count,
+      "value": failed_count + blocked_count + invalid_count,
       "detail_parts": (
         {
           "label": f"{failed_count} failed",
           "url": _job_changelist_url(backend_alias=backend_alias, status="failed"),
         },
-        {"label": "and"},
+        {"label": ","},
         {
           "label": f"{blocked_count} blocked",
           "url": _job_changelist_url(backend_alias=backend_alias, status="blocked"),
+        },
+        {"label": "and"},
+        {
+          "label": f"{invalid_count} invalid",
+          "url": _job_changelist_url(backend_alias=backend_alias, status="invalid"),
         },
       ),
     },
