@@ -255,9 +255,13 @@ class AsyncSupervisor(Supervisor):
         if runner.run_managed_poll_loop(host_stop_requested=self.stop_requested):
           return
 
-        # runner crashed — drain any still-running work, fail leftovers, then replace
-        drained = runner.stop()
-        self._fail_crashed_runner_jobs(runner)
+        # runner crashed — drain active work before failing the claims it leaves behind
+        if self._runner_has_active_work(runner):
+          drained = runner.stop()
+          self._fail_crashed_runner_jobs(runner)
+        else:
+          self._fail_crashed_runner_jobs(runner)
+          drained = runner.stop()
         if self.stop_requested():
           return
         if drained is False and not self._wait_for_runner_stop(runner):
@@ -292,6 +296,12 @@ class AsyncSupervisor(Supervisor):
     while runner.process is not None and not self.stop_requested():
       time.sleep(0.01)
     return runner.process is None
+
+  def _runner_has_active_work(self, runner):
+    pool = getattr(runner, "pool", None)
+    if pool is None:
+      return False
+    return pool.idle_capacity < pool.max_workers
 
   def _replace_runner(self, current, replacement):
     try:

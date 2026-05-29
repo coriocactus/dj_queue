@@ -549,6 +549,7 @@ def test_async_supervisor_drains_crashed_runner_before_failing_leftovers():
     process = object()
     process_kind = "Worker"
     name = "worker-1"
+    pool = type("Pool", (), {"idle_capacity": 0, "max_workers": 1})()
 
     def run_managed_poll_loop(self, *, host_stop_requested):
       assert host_stop_requested() is False
