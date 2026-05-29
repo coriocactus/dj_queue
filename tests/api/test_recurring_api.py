@@ -123,6 +123,29 @@ def test_schedule_recurring_task_rejects_overwriting_static_task():
     )
 
 
+def test_schedule_recurring_task_rejects_configured_static_task(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {
+        "recurring": {
+          "shared-task": {
+            "task_path": "tests.tasks.echo",
+            "schedule": "* * * * *",
+          }
+        }
+      },
+    }
+  }
+
+  with pytest.raises(EnqueueError, match="already managed statically"):
+    schedule_recurring_task(
+      key="shared-task",
+      task_path="tests.tasks.echo",
+      schedule="*/5 * * * *",
+    )
+
+
 def test_invalid_cron_is_rejected():
   with pytest.raises(EnqueueError, match="schedule must be a valid cron expression"):
     schedule_recurring_task(
@@ -145,7 +168,7 @@ def test_schedule_recurring_task_rejects_invalid_priority():
 
 
 def test_missing_recurring_task_path_is_rejected_without_persisting():
-  with pytest.raises(ImportError):
+  with pytest.raises(EnqueueError, match="task_path must be importable"):
     schedule_recurring_task(
       key="missing-task",
       task_path="tests.tasks.missing_recurring_task",
@@ -153,6 +176,47 @@ def test_missing_recurring_task_path_is_rejected_without_persisting():
     )
 
   assert RecurringTask.objects.filter(key="missing-task").exists() is False
+
+
+@pytest.mark.parametrize(
+  ("option_name", "value", "message"),
+  (
+    ("key", "", "key must be a non-empty string"),
+    ("key", 1, "key must be a non-empty string"),
+    ("task_path", "", "task_path must be a non-empty string"),
+    ("task_path", 1, "task_path must be a non-empty string"),
+    ("schedule", "", "schedule must be a non-empty string"),
+    ("schedule", 1, "schedule must be a non-empty string"),
+    ("queue_name", "", "queue_name must be a non-empty string"),
+    ("queue_name", 1, "queue_name must be a non-empty string"),
+    ("description", 1, "description must be a string"),
+  ),
+)
+def test_schedule_recurring_task_rejects_invalid_string_options(option_name, value, message):
+  options = {
+    "key": "dynamic-task",
+    "task_path": "tests.tasks.echo",
+    "schedule": "* * * * *",
+    "queue_name": "default",
+    "description": "",
+  }
+  options[option_name] = value
+
+  with pytest.raises(EnqueueError, match=message):
+    schedule_recurring_task(**options)
+
+  assert RecurringTask.objects.filter(key="dynamic-task").exists() is False
+
+
+def test_schedule_recurring_task_rejects_non_task_path_without_persisting():
+  with pytest.raises(EnqueueError, match="task_path must reference a Django task"):
+    schedule_recurring_task(
+      key="not-a-task",
+      task_path="dj_queue.config.load_backend_config",
+      schedule="* * * * *",
+    )
+
+  assert RecurringTask.objects.filter(key="not-a-task").exists() is False
 
 
 def test_schedule_recurring_task_does_not_use_model_full_clean(monkeypatch):

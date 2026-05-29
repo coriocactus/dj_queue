@@ -22,14 +22,33 @@ def validate_recurring_task_definition(
   backend_alias,
   schedule=None,
 ):
-  if schedule is not None and not is_valid_cron(str(schedule)):
+  task_path = _recurring_string(task_path, "task_path")
+  queue_name = _recurring_string(queue_name, "queue_name")
+  if schedule is not None:
+    schedule = _recurring_string(schedule, "schedule")
+  if schedule is not None and not is_valid_cron(schedule):
     raise EnqueueError("schedule must be a valid cron expression")
-  task = import_string(task_path)
+  try:
+    task = import_string(task_path)
+  except ImportError as exc:
+    raise EnqueueError(f"task_path must be importable: {task_path}") from exc
   if not hasattr(task, "using"):
     raise EnqueueError("task_path must reference a Django task")
   validate_queue_allowed(queue_name, backend_alias=backend_alias)
   validate_priority(priority)
   return task
+
+
+def _recurring_string(value, name):
+  if not isinstance(value, str) or value == "":
+    raise EnqueueError(f"{name} must be a non-empty string")
+  return value
+
+
+def _recurring_optional_string(value, name):
+  if not isinstance(value, str):
+    raise EnqueueError(f"{name} must be a string")
+  return value
 
 
 def upsert_static_recurring_tasks(recurring_configs, *, backend_alias="default"):
@@ -161,6 +180,8 @@ def schedule_recurring_task(
   alias = get_database_alias(backend_alias)
   if kwargs is None:
     kwargs = {}
+  key = _recurring_string(key, "key")
+  description = _recurring_optional_string(description, "description")
 
   validate_recurring_task_definition(
     task_path=task_path,
