@@ -219,6 +219,7 @@ QUEUE_PAGE_SORTS = {
         "label": "return value",
         "key": "return_value",
         "default_desc": False,
+        "sortable": False,
       },
     }
   },
@@ -715,7 +716,8 @@ def _resolve_sort(*, fields, raw_sort, default_sort=None):
   seen = set()
   for part in parts:
     field_name = part.removeprefix("-")
-    if field_name in fields and field_name not in seen:
+    field = fields.get(field_name)
+    if field is not None and field.get("sortable", True) and field_name not in seen:
       valid.append(part)
       seen.add(field_name)
   if not valid:
@@ -838,15 +840,7 @@ def _coerce_page_number(page_number, total_pages):
 
 
 def _sorted_queue_jobs(*, queryset, state, sort):
-  if _queue_sort_requires_python(state=state, sort=sort):
-    return _sort_queue_jobs(jobs=list(queryset), state=state, sort=sort)
   return queryset.order_by(*_queue_sort_ordering(state=state, sort=sort))
-
-
-def _queue_sort_requires_python(*, state, sort):
-  return any(
-    key_name == "return_value" for key_name, _descending in _queue_sort_specs(state=state, sort=sort)
-  )
 
 
 def _queue_sort_ordering(*, state, sort):
@@ -872,11 +866,6 @@ def _queue_sort_specs(*, state, sort):
     descending = part.startswith("-")
     sort_specs.append((key_name, descending))
   return sort_specs
-
-
-def _sort_queue_jobs(*, jobs, state, sort):
-  sort_specs = _queue_sort_specs(state=state, sort=sort)
-  return _sort_rows_by_keys(rows=jobs, sort_specs=sort_specs, getter=_job_sort_value)
 
 
 def _sort_rows_by_keys(*, rows, sort_specs, getter=None):
@@ -916,22 +905,6 @@ class _Reversible:
 
   def __ge__(self, other):
     return other.value >= self.value
-
-
-def _job_sort_value(job, key):
-  return _lookup_value(job, key)
-
-
-def _lookup_value(value, lookup):
-  current = value
-  for part in lookup.split("__"):
-    if current is None:
-      return None
-    if isinstance(current, dict):
-      current = current.get(part)
-      continue
-    current = getattr(current, part, None)
-  return current
 
 
 def _sortable_value(value):
@@ -988,8 +961,28 @@ def _sortable_headers(
   headers = []
 
   for field_name, field in fields.items():
+    sortable = field.get("sortable", True)
     position, ascending = sort_index.get(field_name, (None, None))
     is_sorted = position is not None
+
+    if not sortable:
+      classes = [f"column-{field_name}"]
+      if field.get("css_class"):
+        classes.append(field["css_class"])
+      headers.append(
+        {
+          "text": field["label"],
+          "url_primary": None,
+          "url_toggle": None,
+          "url_remove": None,
+          "class_attrib": f' class="{" ".join(classes)}"',
+          "sortable": False,
+          "sorted": False,
+          "ascending": None,
+          "sort_priority": None,
+        }
+      )
+      continue
 
     if is_sorted:
       toggled = field_name if not ascending else f"-{field_name}"

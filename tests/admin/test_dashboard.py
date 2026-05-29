@@ -1042,9 +1042,14 @@ def test_dashboard_queue_view_supports_multi_column_sorting(admin_client):
   assert "sort=-task.-priority#result_list" not in content
 
 
-def test_dashboard_queue_view_supports_sorting_finished_json_values(admin_client):
-  alpha = make_job(queue_name="alpha", finished_at=timezone.now(), return_value={"a": 1})
-  beta = make_job(queue_name="alpha", finished_at=timezone.now(), return_value={"b": 1})
+def test_dashboard_queue_view_does_not_sort_finished_json_values(admin_client):
+  now = timezone.now()
+  alpha = make_job(
+    queue_name="alpha",
+    finished_at=now - timedelta(seconds=1),
+    return_value={"a": 1},
+  )
+  beta = make_job(queue_name="alpha", finished_at=now, return_value={"b": 1})
 
   response = admin_client.get(
     reverse("admin:dj_queue_dashboard_queue", args=["alpha"]),
@@ -1053,7 +1058,12 @@ def test_dashboard_queue_view_supports_sorting_finished_json_values(admin_client
 
   assert response.status_code == 200
   content = response.content.decode()
-  assert content.index(str(alpha.id)) < content.index(str(beta.id))
+  assert content.index(str(beta.id)) < content.index(str(alpha.id))
+  return_value_header = next(
+    header for header in response.context["table_headers"] if header["text"] == "return value"
+  )
+  assert return_value_header["sortable"] is False
+  assert response.context["queue_num_sorted_fields"] == 0
 
 
 def test_dashboard_queue_pagination_omits_default_sort(admin_client, monkeypatch):
