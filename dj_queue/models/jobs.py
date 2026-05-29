@@ -2,7 +2,7 @@ import uuid
 
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import models
-from django.db.models import Q
+from django.db.models import Case, IntegerField, Q, Value, When
 
 JOB_STATUS_RELATIONS = (
   ("ready", "ready_execution"),
@@ -11,6 +11,7 @@ JOB_STATUS_RELATIONS = (
   ("blocked", "blocked_execution"),
   ("failed", "failed_execution"),
 )
+INVALID_JOB_STATUS = "invalid"
 
 
 class JobQuerySet(models.QuerySet):
@@ -31,6 +32,13 @@ class JobQuerySet(models.QuerySet):
 
   def finished(self):
     return self.filter(finished_at__isnull=False)
+
+  def invalid_execution_state(self):
+    state_count = _live_execution_state_count_expression()
+    return self.alias(_live_execution_state_count=state_count).filter(
+      Q(_live_execution_state_count__gt=1)
+      | Q(finished_at__isnull=False, _live_execution_state_count__gt=0)
+    )
 
 
 class Job(models.Model):
@@ -66,13 +74,36 @@ class Job(models.Model):
 
   @property
   def status(self):
+    live_state_names = self.live_execution_state_names
+    if len(live_state_names) > 1:
+      return INVALID_JOB_STATUS
     if self.finished_at is not None:
+      if live_state_names:
+        return INVALID_JOB_STATUS
       return "finished"
 
-    for status_name, relation_name in JOB_STATUS_RELATIONS:
-      if self._has_state_relation(relation_name):
-        return status_name
+    if live_state_names:
+      return live_state_names[0]
     return None
+
+  @property
+  def live_execution_state_names(self):
+    return tuple(
+      status_name
+      for status_name, relation_name in JOB_STATUS_RELATIONS
+      if self._has_state_relation(relation_name)
+    )
+
+  @property
+  def execution_state_names(self):
+    live_state_names = self.live_execution_state_names
+    if self.finished_at is None:
+      return live_state_names
+    return ("finished", *live_state_names)
+
+  @property
+  def has_invalid_execution_state(self):
+    return self.status == INVALID_JOB_STATUS
 
   @property
   def ready(self):
@@ -104,6 +135,18 @@ class Job(models.Model):
     except ObjectDoesNotExist:
       return False
     return True
+
+
+def _live_execution_state_count_expression():
+  expression = None
+  for _status_name, relation_name in JOB_STATUS_RELATIONS:
+    flag = Case(
+      When(**{f"{relation_name}__isnull": False}, then=Value(1)),
+      default=Value(0),
+      output_field=IntegerField(),
+    )
+    expression = flag if expression is None else expression + flag
+  return expression
 
 
 class ReadyExecution(models.Model):

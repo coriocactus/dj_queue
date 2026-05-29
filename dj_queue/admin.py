@@ -515,8 +515,9 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   @admin.display(description="queue name", ordering="queue_name")
   def queue_name_link(self, obj):
     query = {"backend": obj.backend_alias}
-    if obj.status is not None:
-      query["state"] = obj.status
+    status = obj.status
+    if is_queue_state(status):
+      query["state"] = status
     url = f"{reverse('admin:dj_queue_dashboard_queue', args=[obj.queue_name])}?{urlencode(query)}"
     return format_html('<a href="{}">{}</a>', url, obj.queue_name)
 

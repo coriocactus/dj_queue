@@ -135,6 +135,66 @@ def test_execution_state_models_do_not_own_cross_table_transitions():
   )
 
   assert scheduled.job == job
+  job.refresh_from_db()
+  assert job.execution_state_names == ("ready", "scheduled")
+  assert job.status == "invalid"
+  assert job.has_invalid_execution_state is True
+
+
+@pytest.mark.django_db
+def test_finished_job_with_live_state_reports_invalid_execution_state():
+  job = make_job(finished_at=timezone.now(), return_value={"ok": True})
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+
+  job.refresh_from_db()
+
+  assert job.execution_state_names == ("finished", "ready")
+  assert job.status == "invalid"
+  assert job.ready is False
+  assert job.finished is False
+
+
+@pytest.mark.django_db
+def test_invalid_execution_state_queryset_finds_corrupt_jobs():
+  valid_ready = make_job(task_path="tests.tasks.ready")
+  ReadyExecution.objects.create(
+    job=valid_ready,
+    backend_alias=valid_ready.backend_alias,
+    queue_name=valid_ready.queue_name,
+    priority=valid_ready.priority,
+  )
+  multi_state = make_job(task_path="tests.tasks.multi")
+  ReadyExecution.objects.create(
+    job=multi_state,
+    backend_alias=multi_state.backend_alias,
+    queue_name=multi_state.queue_name,
+    priority=multi_state.priority,
+  )
+  FailedExecution.objects.create(
+    job=multi_state,
+    exception_class="ValueError",
+    message="boom",
+    traceback="traceback",
+  )
+  finished_with_state = make_job(
+    task_path="tests.tasks.finished_with_state",
+    finished_at=timezone.now(),
+  )
+  ReadyExecution.objects.create(
+    job=finished_with_state,
+    backend_alias=finished_with_state.backend_alias,
+    queue_name=finished_with_state.queue_name,
+    priority=finished_with_state.priority,
+  )
+
+  invalid_job_ids = set(Job.objects.invalid_execution_state().values_list("pk", flat=True))
+
+  assert invalid_job_ids == {multi_state.pk, finished_with_state.pk}
 
 
 @pytest.mark.django_db

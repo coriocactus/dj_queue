@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from dj_queue.api import enqueue_on_commit
 from dj_queue.backend import DjQueueBackend, _async_backend_call
-from dj_queue.exceptions import EnqueueError
+from dj_queue.exceptions import DjQueueError, EnqueueError
 from dj_queue.models import (
   ClaimedExecution,
   BlockedExecution,
@@ -353,6 +353,31 @@ def test_get_result_failed_does_not_require_task_import():
   assert fetched.status == TaskResultStatus.FAILED
   assert fetched.task.module_path == job.task_path
   assert fetched.errors[0].exception_class_path == "builtins.ImportError"
+
+
+@pytest.mark.django_db
+def test_get_result_reports_invalid_execution_state_as_failed():
+  job = make_job(args=["corrupt"])
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+  FailedExecution.objects.create(
+    job=job,
+    exception_class="builtins.ValueError",
+    message="boom",
+    traceback="traceback",
+  )
+
+  fetched = echo.get_backend().get_result(str(job.id))
+
+  assert fetched.status == TaskResultStatus.FAILED
+  assert fetched.errors[0].exception_class_path == (
+    f"{DjQueueError.__module__}.{DjQueueError.__qualname__}"
+  )
+  assert "invalid execution state" in fetched.errors[0].traceback
 
 
 @pytest.mark.django_db
