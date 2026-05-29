@@ -107,6 +107,30 @@ def test_queue_info_all_uses_shared_queue_discovery():
   ]
 
 
+def test_queue_info_all_reuses_snapshot_for_public_reads(django_assert_num_queries):
+  job = make_ready_job(queue_name="emails")
+  ReadyExecution.objects.filter(job=job).update(
+    latency_started_at=timezone.now() - timedelta(seconds=5)
+  )
+
+  queue = QueueInfo.all()[0]
+
+  with django_assert_num_queries(0):
+    assert queue.queue_name == "emails"
+    assert queue.size == 1
+    assert queue.paused is False
+    assert queue.latency >= 0.0
+
+
+def test_queue_info_mutations_invalidate_snapshot():
+  make_ready_job(queue_name="emails")
+  queue = QueueInfo.all()[0]
+
+  queue.pause()
+
+  assert queue.paused is True
+
+
 def test_queue_info_pause_and_resume():
   job = make_ready_job(queue_name="emails")
   before_pause = timezone.now() - timedelta(seconds=5)

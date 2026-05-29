@@ -467,6 +467,10 @@ if claimed_jobs:
   execute_claimed_job(claimed_jobs[0])
 ```
 
+`QueueInfo.all()` discovers queues through the same read model as the dashboard
+and reuses that snapshot for `size`, `latency`, and `paused` until a queue
+mutation invalidates it.
+
 Notes:
 
 - pausing a queue stops future claims, not enqueueing or already-claimed work

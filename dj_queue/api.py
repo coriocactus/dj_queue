@@ -43,16 +43,25 @@ __all__ = [
 
 
 class QueueInfo:
-  def __init__(self, queue_name, *, backend_alias="default"):
+  def __init__(self, queue_name, *, backend_alias="default", snapshot=None):
     self.queue_name = queue_name
     self.backend_alias = backend_alias
+    self._snapshot = snapshot
 
   @property
   def size(self):
+    if self._snapshot is not None:
+      return self._snapshot["ready_count"]
     return self._ready_queryset().count()
 
   @property
   def latency(self):
+    if self._snapshot is not None:
+      latency = self._snapshot["latency_seconds"]
+      if latency is None and not self._snapshot["paused"]:
+        return 0.0
+      return latency
+
     paused = observability.queue_is_paused(
       backend_alias=self.backend_alias,
       queue_name=self.queue_name,
@@ -69,6 +78,8 @@ class QueueInfo:
 
   @property
   def paused(self):
+    if self._snapshot is not None:
+      return self._snapshot["paused"]
     return observability.queue_is_paused(
       backend_alias=self.backend_alias,
       queue_name=self.queue_name,
@@ -76,9 +87,11 @@ class QueueInfo:
 
   def pause(self):
     pause_queue(self.queue_name, backend_alias=self.backend_alias)
+    self._snapshot = None
 
   def resume(self):
     resume_queue(self.queue_name, backend_alias=self.backend_alias)
+    self._snapshot = None
 
   def clear(self, *, batch_size=500):
     deleted = 0
@@ -89,6 +102,7 @@ class QueueInfo:
         backend_alias=self.backend_alias,
       )
       if not batch_deleted:
+        self._snapshot = None
         return deleted
       deleted += batch_deleted
 
@@ -102,7 +116,7 @@ class QueueInfo:
       now=now,
       process_cutoff=process_cutoff,
     )
-    return [cls(row["name"], backend_alias=backend_alias) for row in queue_rows]
+    return [cls(row["name"], backend_alias=backend_alias, snapshot=row) for row in queue_rows]
 
   def _ready_queryset(self):
     alias = get_database_alias(self.backend_alias)
