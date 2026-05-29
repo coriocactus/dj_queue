@@ -575,6 +575,49 @@ def test_async_supervisor_drains_crashed_runner_before_failing_leftovers():
   assert events == ["poll", "stop", "fail"]
 
 
+def test_async_supervisor_preserves_active_claims_until_drain_finishes():
+  supervisor = build_async_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[]),
+  )
+  events = []
+
+  class Runner:
+    process = object()
+    process_kind = "Worker"
+    name = "worker-1"
+    pool = type("Pool", (), {"idle_capacity": 0, "max_workers": 1})()
+
+    def run_managed_poll_loop(self, *, host_stop_requested):
+      assert host_stop_requested() is False
+      events.append("poll")
+      return False
+
+    def stop(self):
+      events.append("stop")
+      return False
+
+  runner = Runner()
+
+  def fail_leftovers(crashed_runner):
+    assert crashed_runner is runner
+    events.append("fail")
+    supervisor.request_stop()
+
+  supervisor._fail_crashed_runner_jobs = fail_leftovers
+  thread = threading.Thread(target=supervisor._run_managed_runner, args=(runner,))
+
+  thread.start()
+  wait_until(lambda: events == ["poll", "stop"], timeout=1)
+
+  assert "fail" not in events
+
+  runner.process = None
+  thread.join(timeout=1)
+
+  assert thread.is_alive() is False
+  assert events == ["poll", "stop", "fail"]
+
+
 def test_async_supervisor_starts_managed_runners_inside_app_executor(monkeypatch):
   supervisor = build_async_supervisor(
     tasks_settings=async_tasks_settings(dispatchers=[]),

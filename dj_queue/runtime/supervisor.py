@@ -258,6 +258,11 @@ class AsyncSupervisor(Supervisor):
         # runner crashed — drain active work before failing the claims it leaves behind
         if self._runner_has_active_work(runner):
           drained = runner.stop()
+          if drained is False:
+            if self.stop_requested():
+              return
+            if not self._wait_for_runner_stop(runner):
+              return
           self._fail_crashed_runner_jobs(runner)
         else:
           self._fail_crashed_runner_jobs(runner)
