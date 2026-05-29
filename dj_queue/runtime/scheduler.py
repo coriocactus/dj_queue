@@ -50,6 +50,7 @@ class Scheduler(BaseRunner):
       process_alive_threshold=process_alive_threshold,
       supervisor=supervisor,
     )
+    self._static_tasks_synced = False
 
   @classmethod
   def from_backend_config(
@@ -82,6 +83,11 @@ class Scheduler(BaseRunner):
   def stop(self):
     return super().stop()
 
+  def start(self):
+    process = super().start()
+    self.ensure_static_tasks_synced()
+    return process
+
   def process_metadata(self):
     return {
       "dynamic_tasks_enabled": self.config.scheduler.dynamic_tasks_enabled,
@@ -99,14 +105,23 @@ class Scheduler(BaseRunner):
   def sync_static_tasks(self):
     upsert_static_recurring_tasks(self.config.recurring, backend_alias=self.backend_alias)
 
+  def ensure_static_tasks_synced(self):
+    if self._static_tasks_synced:
+      return False
+    with app_executor():
+      self.sync_static_tasks()
+    self._static_tasks_synced = True
+    return True
+
   def poll_once(self, *, now=None):
     if now is None:
       now = timezone.now()
     if self.process is None:
       self.start()
+    else:
+      self.ensure_static_tasks_synced()
 
     with app_executor():
-      self.sync_static_tasks()
       fired_jobs = self._fire_due_tasks(now)
       self._run_cleanup(now)
     return fired_jobs

@@ -371,6 +371,9 @@ TASKS = {
 }
 ```
 
+Static recurring definitions are synced when the scheduler runner starts, then
+normal polling uses the persisted recurring rows and their `next_run_at` cursor.
+
 ### Dynamic recurring tasks
 
 Create, update, and remove recurring tasks at runtime:

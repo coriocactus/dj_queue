@@ -198,6 +198,34 @@ def test_scheduler_static_sync_is_idempotent_when_unchanged():
   )
 
 
+def test_scheduler_does_not_sync_static_tasks_on_every_poll(monkeypatch):
+  now = fixed_now()
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      recurring={
+        "static-task": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "0 0 * * *",
+        }
+      }
+    )
+  )
+  calls = []
+  original_sync = scheduler.sync_static_tasks
+
+  def sync_once():
+    calls.append(True)
+    original_sync()
+
+  monkeypatch.setattr(scheduler, "sync_static_tasks", sync_once)
+
+  scheduler.poll_once(now=now)
+  scheduler.poll_once(now=now + timedelta(seconds=1))
+
+  assert calls == [True]
+  scheduler.stop()
+
+
 def test_scheduler_static_sync_rejects_taking_over_dynamic_task_key():
   schedule_recurring_task(
     key="shared-task",
