@@ -48,6 +48,7 @@ ADMIN_ACTION_ERRORS = (
   FailedExecution.DoesNotExist,
   RecurringTask.DoesNotExist,
 )
+ADMIN_POST_ACTION_ERRORS = (ValueError, *ADMIN_ACTION_ERRORS)
 
 
 def _install_dj_queue_admin_site(site):
@@ -204,7 +205,7 @@ class DashboardAdmin(admin.ModelAdmin):
       return HttpResponseNotAllowed(["POST"])
     try:
       message = operation()
-    except (ValueError, EnqueueError, ImportError) as exc:
+    except ADMIN_POST_ACTION_ERRORS as exc:
       self.message_user(request, str(exc), level=messages.ERROR)
     else:
       self.message_user(request, message, level=messages.SUCCESS)

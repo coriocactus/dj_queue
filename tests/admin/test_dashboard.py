@@ -814,6 +814,32 @@ def test_dashboard_queue_bulk_actions_show_operation_errors(admin_client, monkey
   assert Job.objects.filter(pk=ready_job.pk).exists() is True
 
 
+def test_dashboard_queue_bulk_actions_show_task_attribute_errors(admin_client, monkeypatch):
+  ready_job = make_ready_job(queue_name="alpha")
+  url = reverse("admin:dj_queue_dashboard_job_action", args=["alpha"])
+
+  def fail_action(**_kwargs):
+    raise AttributeError("task is not enqueueable")
+
+  monkeypatch.setattr(dashboard_actions, "apply_job_action", fail_action)
+
+  response = admin_client.post(
+    f"{url}?backend=default&state=ready",
+    {
+      "backend": "default",
+      "state": "ready",
+      "action": "discard",
+      "_selected_action": [str(ready_job.pk)],
+    },
+    follow=True,
+  )
+
+  assert response.status_code == 200
+  messages = list(response.context["messages"])
+  assert [message.message for message in messages] == ["task is not enqueueable"]
+  assert Job.objects.filter(pk=ready_job.pk).exists() is True
+
+
 def test_dashboard_queue_urls_support_slash_queue_names(admin_client):
   queue_name = "tenant/alpha"
   make_ready_job(queue_name=queue_name)
