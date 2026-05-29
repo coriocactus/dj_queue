@@ -505,7 +505,7 @@ class RuntimeSimulation:
     self.monkeypatch.setattr("dj_queue.runtime.scheduler.timezone.now", lambda: self.now)
     self.monkeypatch.setattr("dj_queue.operations.jobs.timezone.now", lambda: self.now)
     self.monkeypatch.setattr("dj_queue.operations.concurrency.timezone.now", lambda: self.now)
-    self.monkeypatch.setattr("dj_queue.api.timezone.now", lambda: self.now)
+    self.monkeypatch.setattr("dj_queue.observability.timezone.now", lambda: self.now)
 
   def _next_value(self, prefix):
     value = f"{prefix}-{self.seed}-{self.counter:04d}"
