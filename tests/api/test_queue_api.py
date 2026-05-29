@@ -34,6 +34,14 @@ def test_queue_info_size():
   assert QueueInfo("emails").size == 2
 
 
+def test_queue_info_size_ignores_invalid_ready_state():
+  make_ready_job(queue_name="emails")
+  invalid_job = make_ready_job(queue_name="emails")
+  Job.objects.filter(pk=invalid_job.pk).update(finished_at=timezone.now())
+
+  assert QueueInfo("emails").size == 1
+
+
 def test_queue_info_stays_backend_scoped_on_shared_queue_db(settings):
   settings.TASKS = {
     "default": {

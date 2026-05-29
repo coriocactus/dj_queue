@@ -3,8 +3,6 @@ from functools import partial
 from django.db import transaction
 
 from dj_queue import observability
-from dj_queue.db import get_database_alias
-from dj_queue.models import ReadyExecution
 from dj_queue.operations.jobs import (
   ClaimedJob,
   claim_ready_jobs,
@@ -49,7 +47,10 @@ class QueueInfo:
   def size(self):
     if self._snapshot is not None:
       return self._snapshot["ready_count"]
-    return self._ready_queryset().count()
+    return observability.queue_ready_count(
+      backend_alias=self.backend_alias,
+      queue_name=self.queue_name,
+    )
 
   @property
   def latency(self):
@@ -107,13 +108,6 @@ class QueueInfo:
   def all(cls, *, backend_alias="default"):
     queue_rows = observability.queue_rows_for_backend(backend_alias=backend_alias)
     return [cls(row["name"], backend_alias=backend_alias, snapshot=row) for row in queue_rows]
-
-  def _ready_queryset(self):
-    alias = get_database_alias(self.backend_alias)
-    return ReadyExecution.objects.using(alias).filter(
-      backend_alias=self.backend_alias,
-      queue_name=self.queue_name,
-    )
 
 
 def enqueue_on_commit(task, *args, using=None, **kwargs):

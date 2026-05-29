@@ -138,6 +138,10 @@ def queue_rows_for_backend(*, backend_alias, now=None):
   )
 
 
+def queue_ready_count(*, backend_alias, queue_name):
+  return queue_state_summary(backend_alias=backend_alias, queue_name=queue_name).count("ready")
+
+
 def process_counts(process_rows):
   counts = {
     "live": 0,
