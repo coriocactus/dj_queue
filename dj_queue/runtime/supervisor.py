@@ -1,6 +1,7 @@
 import os
 import signal
 import socket
+import sys
 import threading
 import time
 
@@ -85,9 +86,12 @@ class Supervisor(BaseRunner):
     )
 
   def start(self):
+    return self._start_supervisor_process(start_heartbeat=True)
+
+  def _start_supervisor_process(self, *, start_heartbeat):
     try:
       self._acquire_pidfile()
-      process = super().start()
+      process = self._start_process(start_heartbeat=start_heartbeat)
       warn_if_persistent_connection_budget_is_tight(
         self.config,
         backend_alias=self.backend_alias,
@@ -187,7 +191,7 @@ class AsyncSupervisor(Supervisor):
     self.runners = []
     self.runner_threads = []
     self._graceful_shutdown_requested = False
-    self._exit_fn = os._exit
+    self._exit_fn = sys.exit
 
   def start(self):
     process = super().start()
@@ -236,6 +240,7 @@ class AsyncSupervisor(Supervisor):
     return True
 
   def handle_sigquit(self, *_args):
+    self.request_stop()
     self._exit_fn(1)
 
   def start_runners(self):
@@ -373,7 +378,8 @@ class ForkSupervisor(Supervisor):
     self._launcher = launcher or self._default_launcher
     self._waitpid = waitpid or os.waitpid
     self._killer = killer or os.kill
-    self._exit_fn = exit_fn or os._exit
+    self._exit_fn = exit_fn or sys.exit
+    self._child_exit_fn = os._exit
 
   @classmethod
   def from_backend_config(
@@ -412,11 +418,12 @@ class ForkSupervisor(Supervisor):
     )
 
   def start(self):
-    process = super().start()
+    process = self._start_supervisor_process(start_heartbeat=False)
     try:
       if self.standalone:
         self.register_signal_handlers()
       self.start_children()
+      self._start_heartbeat_thread()
     except Exception:
       self.stop()
       raise
@@ -455,6 +462,7 @@ class ForkSupervisor(Supervisor):
     return True
 
   def handle_sigquit(self, *_args):
+    self.request_stop()
     self._exit_fn(1)
 
   def start_children(self):
@@ -468,7 +476,7 @@ class ForkSupervisor(Supervisor):
 
   def check_children(self):
     try:
-      pid, _status = self._waitpid(-1, os.WNOHANG)
+      pid, status = self._waitpid(-1, os.WNOHANG)
     except ChildProcessError:
       return None
 
@@ -478,7 +486,7 @@ class ForkSupervisor(Supervisor):
     spec = self.children.pop(pid, None)
     if spec is None:
       return None
-    self._fail_claimed_jobs_for_child(pid, spec)
+    self._fail_claimed_jobs_for_child(pid, spec, status=status)
     replacement_pid = self._launcher(spec)
     self.children[replacement_pid] = spec
     log_event(
@@ -486,6 +494,7 @@ class ForkSupervisor(Supervisor):
       backend_alias=self.backend_alias,
       old_pid=pid,
       new_pid=replacement_pid,
+      exit_status=status,
       kind=spec["kind"],
     )
     return replacement_pid
@@ -494,7 +503,7 @@ class ForkSupervisor(Supervisor):
     deadline = time.monotonic() + timeout
     while self.children and time.monotonic() < deadline:
       try:
-        pid, _status = self._waitpid(-1, os.WNOHANG)
+        pid, status = self._waitpid(-1, os.WNOHANG)
       except ChildProcessError:
         for child_pid, spec in tuple(self.children.items()):
           self._fail_claimed_jobs_for_child(child_pid, spec)
@@ -507,23 +516,24 @@ class ForkSupervisor(Supervisor):
 
       spec = self.children.pop(pid, None)
       if spec is not None:
-        self._fail_claimed_jobs_for_child(pid, spec)
+        self._fail_claimed_jobs_for_child(pid, spec, status=status)
     return None
 
   def poll_once(self):
     super().poll_once()
     return self.check_children()
 
-  def _fail_claimed_jobs_for_child(self, pid, spec):
+  def _fail_claimed_jobs_for_child(self, pid, spec, *, status=None):
     if spec is None:
       return self._fail_claimed_jobs_for_pid(pid)
+    message = _child_exit_message(status)
     with app_executor():
       return fail_claimed_jobs_for_child(
         pid=pid,
         name=spec["kwargs"]["name"],
         supervisor_id=self.process.pk if self.process is not None else None,
-        error=ProcessExitError("child process exited"),
-        traceback_text="child process exited",
+        error=ProcessExitError(message),
+        traceback_text=message,
         backend_alias=self.backend_alias,
       )
 
@@ -570,7 +580,7 @@ class ForkSupervisor(Supervisor):
         runner.run()
       finally:
         connections.close_all()
-      self._exit_fn(0)
+      self._child_exit_fn(0)
     connections.close_all()
     return pid
 
@@ -581,4 +591,14 @@ class ForkSupervisor(Supervisor):
 
     signal.signal(signal.SIGTERM, request_stop)
     signal.signal(signal.SIGINT, request_stop)
-    signal.signal(signal.SIGQUIT, lambda *_args: self._exit_fn(1))
+    signal.signal(signal.SIGQUIT, lambda *_args: self._child_exit_fn(1))
+
+
+def _child_exit_message(status):
+  if status is None:
+    return "child process exited"
+  if os.WIFEXITED(status):
+    return f"child process exited with status {os.WEXITSTATUS(status)}"
+  if os.WIFSIGNALED(status):
+    return f"child process exited from signal {os.WTERMSIG(status)}"
+  return f"child process exited with wait status {status}"

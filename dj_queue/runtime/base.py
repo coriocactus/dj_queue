@@ -104,12 +104,7 @@ class BaseRunner:
     return polling_interval
 
   def start(self):
-    if self.process is None:
-      self.process = self._register_process()
-      self._start_heartbeat_thread()
-      fire_hooks(f"{self.hook_prefix}.start", self.process, backend_alias=self.backend_alias)
-      self._started = True
-    return self.process
+    return self._start_process(start_heartbeat=True)
 
   def run(self):
     try:
@@ -252,6 +247,15 @@ class BaseRunner:
         ),
         alias=alias,
       )
+
+  def _start_process(self, *, start_heartbeat):
+    if self.process is None:
+      self.process = self._register_process()
+      if start_heartbeat:
+        self._start_heartbeat_thread()
+      fire_hooks(f"{self.hook_prefix}.start", self.process, backend_alias=self.backend_alias)
+      self._started = True
+    return self.process
 
   def _deregister_process(self):
     if self.process is None:

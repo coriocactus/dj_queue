@@ -860,6 +860,33 @@ def test_fork_supervisor_starts_configured_children():
   supervisor.stop()
 
 
+def test_fork_supervisor_starts_children_before_heartbeat_thread(monkeypatch):
+  events = []
+  supervisor = build_fork_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[], recurring={}),
+  )
+
+  def launcher(spec):
+    events.append(("launch", spec["kind"], supervisor._heartbeat_thread is not None))
+    return 80000 + len([event for event in events if event[0] == "launch"])
+
+  def start_heartbeat_thread():
+    events.append(("heartbeat", tuple(sorted(supervisor.children))))
+
+  supervisor._launcher = launcher
+  monkeypatch.setattr(supervisor, "_start_heartbeat_thread", start_heartbeat_thread)
+
+  supervisor.start()
+
+  try:
+    assert events == [
+      ("launch", "worker", False),
+      ("heartbeat", (80001,)),
+    ]
+  finally:
+    supervisor.stop()
+
+
 def test_fork_supervisor_stop_waits_for_child_exit_before_hard_kill():
   killed = []
   waitpid_results = [(80001, 0)]
@@ -888,6 +915,38 @@ def test_fork_supervisor_stop_waits_for_child_exit_before_hard_kill():
     f"{ProcessExitError.__module__}.{ProcessExitError.__qualname__}"
   )
   assert Process.objects.filter(pk=child_process.pk).exists() is False
+
+
+def test_fork_supervisor_records_child_exit_status():
+  waitpid_results = [(80001, 7 << 8)]
+  launches = 0
+
+  def launcher(spec):
+    nonlocal launches
+    launches += 1
+    return 80000 + launches
+
+  def waitpid(_pid, _flags):
+    if waitpid_results:
+      return waitpid_results.pop(0)
+    return 0, 0
+
+  supervisor = build_fork_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[], recurring={}),
+    launcher=launcher,
+    waitpid=waitpid,
+  )
+  supervisor_process = supervisor.start()
+  child_process = make_process(pid=80001, name="worker-1", supervisor=supervisor_process)
+  job = make_job(task_path="tests.tasks.echo")
+  make_claimed_execution(job=job, process=child_process)
+
+  try:
+    supervisor.check_children()
+  finally:
+    supervisor.stop()
+
+  assert FailedExecution.objects.get(job=job).message == "child process exited with status 7"
 
 
 def test_fork_supervisor_stop_fails_claimed_jobs_when_child_map_is_stale():

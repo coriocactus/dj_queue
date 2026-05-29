@@ -297,7 +297,7 @@ across queues. Prefer one primary scheduling mechanism per worker when you can.
 In standalone mode, both `fork` and `async` `python manage.py dj_queue` supervisors own runtime signal handling:
 
 - `SIGTERM` and `SIGINT` request graceful shutdown
-- `SIGQUIT` takes the immediate hard-exit path
+- `SIGQUIT` requests immediate process exit through normal Python cleanup
 - `shutdown_timeout` controls how long the runtime waits for in-flight work to drain
 - `supervisor_pidfile` can prevent duplicate standalone supervisors on one host
 
