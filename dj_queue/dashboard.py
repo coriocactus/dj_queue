@@ -5,6 +5,7 @@ from urllib.parse import urlencode
 from uuid import UUID
 
 from django.core.paginator import Paginator
+from django.db.models import F
 from django.http import Http404
 from django.urls import reverse
 from django.utils import timezone
@@ -353,8 +354,7 @@ def queue_page_context(*, backend_alias, queue_name, state, page_number, query_p
   )
   sort, explicit_sort = _resolve_queue_sort(state=state, raw_sort=query_params.get("sort"))
   if explicit_sort:
-    jobs = list(queryset)
-    jobs = _sort_queue_jobs(jobs=jobs, state=state, sort=sort)
+    jobs = _sorted_queue_jobs(queryset=queryset, state=state, sort=sort)
   else:
     jobs = queryset
 
@@ -837,14 +837,45 @@ def _coerce_page_number(page_number, total_pages):
   return number
 
 
-def _sort_queue_jobs(*, jobs, state, sort):
+def _sorted_queue_jobs(*, queryset, state, sort):
+  if _queue_sort_requires_python(state=state, sort=sort):
+    return _sort_queue_jobs(jobs=list(queryset), state=state, sort=sort)
+  return queryset.order_by(*_queue_sort_ordering(state=state, sort=sort))
+
+
+def _queue_sort_requires_python(*, state, sort):
+  return any(
+    key_name == "return_value" for key_name, _descending in _queue_sort_specs(state=state, sort=sort)
+  )
+
+
+def _queue_sort_ordering(*, state, sort):
+  order_by = []
+  sorted_keys = set()
+  for key_name, descending in _queue_sort_specs(state=state, sort=sort):
+    sorted_keys.add(key_name)
+    expression = F(key_name)
+    order_by.append(
+      expression.desc(nulls_last=True) if descending else expression.asc(nulls_last=True)
+    )
+  if "id" not in sorted_keys:
+    order_by.append(F("id").asc())
+  return order_by
+
+
+def _queue_sort_specs(*, state, sort):
   fields = QUEUE_PAGE_SORTS[state]["fields"]
   sort_specs = []
   for part in _parse_sort_fields(sort):
     field_name = part.removeprefix("-")
     key_name = fields[field_name]["key"]
-    reverse = part.startswith("-")
-    sort_specs.append((key_name, reverse))
+    descending = part.startswith("-")
+    sort_specs.append((key_name, descending))
+  return sort_specs
+
+
+def _sort_queue_jobs(*, jobs, state, sort):
+  sort_specs = _queue_sort_specs(state=state, sort=sort)
   return _sort_rows_by_keys(rows=jobs, sort_specs=sort_specs, getter=_job_sort_value)
 
 

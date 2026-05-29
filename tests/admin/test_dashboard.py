@@ -1004,6 +1004,25 @@ def test_dashboard_queue_view_supports_sorting(admin_client):
   assert "sort=-task#result_list" not in content
 
 
+def test_dashboard_queue_view_sorts_supported_fields_in_database(admin_client, monkeypatch):
+  make_ready_job(queue_name="alpha", task_path="tests.tasks.zeta")
+  make_ready_job(queue_name="alpha", task_path="tests.tasks.alpha")
+
+  def fail_python_sort(**_kwargs):
+    raise AssertionError("queue sort should stay in the database")
+
+  monkeypatch.setattr(dashboard, "_sort_queue_jobs", fail_python_sort)
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_dashboard_queue", args=["alpha"]),
+    {"backend": "default", "state": "ready", "sort": "task"},
+  )
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert content.index("tests.tasks.alpha") < content.index("tests.tasks.zeta")
+
+
 def test_dashboard_queue_view_supports_multi_column_sorting(admin_client):
   low = make_ready_job(queue_name="alpha", task_path="tests.tasks.alpha", priority=0)
   high = make_ready_job(queue_name="alpha", task_path="tests.tasks.alpha", priority=2)
