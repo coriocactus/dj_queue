@@ -7,6 +7,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from dj_queue import dashboard, dashboard_actions, db
+from dj_queue.exceptions import EnqueueError
 from dj_queue.models import (
   BlockedExecution,
   FailedExecution,
@@ -760,6 +761,53 @@ def test_dashboard_queue_bulk_actions_require_explicit_selection(admin_client):
   messages = list(response.context["messages"])
   assert [message.message for message in messages] == ["No action selected."]
   assert Job.objects.filter(pk=ready_job.pk).exists() is True
+
+
+def test_dashboard_queue_bulk_actions_show_operation_errors(admin_client, monkeypatch):
+  ready_job = make_ready_job(queue_name="alpha")
+  url = reverse("admin:dj_queue_dashboard_job_action", args=["alpha"])
+
+  def fail_action(**_kwargs):
+    raise EnqueueError("task could not be imported")
+
+  monkeypatch.setattr(dashboard_actions, "apply_job_action", fail_action)
+
+  response = admin_client.post(
+    f"{url}?backend=default&state=ready",
+    {
+      "backend": "default",
+      "state": "ready",
+      "action": "discard",
+      "_selected_action": [str(ready_job.pk)],
+    },
+    follow=True,
+  )
+
+  assert response.status_code == 200
+  messages = list(response.context["messages"])
+  assert [message.message for message in messages] == ["task could not be imported"]
+  assert Job.objects.filter(pk=ready_job.pk).exists() is True
+
+
+def test_dashboard_queue_urls_support_slash_queue_names(admin_client):
+  queue_name = "tenant/alpha"
+  make_ready_job(queue_name=queue_name)
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_dashboard_queue", args=[queue_name]),
+    {"backend": "default", "state": "ready"},
+  )
+
+  assert response.status_code == 200
+  assert response.context["queue_name"] == queue_name
+
+  response = admin_client.post(
+    reverse("admin:dj_queue_dashboard_queue_action", args=[queue_name]),
+    {"backend": "default", "action": "pause"},
+  )
+
+  assert response.status_code == 302
+  assert Pause.objects.filter(backend_alias="default", queue_name=queue_name).exists() is True
 
 
 def test_dashboard_queue_view_uses_django_changelist_structure(admin_client):

@@ -129,16 +129,20 @@ class DashboardAdmin(admin.ModelAdmin):
       return wrapper
 
     return [
-      path("queue/<str:queue_name>/", wrap(self.queue_view), name="dj_queue_dashboard_queue"),
       path(
-        "queue/<str:queue_name>/action/",
+        "queue/<path:queue_name>/jobs/action/",
+        wrap(self.job_action_view),
+        name="dj_queue_dashboard_job_action",
+      ),
+      path(
+        "queue/<path:queue_name>/action/",
         wrap(self.queue_action_view),
         name="dj_queue_dashboard_queue_action",
       ),
       path(
-        "queue/<str:queue_name>/jobs/action/",
-        wrap(self.job_action_view),
-        name="dj_queue_dashboard_job_action",
+        "queue/<path:queue_name>/",
+        wrap(self.queue_view),
+        name="dj_queue_dashboard_queue",
       ),
     ] + super().get_urls()
 
@@ -196,7 +200,7 @@ class DashboardAdmin(admin.ModelAdmin):
       return HttpResponseNotAllowed(["POST"])
     try:
       message = operation()
-    except ValueError as exc:
+    except (ValueError, EnqueueError, ImportError) as exc:
       self.message_user(request, str(exc), level=messages.ERROR)
     else:
       self.message_user(request, message, level=messages.SUCCESS)
