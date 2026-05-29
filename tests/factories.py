@@ -46,7 +46,7 @@ def make_process(**overrides):
   )
 
 
-def make_ready_job(task=None, **overrides):
+def make_raw_ready_job(task=None, **overrides):
   job = make_job(task=task, **overrides)
   ReadyExecution.objects.create(
     job=job,
@@ -55,6 +55,25 @@ def make_ready_job(task=None, **overrides):
     priority=job.priority,
   )
   return job
+
+
+def make_ready_job(task=echo, **overrides):
+  if task is None:
+    task = echo
+  supported = {"args", "kwargs", "queue_name", "priority", "backend_alias"}
+  unsupported = set(overrides) - supported
+  if unsupported:
+    unsupported_names = ", ".join(sorted(unsupported))
+    raise TypeError(f"use make_raw_ready_job for raw ready fields: {unsupported_names}")
+
+  return enqueue_ready_job(
+    task=task,
+    args=overrides.pop("args", ()),
+    kwargs=overrides.pop("kwargs", None),
+    queue_name=overrides.pop("queue_name", None),
+    priority=overrides.pop("priority", None),
+    backend_alias=overrides.pop("backend_alias", None),
+  )
 
 
 def enqueue_ready_job(task=echo, *, args=(), kwargs=None, queue_name=None, priority=None, backend_alias=None):

@@ -19,7 +19,7 @@ from tests.factories import (
   make_blocked_job,
   make_failed_job,
   make_job,
-  make_ready_job,
+  make_raw_ready_job,
   make_scheduled_job,
 )
 
@@ -92,7 +92,7 @@ def test_queue_state_summaries_by_queue_follow_canonical_job_rows():
   make_scheduled_job(queue_name="beta", scheduled_at=now + timedelta(minutes=5))
   make_failed_job(queue_name="beta")
   make_job(queue_name="alpha", finished_at=now)
-  make_ready_job(queue_name="ignored", backend_alias="other")
+  make_raw_ready_job(queue_name="ignored", backend_alias="other")
 
   summaries = queue_state_summaries_by_queue(backend_alias="default")
 
