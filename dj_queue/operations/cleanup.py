@@ -39,13 +39,11 @@ def clear_finished_jobs(
     queryset = queryset.filter(task_path=task_path)
 
   with transaction.atomic(using=alias):
-    job_ids = list(queryset.values_list("pk", flat=True)[:batch_size])
+    locked = locked_queryset(queryset, use_skip_locked=config.use_skip_locked)
+    job_ids = list(locked.values_list("pk", flat=True)[:batch_size])
     if not job_ids:
       return 0
-
-    _ensure_job_ids_have_no_other_execution_state(alias, job_ids)
-    Job.objects.using(alias).filter(backend_alias=backend_alias, pk__in=job_ids).delete()
-  return len(job_ids)
+    return _delete_jobs_without_execution_state(alias, backend_alias, job_ids)
 
 
 def clear_failed_jobs(
@@ -87,10 +85,9 @@ def clear_failed_jobs(
       return 0
 
     job_ids = [failed.job_id for failed in failed_rows]
-    _ensure_job_ids_have_no_other_execution_state(alias, job_ids)
-    Job.objects.using(alias).filter(backend_alias=backend_alias, pk__in=job_ids).delete()
+    deleted = _delete_jobs_without_execution_state(alias, backend_alias, job_ids)
 
-  return len(job_ids)
+  return deleted
 
 
 def clear_recurring_executions(
@@ -119,16 +116,24 @@ def clear_recurring_executions(
   if task_key is not None:
     queryset = queryset.filter(task_key=task_key)
 
-  execution_ids = list(queryset.values_list("pk", flat=True)[:batch_size])
-  if not execution_ids:
-    return 0
+  with transaction.atomic(using=alias):
+    locked = locked_queryset(queryset, use_skip_locked=config.use_skip_locked)
+    execution_ids = list(locked.values_list("pk", flat=True)[:batch_size])
+    if not execution_ids:
+      return 0
 
-  deleted, _ = (
-    RecurringExecution.objects.using(alias)
-    .filter(
-      backend_alias=backend_alias,
-      pk__in=execution_ids,
+    deleted, _ = (
+      RecurringExecution.objects.using(alias)
+      .filter(
+        backend_alias=backend_alias,
+        pk__in=execution_ids,
+      )
+      .delete()
     )
-    .delete()
-  )
-  return deleted
+    return deleted
+
+
+def _delete_jobs_without_execution_state(alias, backend_alias, job_ids):
+  _ensure_job_ids_have_no_other_execution_state(alias, job_ids)
+  Job.objects.using(alias).filter(backend_alias=backend_alias, pk__in=job_ids).delete()
+  return len(job_ids)

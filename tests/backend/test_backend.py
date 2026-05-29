@@ -606,6 +606,31 @@ def test_clear_finished_jobs_stays_backend_scoped_on_shared_queue_db():
 
 
 @pytest.mark.django_db
+def test_clear_finished_jobs_locks_job_rows(monkeypatch):
+  import dj_queue.operations.cleanup as cleanup_operations
+
+  job = make_job(
+    task=echo,
+    finished_at=timezone.now() - timedelta(minutes=10),
+    return_value="old",
+  )
+  calls = []
+  original_locked_queryset = cleanup_operations.locked_queryset
+
+  def locked(queryset, *, use_skip_locked):
+    calls.append(use_skip_locked)
+    return original_locked_queryset(queryset, use_skip_locked=use_skip_locked)
+
+  monkeypatch.setattr(cleanup_operations, "locked_queryset", locked)
+
+  deleted = clear_finished_jobs(older_than=60, batch_size=10)
+
+  assert deleted == 1
+  assert calls == [True]
+  assert Job.objects.filter(pk=job.pk).exists() is False
+
+
+@pytest.mark.django_db
 def test_clear_failed_jobs_by_age_and_task_path():
   old_job = make_job(task=echo)
   old_failed = FailedExecution.objects.create(
@@ -875,6 +900,34 @@ def test_clear_recurring_executions_by_age_and_task_key():
   assert RecurringExecution.objects.filter(pk=old_execution.pk).exists() is False
   assert RecurringExecution.objects.filter(pk=other_execution.pk).exists() is True
   assert RecurringExecution.objects.filter(pk=recent_execution.pk).exists() is True
+
+
+@pytest.mark.django_db
+def test_clear_recurring_executions_locks_rows(monkeypatch):
+  import dj_queue.operations.cleanup as cleanup_operations
+
+  execution = RecurringExecution.objects.create(
+    backend_alias="default",
+    task_key="nightly",
+    run_at=timezone.now(),
+  )
+  RecurringExecution.objects.filter(pk=execution.pk).update(
+    run_at=timezone.now() - timedelta(minutes=10)
+  )
+  calls = []
+  original_locked_queryset = cleanup_operations.locked_queryset
+
+  def locked(queryset, *, use_skip_locked):
+    calls.append(use_skip_locked)
+    return original_locked_queryset(queryset, use_skip_locked=use_skip_locked)
+
+  monkeypatch.setattr(cleanup_operations, "locked_queryset", locked)
+
+  deleted = clear_recurring_executions(older_than=60, batch_size=10)
+
+  assert deleted == 1
+  assert calls == [True]
+  assert RecurringExecution.objects.filter(pk=execution.pk).exists() is False
 
 
 @pytest.mark.django_db
