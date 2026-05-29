@@ -135,5 +135,7 @@ def clear_recurring_executions(
 
 def _delete_jobs_without_execution_state(alias, backend_alias, job_ids):
   _ensure_job_ids_have_no_other_execution_state(alias, job_ids)
-  Job.objects.using(alias).filter(backend_alias=backend_alias, pk__in=job_ids).delete()
-  return len(job_ids)
+  deleted, _ = (
+    Job.objects.using(alias).filter(backend_alias=backend_alias, pk__in=job_ids).delete()
+  )
+  return deleted

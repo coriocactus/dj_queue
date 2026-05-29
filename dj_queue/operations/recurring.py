@@ -250,8 +250,7 @@ def unschedule_recurring_task(key, *, backend_alias="default"):
     key=key,
     static=False,
   )
-  deleted = queryset.count()
-  queryset.delete()
+  deleted, _ = queryset.delete()
   return deleted
 
 

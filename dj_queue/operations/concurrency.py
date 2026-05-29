@@ -741,11 +741,7 @@ def cleanup_expired_semaphores(*, backend_alias="default"):
     .exclude(key__in=claimed_concurrency_keys)
     .exclude(key__in=ready_concurrency_keys)
   )
-  deleted = queryset.count()
-  if not deleted:
-    return 0
-
-  queryset.delete()
+  deleted, _ = queryset.delete()
   return deleted
 
 
