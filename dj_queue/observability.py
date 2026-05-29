@@ -4,7 +4,17 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from django.conf import settings
-from django.db.models import Count, Max
+from django.db.models import (
+  Case,
+  Count,
+  IntegerField,
+  Max,
+  OuterRef,
+  Subquery,
+  Value,
+  When,
+)
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from dj_queue.config import configured_backend_aliases as configured_dj_queue_backend_aliases
@@ -303,6 +313,22 @@ def process_rows(*, backend_alias, now, process_cutoff, scope):
   return rows
 
 
+def process_live_rank_expression(process_cutoff):
+  return Case(
+    When(last_heartbeat_at__gte=process_cutoff, then=Value(0)),
+    default=Value(1),
+    output_field=IntegerField(),
+  )
+
+
+def filter_process_status(queryset, status, *, process_cutoff):
+  if status == "live":
+    return queryset.filter(last_heartbeat_at__gte=process_cutoff)
+  if status == "stale":
+    return queryset.filter(last_heartbeat_at__lt=process_cutoff)
+  return queryset
+
+
 def process_row(process, *, now, process_cutoff):
   age_seconds = max((now - process.last_heartbeat_at).total_seconds(), 0.0)
   return {
@@ -362,6 +388,20 @@ def semaphore_rows_for_backend(*, backend_alias):
     }
     for semaphore in Semaphore.objects.using(alias).order_by("key")
   ]
+
+
+def semaphore_blocked_waiter_count_expression(alias):
+  blocked_waiters = (
+    BlockedExecution.objects.using(alias)
+    .filter(concurrency_key=OuterRef("key"))
+    .values("concurrency_key")
+    .annotate(total=Count("id"))
+    .values("total")[:1]
+  )
+  return Coalesce(
+    Subquery(blocked_waiters, output_field=IntegerField()),
+    Value(0),
+  )
 
 
 def next_run_at(schedule, now):

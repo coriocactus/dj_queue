@@ -4,8 +4,6 @@ from functools import wraps
 from urllib.parse import parse_qsl, urlencode
 
 from django.contrib import admin, messages
-from django.db.models import Case, Count, IntegerField, OuterRef, Subquery, Value, When
-from django.db.models.functions import Coalesce
 from django.http import HttpResponseNotAllowed, HttpResponseRedirect
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
@@ -16,11 +14,11 @@ from django.utils import timezone
 from dj_queue.config import load_backend_config
 from dj_queue import dashboard
 from dj_queue import dashboard_actions
+from dj_queue import observability
 from dj_queue.api import QueueInfo, unschedule_recurring_task
 from dj_queue.db import get_database_alias
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import (
-  BlockedExecution,
   Dashboard,
   FailedExecution,
   Job,
@@ -42,6 +40,15 @@ from dj_queue.queue_state import (
   filter_queue_state,
   is_queue_state,
   status_rank_expression,
+)
+
+ADMIN_ACTION_ERRORS = (
+  EnqueueError,
+  ImportError,
+  AttributeError,
+  Job.DoesNotExist,
+  FailedExecution.DoesNotExist,
+  RecurringTask.DoesNotExist,
 )
 
 
@@ -326,6 +333,26 @@ class HiddenSidebarAdminMixin:
   def handle_change_action(self, request, obj, action):
     return HttpResponseRedirect(request.get_full_path())
 
+  def _run_change_operation(
+    self,
+    request,
+    *,
+    operation,
+    success_message,
+    error_message,
+    success_redirect,
+    error_redirect,
+  ):
+    try:
+      result = operation()
+    except ADMIN_ACTION_ERRORS as exc:
+      self.message_user(request, f"{error_message}: {exc}", level=messages.ERROR)
+      return error_redirect()
+
+    message = success_message(result) if callable(success_message) else success_message
+    self.message_user(request, message, level=messages.SUCCESS)
+    return success_redirect(result)
+
   def _change_redirect(self, *, object_id, backend_alias):
     return HttpResponseRedirect(self._change_url(object_id=object_id, backend_alias=backend_alias))
 
@@ -437,11 +464,7 @@ class ProcessStatusListFilter(admin.SimpleListFilter):
         dashboard.resolve_backend_alias(request.GET.get("backend"))
       ).process_alive_threshold
     )
-    if value == "live":
-      return queryset.filter(last_heartbeat_at__gte=cutoff)
-    if value == "stale":
-      return queryset.filter(last_heartbeat_at__lt=cutoff)
-    return queryset
+    return observability.filter_process_status(queryset, value, process_cutoff=cutoff)
 
 
 @admin.register(Job)
@@ -600,7 +623,7 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
         _job, dispatch_outcome = dispatch_scheduled_job_now(
           obj.pk, backend_alias=obj.backend_alias
         )
-      except (EnqueueError, ImportError, AttributeError) as exc:
+      except ADMIN_ACTION_ERRORS as exc:
         self.message_user(request, f"Could not dispatch job now: {exc}", level=messages.ERROR)
         return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
 
@@ -615,7 +638,7 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     if action == "enqueue_copy_now":
       try:
         new_job = enqueue_job_again(obj.pk, backend_alias=obj.backend_alias, run_after=None)
-      except (EnqueueError, ImportError, AttributeError) as exc:
+      except ADMIN_ACTION_ERRORS as exc:
         self.message_user(request, f"Could not enqueue job: {exc}", level=messages.ERROR)
         return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
 
@@ -633,7 +656,7 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     if action == "enqueue":
       try:
         new_job = enqueue_job_again(obj.pk, backend_alias=obj.backend_alias)
-      except (EnqueueError, ImportError, AttributeError) as exc:
+      except ADMIN_ACTION_ERRORS as exc:
         self.message_user(request, f"Could not enqueue job: {exc}", level=messages.ERROR)
         return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
 
@@ -653,14 +676,30 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
       return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
 
     if action == "retry":
-      retry_failed_job(obj.failed_execution.job_id, backend_alias=obj.backend_alias)
-      self.message_user(request, "Retried failed job", level=messages.SUCCESS)
-      return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
+      return self._run_change_operation(
+        request,
+        operation=lambda: retry_failed_job(obj.failed_execution.job_id, backend_alias=obj.backend_alias),
+        success_message="Retried failed job",
+        error_message="Could not retry failed job",
+        success_redirect=lambda _result: self._current_object_redirect(
+          obj, backend_alias=obj.backend_alias
+        ),
+        error_redirect=lambda: self._current_object_redirect(obj, backend_alias=obj.backend_alias),
+      )
 
     if action == "discard":
-      discard_failed_job(obj.failed_execution.job_id, backend_alias=obj.backend_alias)
-      self.message_user(request, "Discarded failed job", level=messages.SUCCESS)
-      return HttpResponseRedirect(self._changelist_url(backend_alias=obj.backend_alias))
+      return self._run_change_operation(
+        request,
+        operation=lambda: discard_failed_job(
+          obj.failed_execution.job_id, backend_alias=obj.backend_alias
+        ),
+        success_message="Discarded failed job",
+        error_message="Could not discard failed job",
+        success_redirect=lambda _result: HttpResponseRedirect(
+          self._changelist_url(backend_alias=obj.backend_alias)
+        ),
+        error_redirect=lambda: self._current_object_redirect(obj, backend_alias=obj.backend_alias),
+      )
 
     return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
 
@@ -681,18 +720,26 @@ class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
 
   @admin.action(description="Retry selected failed jobs")
   def retry_jobs(self, request, queryset):
-    retried = retry_failed_jobs(
-      job_ids=list(queryset.values_list("job_id", flat=True)),
-      batch_size=queryset.count() or 1,
-      backend_alias=self._backend_alias(request),
-    )
+    try:
+      retried = retry_failed_jobs(
+        job_ids=list(queryset.values_list("job_id", flat=True)),
+        batch_size=queryset.count() or 1,
+        backend_alias=self._backend_alias(request),
+      )
+    except ADMIN_ACTION_ERRORS as exc:
+      self.message_user(request, f"Could not retry failed jobs: {exc}", level=messages.ERROR)
+      return
     self.message_user(request, f"Retried {retried} failed jobs", level=messages.SUCCESS)
 
   @admin.action(description="Discard selected failed jobs")
   def discard_jobs(self, request, queryset):
-    discarded = 0
-    for execution in queryset.select_related("job"):
-      discarded += discard_failed_job(execution.job_id, backend_alias=execution.job.backend_alias)
+    try:
+      discarded = 0
+      for execution in queryset.select_related("job"):
+        discarded += discard_failed_job(execution.job_id, backend_alias=execution.job.backend_alias)
+    except ADMIN_ACTION_ERRORS as exc:
+      self.message_user(request, f"Could not discard failed jobs: {exc}", level=messages.ERROR)
+      return
     self.message_user(request, f"Discarded {discarded} failed jobs", level=messages.SUCCESS)
 
   @admin.display(description="created at", ordering="created_at")
@@ -716,15 +763,28 @@ class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
 
     if action == "retry":
       job_id = obj.job_id
-      retry_failed_job(job_id, backend_alias=backend_alias)
-      self.message_user(request, "Retried failed job", level=messages.SUCCESS)
-      url = reverse("admin:dj_queue_job_change", args=[job_id])
-      return HttpResponseRedirect(f"{url}?{urlencode({'backend': backend_alias})}")
+      return self._run_change_operation(
+        request,
+        operation=lambda: retry_failed_job(job_id, backend_alias=backend_alias),
+        success_message="Retried failed job",
+        error_message="Could not retry failed job",
+        success_redirect=lambda _result: HttpResponseRedirect(
+          f"{reverse('admin:dj_queue_job_change', args=[job_id])}?{urlencode({'backend': backend_alias})}"
+        ),
+        error_redirect=lambda: self._current_object_redirect(obj, backend_alias=backend_alias),
+      )
 
     if action == "discard":
-      discard_failed_job(obj.job_id, backend_alias=backend_alias)
-      self.message_user(request, "Discarded failed job", level=messages.SUCCESS)
-      return HttpResponseRedirect(self._changelist_url(backend_alias=backend_alias))
+      return self._run_change_operation(
+        request,
+        operation=lambda: discard_failed_job(obj.job_id, backend_alias=backend_alias),
+        success_message="Discarded failed job",
+        error_message="Could not discard failed job",
+        success_redirect=lambda _result: HttpResponseRedirect(
+          self._changelist_url(backend_alias=backend_alias)
+        ),
+        error_redirect=lambda: self._current_object_redirect(obj, backend_alias=backend_alias),
+      )
 
     return self._current_object_redirect(obj, backend_alias=backend_alias)
 
@@ -760,13 +820,7 @@ class ProcessAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     cutoff = timezone.now() - timedelta(
       seconds=load_backend_config(self._backend_alias(request)).process_alive_threshold
     )
-    return queryset.annotate(
-      live_rank=Case(
-        When(last_heartbeat_at__gte=cutoff, then=Value(0)),
-        default=Value(1),
-        output_field=IntegerField(),
-      )
-    )
+    return queryset.annotate(live_rank=observability.process_live_rank_expression(cutoff))
 
   @admin.display(description="status", ordering="live_rank")
   def display_status(self, obj):
@@ -877,7 +931,11 @@ class PauseAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   def handle_change_action(self, request, obj, action):
     backend_alias = self._backend_alias(request)
     if action == "resume":
-      QueueInfo(obj.queue_name, backend_alias=backend_alias).resume()
+      try:
+        QueueInfo(obj.queue_name, backend_alias=backend_alias).resume()
+      except ADMIN_ACTION_ERRORS as exc:
+        self.message_user(request, f"Could not resume queue: {exc}", level=messages.ERROR)
+        return self._current_object_redirect(obj, backend_alias=backend_alias)
       self.message_user(
         request,
         format_html(
@@ -901,18 +959,8 @@ class SemaphoreAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   def get_queryset(self, request):
     queryset = super().get_queryset(request)
     alias = self._backend_database_alias(request)
-    blocked_waiters = (
-      BlockedExecution.objects.using(alias)
-      .filter(concurrency_key=OuterRef("key"))
-      .values("concurrency_key")
-      .annotate(total=Count("id"))
-      .values("total")[:1]
-    )
     return queryset.annotate(
-      blocked_waiter_count=Coalesce(
-        Subquery(blocked_waiters, output_field=IntegerField()),
-        Value(0),
-      )
+      blocked_waiter_count=observability.semaphore_blocked_waiter_count_expression(alias)
     )
 
   @admin.display(description="blocked waiters", ordering="blocked_waiter_count")
