@@ -1,11 +1,6 @@
-from datetime import timedelta
-
 from django.core.management.base import BaseCommand
-from django.utils import timezone
 
-from dj_queue.config import load_backend_config
-from dj_queue.db import get_database_alias
-from dj_queue.models import Process
+from dj_queue import observability
 
 
 class Command(BaseCommand):
@@ -17,22 +12,8 @@ class Command(BaseCommand):
 
   def handle(self, *args, **options):
     backend_alias = options["backend"]
-    config = load_backend_config(backend_alias)
     max_age = options["max_age"]
-    if max_age is None:
-      max_age = config.process_alive_threshold
-
-    cutoff = timezone.now() - timedelta(seconds=max_age)
-    alias = get_database_alias(backend_alias)
-    healthy = (
-      Process.objects.using(alias)
-      .filter(
-        backend_alias=backend_alias,
-        last_heartbeat_at__gte=cutoff,
-      )
-      .exists()
-    )
-    if healthy:
+    if observability.has_live_processes(backend_alias=backend_alias, max_age=max_age):
       self.stdout.write("healthy")
       return
 

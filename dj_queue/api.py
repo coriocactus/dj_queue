@@ -1,11 +1,8 @@
-from datetime import timedelta
 from functools import partial
 
 from django.db import transaction
-from django.utils import timezone
 
 from dj_queue import observability
-from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias
 from dj_queue.models import ReadyExecution
 from dj_queue.operations.jobs import (
@@ -108,14 +105,7 @@ class QueueInfo:
 
   @classmethod
   def all(cls, *, backend_alias="default"):
-    now = timezone.now()
-    config = load_backend_config(backend_alias)
-    process_cutoff = now - timedelta(seconds=config.process_alive_threshold)
-    queue_rows = observability.queue_rows(
-      backend_alias=backend_alias,
-      now=now,
-      process_cutoff=process_cutoff,
-    )
+    queue_rows = observability.queue_rows_for_backend(backend_alias=backend_alias)
     return [cls(row["name"], backend_alias=backend_alias, snapshot=row) for row in queue_rows]
 
   def _ready_queryset(self):

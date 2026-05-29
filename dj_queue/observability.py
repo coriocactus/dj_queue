@@ -85,7 +85,11 @@ def backend_snapshot(*, backend_alias, now=None):
   queue_database_alias = get_database_alias(backend_alias)
   if now is None:
     now = timezone.now()
-  process_cutoff = now - timedelta(seconds=config.process_alive_threshold)
+  process_cutoff = process_cutoff_for_backend(
+    backend_alias,
+    now=now,
+    max_age=config.process_alive_threshold,
+  )
   queue_state_rows = queue_rows(
     backend_alias=backend_alias,
     now=now,
@@ -122,6 +126,16 @@ def all_backend_snapshots(*, now=None):
 def stats_payload(*, now=None):
   snapshots = all_backend_snapshots(now=now)
   return {"backends": [snapshot.stats_row() for snapshot in snapshots]}
+
+
+def queue_rows_for_backend(*, backend_alias, now=None):
+  if now is None:
+    now = timezone.now()
+  return queue_rows(
+    backend_alias=backend_alias,
+    now=now,
+    process_cutoff=process_cutoff_for_backend(backend_alias, now=now),
+  )
 
 
 def process_counts(process_rows):
@@ -313,6 +327,14 @@ def process_rows(*, backend_alias, now, process_cutoff, scope):
   return rows
 
 
+def process_cutoff_for_backend(backend_alias, *, now=None, max_age=None):
+  if now is None:
+    now = timezone.now()
+  if max_age is None:
+    max_age = load_backend_config(backend_alias).process_alive_threshold
+  return now - timedelta(seconds=max_age)
+
+
 def process_live_rank_expression(process_cutoff):
   return Case(
     When(last_heartbeat_at__gte=process_cutoff, then=Value(0)),
@@ -327,6 +349,16 @@ def filter_process_status(queryset, status, *, process_cutoff):
   if status == "stale":
     return queryset.filter(last_heartbeat_at__lt=process_cutoff)
   return queryset
+
+
+def has_live_processes(*, backend_alias, max_age=None, now=None):
+  alias = get_database_alias(backend_alias)
+  queryset = Process.objects.using(alias).filter(backend_alias=backend_alias)
+  return filter_process_status(
+    queryset,
+    "live",
+    process_cutoff=process_cutoff_for_backend(backend_alias, now=now, max_age=max_age),
+  ).exists()
 
 
 def process_row(process, *, now, process_cutoff):

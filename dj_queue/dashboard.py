@@ -1,6 +1,5 @@
 import json
 
-from datetime import timedelta
 from urllib.parse import urlencode
 from uuid import UUID
 
@@ -347,7 +346,11 @@ def queue_page_context(*, backend_alias, queue_name, state, page_number, query_p
   alias = get_database_alias(backend_alias)
   config = load_backend_config(backend_alias)
   now = timezone.now()
-  process_cutoff = now - timedelta(seconds=config.process_alive_threshold)
+  process_cutoff = observability.process_cutoff_for_backend(
+    backend_alias,
+    now=now,
+    max_age=config.process_alive_threshold,
+  )
   queryset = _jobs_for_queue_state(
     backend_alias=backend_alias,
     queue_name=queue_name,

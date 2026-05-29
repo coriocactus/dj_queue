@@ -1,5 +1,4 @@
 import json
-from datetime import timedelta
 from functools import wraps
 from urllib.parse import parse_qsl, urlencode
 
@@ -11,7 +10,6 @@ from django.utils.html import format_html
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils import timezone
 
-from dj_queue.config import load_backend_config
 from dj_queue import dashboard
 from dj_queue import dashboard_actions
 from dj_queue import observability
@@ -459,10 +457,8 @@ class ProcessStatusListFilter(admin.SimpleListFilter):
     value = self.value()
     if not value:
       return queryset
-    cutoff = timezone.now() - timedelta(
-      seconds=load_backend_config(
-        dashboard.resolve_backend_alias(request.GET.get("backend"))
-      ).process_alive_threshold
+    cutoff = observability.process_cutoff_for_backend(
+      dashboard.resolve_backend_alias(request.GET.get("backend"))
     )
     return observability.filter_process_status(queryset, value, process_cutoff=cutoff)
 
@@ -817,9 +813,7 @@ class ProcessAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
 
   def get_queryset(self, request):
     queryset = super().get_queryset(request)
-    cutoff = timezone.now() - timedelta(
-      seconds=load_backend_config(self._backend_alias(request)).process_alive_threshold
-    )
+    cutoff = observability.process_cutoff_for_backend(self._backend_alias(request))
     return queryset.annotate(live_rank=observability.process_live_rank_expression(cutoff))
 
   @admin.display(description="status", ordering="live_rank")
