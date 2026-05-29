@@ -749,6 +749,31 @@ def test_unblock_next_blocked_job_restores_waiter_when_slot_is_not_acquired(monk
   assert ReadyExecution.objects.filter(job=job).exists() is False
 
 
+@pytest.mark.django_db(transaction=True)
+def test_unblock_next_blocked_job_returns_blocked_job_reference():
+  job = make_job(task=limited, args=[1], kwargs={"value": "blocked"}, concurrency_key="account:1")
+  BlockedExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+    concurrency_key=job.concurrency_key,
+    expires_at=timezone.now() + timedelta(minutes=1),
+  )
+
+  unblocked = concurrency_operations.unblock_next_blocked_job(
+    "account:1",
+    limit=1,
+    duration_seconds=60,
+  )
+
+  assert isinstance(unblocked, concurrency_operations.BlockedJobRef)
+  assert unblocked.pk == job.pk
+  assert unblocked.backend_alias == job.backend_alias
+  assert not hasattr(unblocked, "task_path")
+  assert ReadyExecution.objects.filter(job=job).exists() is True
+
+
 @pytest.mark.django_db
 def test_unblock_next_blocked_job_rejects_conflicting_execution_state():
   job = make_job(task=limited, args=[1], kwargs={"value": "blocked"}, concurrency_key="account:1")

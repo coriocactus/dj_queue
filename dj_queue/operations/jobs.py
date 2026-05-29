@@ -47,6 +47,7 @@ from dj_queue.operations._helpers import (
   _task_option,
 )
 from dj_queue.operations.concurrency import (
+  SlotHandoffMode,
   concurrency_settings,
   semaphore_acquire,
   semaphore_release,
@@ -1060,7 +1061,7 @@ def _release_concurrency_slot(job, *, task=None):
       duration_seconds=duration_seconds,
       backend_alias=job.backend_alias,
       use_skip_locked=config.use_skip_locked,
-      release_slot=True,
+      slot_handoff=SlotHandoffMode.RELEASE_CLAIMED,
     )
     is not None
   ):
@@ -1078,7 +1079,7 @@ def _release_concurrency_slot(job, *, task=None):
     duration_seconds=duration_seconds,
     backend_alias=job.backend_alias,
     use_skip_locked=config.use_skip_locked,
-    handoff_released_slot=True,
+    slot_handoff=SlotHandoffMode.CONSUME_RELEASED,
   )
 
 

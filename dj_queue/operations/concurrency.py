@@ -1,4 +1,6 @@
 from datetime import timedelta
+from dataclasses import dataclass
+from enum import StrEnum
 
 from django.db import connections, transaction
 from django.db.models import Case, F, IntegerField, Value, When
@@ -29,6 +31,25 @@ from dj_queue.operations._helpers import (
 )
 from dj_queue.operations._insert import create_ignore_conflicts
 from dj_queue.wakeup import notify_ready_queues_on_commit
+
+
+class SlotHandoffMode(StrEnum):
+  ACQUIRE = "acquire"
+  RELEASE_CLAIMED = "release_claimed"
+  CONSUME_RELEASED = "consume_released"
+
+
+@dataclass(frozen=True, slots=True)
+class BlockedJobRef:
+  id: object
+  backend_alias: str
+  queue_name: str
+  priority: int
+  concurrency_key: str
+
+  @property
+  def pk(self):
+    return self.id
 
 
 def semaphore_acquire(
@@ -319,15 +340,18 @@ def unblock_next_blocked_job(
   duration_seconds,
   backend_alias="default",
   use_skip_locked=True,
-  handoff_released_slot=False,
-  release_slot=False,
+  slot_handoff=SlotHandoffMode.ACQUIRE,
 ):
   alias = get_database_alias(backend_alias)
   now = timezone.now()
+  slot_handoff = SlotHandoffMode(slot_handoff)
 
   with _operation_atomic(alias):
     capabilities = database_capabilities(alias)
-    postgres_release_slot = release_slot and capabilities.backend_family == "postgresql"
+    postgres_release_slot = (
+      slot_handoff is SlotHandoffMode.RELEASE_CLAIMED
+      and capabilities.backend_family == "postgresql"
+    )
     if postgres_release_slot:
       blocked = _postgres_consume_next_blocked_job_with_released_slot(
         alias,
@@ -354,7 +378,7 @@ def unblock_next_blocked_job(
         f"job {blocked['job_id']} belongs to backend {blocked['job_backend_alias']!r}"
       )
 
-    if release_slot and not postgres_release_slot:
+    if slot_handoff is SlotHandoffMode.RELEASE_CLAIMED and not postgres_release_slot:
       slot_acquired = _handoff_released_claimed_slot(
         alias,
         key,
@@ -362,7 +386,7 @@ def unblock_next_blocked_job(
         duration_seconds=duration_seconds,
         now=now,
       )
-    elif handoff_released_slot:
+    elif slot_handoff is SlotHandoffMode.CONSUME_RELEASED:
       slot_acquired = _consume_released_semaphore_slot(
         alias,
         key,
@@ -371,7 +395,7 @@ def unblock_next_blocked_job(
         now=now,
       )
 
-    if not slot_acquired and not release_slot:
+    if not slot_acquired and slot_handoff is not SlotHandoffMode.RELEASE_CLAIMED:
       slot_acquired = semaphore_acquire(
         key,
         limit=limit,
@@ -379,7 +403,7 @@ def unblock_next_blocked_job(
         backend_alias=backend_alias,
       )
 
-    mock_job = Job(
+    job_ref = BlockedJobRef(
       id=blocked["job_id"],
       queue_name=blocked["queue_name"],
       priority=blocked["priority"],
@@ -392,7 +416,7 @@ def unblock_next_blocked_job(
         return None
       _create_blocked_execution(
         alias,
-        mock_job,
+        job_ref,
         backend_alias=backend_alias,
         queue_name=blocked["queue_name"],
         priority=blocked["priority"],
@@ -404,7 +428,7 @@ def unblock_next_blocked_job(
 
     _create_ready_execution_after_blocked_consume(
       alias,
-      job=mock_job,
+      job=job_ref,
       backend_alias=backend_alias,
       queue_name=blocked["queue_name"],
       priority=blocked["priority"],
@@ -414,11 +438,11 @@ def unblock_next_blocked_job(
   log_event(
     "job.unblocked",
     backend_alias=backend_alias,
-    job_id=str(mock_job.id),
+    job_id=str(job_ref.id),
     concurrency_key=key,
   )
   notify_ready_queues_on_commit((blocked["queue_name"],), backend_alias=backend_alias)
-  return mock_job
+  return job_ref
 
 
 def _postgres_consume_next_blocked_job_with_released_slot(
