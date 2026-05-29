@@ -1,6 +1,4 @@
 from dj_queue.api import QueueInfo
-from dj_queue.db import get_database_alias
-from dj_queue.models import Job
 from dj_queue.operations.jobs import (
   discard_blocked_jobs,
   discard_failed_jobs,
@@ -118,18 +116,15 @@ def apply_job_action(*, backend_alias, queue_name, state, action, job_ids):
     return f"discarded {discarded} failed jobs from {queue_name}"
 
   if state == "finished" and action == "enqueue":
-    alias = get_database_alias(backend_alias)
-    jobs = list(
-      Job.objects.using(alias).filter(
-        pk__in=job_ids,
-        backend_alias=backend_alias,
-        queue_name=queue_name,
-        finished_at__isnull=False,
-      )
+    job_ids = _queue_scoped_job_ids(
+      backend_alias=backend_alias,
+      queue_name=queue_name,
+      state=state,
+      job_ids=job_ids,
     )
-    for job in jobs:
-      enqueue_job_again(job.pk, backend_alias=backend_alias)
-    return f"enqueued {len(jobs)} finished jobs again from {queue_name}"
+    for job_id in job_ids:
+      enqueue_job_again(job_id, backend_alias=backend_alias)
+    return f"enqueued {len(job_ids)} finished jobs again from {queue_name}"
 
   raise ValueError(f"unsupported {state!r} job action {action!r}")
 

@@ -707,6 +707,31 @@ def test_dashboard_queue_bulk_actions(admin_client):
   assert Job.objects.filter(pk=ready_job.pk).exists() is False
 
 
+def test_dashboard_finished_enqueue_ignores_invalid_state(admin_client):
+  job = make_job(queue_name="alpha", finished_at=timezone.now(), return_value={"ok": True})
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+  url = reverse("admin:dj_queue_dashboard_job_action", args=["alpha"])
+
+  response = admin_client.post(
+    url,
+    {
+      "backend": "default",
+      "state": "finished",
+      "action": "enqueue",
+      "_selected_action": [str(job.pk)],
+    },
+  )
+
+  assert response.status_code == 302
+  assert Job.objects.count() == 1
+  assert ReadyExecution.objects.filter(job=job).exists() is True
+
+
 @pytest.mark.parametrize(
   ("state", "action", "factory", "state_model"),
   (
