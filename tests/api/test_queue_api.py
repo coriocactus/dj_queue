@@ -203,6 +203,21 @@ def test_queue_info_clear():
   assert QueueInfo("other").size == 1
 
 
+def test_queue_info_clear_stops_when_discard_batch_makes_no_progress(monkeypatch):
+  calls = []
+
+  def no_progress(queue_name, *, batch_size, backend_alias):
+    calls.append((queue_name, batch_size, backend_alias))
+    return 0
+
+  monkeypatch.setattr("dj_queue.api.discard_ready_jobs_for_queue", no_progress)
+
+  deleted = QueueInfo("emails", backend_alias="default").clear(batch_size=1)
+
+  assert deleted == 0
+  assert calls == [("emails", 1, "default")]
+
+
 def test_failed_execution_retry_all():
   failed_jobs = [make_failed_job() for _ in range(2)]
 

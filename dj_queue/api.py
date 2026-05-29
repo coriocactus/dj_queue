@@ -14,6 +14,7 @@ from dj_queue.operations.jobs import (
   discard_blocked_jobs,
   discard_failed_job,
   discard_failed_jobs,
+  discard_ready_jobs_for_queue,
   discard_ready_jobs,
   discard_scheduled_jobs,
   execute_claimed_job,
@@ -82,14 +83,14 @@ class QueueInfo:
   def clear(self, *, batch_size=500):
     deleted = 0
     while True:
-      job_ids = list(self._ready_queryset().values_list("job_id", flat=True)[:batch_size])
-      if not job_ids:
-        return deleted
-      deleted += discard_ready_jobs(
-        job_ids=job_ids,
+      batch_deleted = discard_ready_jobs_for_queue(
+        self.queue_name,
         batch_size=batch_size,
         backend_alias=self.backend_alias,
       )
+      if not batch_deleted:
+        return deleted
+      deleted += batch_deleted
 
   @classmethod
   def all(cls, *, backend_alias="default"):

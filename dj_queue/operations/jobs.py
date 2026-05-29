@@ -871,6 +871,7 @@ def _discard_state_jobs(
   batch_size=500,
   backend_alias="default",
   release_concurrency=False,
+  queue_name=None,
 ):
   alias = get_database_alias(backend_alias)
   config = load_backend_config(backend_alias)
@@ -893,6 +894,8 @@ def _discard_state_jobs(
 
     if job_ids is not None:
       queryset = queryset.filter(job_id__in=job_ids)
+    if queue_name is not None:
+      queryset = queryset.filter(queue_name=queue_name)
     rows = list(locked_queryset(queryset, use_skip_locked=config.use_skip_locked)[:batch_size])
     if not rows:
       return 0
@@ -946,6 +949,17 @@ def discard_ready_jobs(*, job_ids=None, batch_size=500, backend_alias="default")
     batch_size=batch_size,
     backend_alias=backend_alias,
     release_concurrency=True,
+  )
+
+
+def discard_ready_jobs_for_queue(queue_name, *, batch_size=500, backend_alias="default"):
+  return _discard_state_jobs(
+    ReadyExecution,
+    "ready",
+    batch_size=batch_size,
+    backend_alias=backend_alias,
+    release_concurrency=True,
+    queue_name=queue_name,
   )
 
 
