@@ -538,6 +538,41 @@ def test_async_supervisor_stop_does_not_restart_runner_after_stop_request():
   assert Process.objects.filter(supervisor=process, kind="Worker").exists() is False
 
 
+def test_async_supervisor_drains_crashed_runner_before_failing_leftovers():
+  supervisor = build_async_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[]),
+  )
+  events = []
+
+  class Runner:
+    process = object()
+    process_kind = "Worker"
+    name = "worker-1"
+
+    def run_managed_poll_loop(self, *, host_stop_requested):
+      assert host_stop_requested() is False
+      events.append("poll")
+      return False
+
+    def stop(self):
+      events.append("stop")
+      self.process = None
+      return True
+
+  runner = Runner()
+
+  def fail_leftovers(crashed_runner):
+    assert crashed_runner is runner
+    events.append("fail")
+    supervisor.request_stop()
+
+  supervisor._fail_crashed_runner_jobs = fail_leftovers
+
+  supervisor._run_managed_runner(runner)
+
+  assert events == ["poll", "stop", "fail"]
+
+
 def test_async_supervisor_waits_for_undrained_crashed_runner_before_replacement():
   supervisor = build_async_supervisor(
     tasks_settings=async_tasks_settings(dispatchers=[]),

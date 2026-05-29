@@ -254,9 +254,9 @@ class AsyncSupervisor(Supervisor):
         if runner.run_managed_poll_loop(host_stop_requested=self.stop_requested):
           return
 
-        # runner crashed — fail its claimed jobs, then stop and replace
-        self._fail_crashed_runner_jobs(runner)
+        # runner crashed — drain any still-running work, fail leftovers, then replace
         drained = runner.stop()
+        self._fail_crashed_runner_jobs(runner)
         if self.stop_requested():
           return
         if drained is False and not self._wait_for_runner_stop(runner):
