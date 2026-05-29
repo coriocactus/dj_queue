@@ -377,7 +377,7 @@ def _load_toml_options(config_path: Any, *, backend_alias: str) -> dict[str, Any
 
   raw_backends = config_payload.get("backends")
   if raw_backends is None:
-    return config_payload
+    return _json_serializable_options(config_payload, "DJ_QUEUE_CONFIG")
 
   if len(config_payload) != 1:
     raise ImproperlyConfigured(
@@ -391,7 +391,18 @@ def _load_toml_options(config_path: Any, *, backend_alias: str) -> dict[str, Any
     return {}
   if not isinstance(backend_options, Mapping):
     raise ImproperlyConfigured(f"DJ_QUEUE_CONFIG backends[{backend_alias!r}] must be a mapping")
-  return dict(backend_options)
+  return _json_serializable_options(
+    dict(backend_options),
+    f"DJ_QUEUE_CONFIG backends[{backend_alias!r}]",
+  )
+
+
+def _json_serializable_options(options: Mapping[str, Any], setting_name: str) -> dict[str, Any]:
+  try:
+    json.dumps(options, sort_keys=True, separators=(",", ":"), allow_nan=False)
+  except (TypeError, ValueError) as exc:
+    raise ImproperlyConfigured(f"{setting_name} values must be JSON-serializable") from exc
+  return dict(options)
 
 
 def _resolve_skip_recurring(
@@ -737,6 +748,6 @@ def _integer(value: Any, setting_name: str, expectation: str) -> int:
 
 def _cache_key(value: Any) -> str:
   try:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
   except (TypeError, ValueError) as exc:
     raise ImproperlyConfigured("dj_queue config values must be JSON-serializable") from exc

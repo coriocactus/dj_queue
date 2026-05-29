@@ -76,6 +76,28 @@ def test_toml_config_rejects_invalid_toml(settings, tmp_path):
     load_backend_config(env={"DJ_QUEUE_CONFIG": str(config_path)})
 
 
+def test_toml_config_rejects_non_json_values(settings, tmp_path):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {},
+    }
+  }
+  config_path = tmp_path / "dj_queue.toml"
+  config_path.write_text(
+    """
+[recurring.daily]
+task_path = "tests.tasks.echo"
+schedule = "0 3 * * *"
+args = [2026-05-29]
+""".lstrip(),
+    encoding="utf-8",
+  )
+
+  with pytest.raises(ImproperlyConfigured, match="JSON-serializable"):
+    load_backend_config(env={"DJ_QUEUE_CONFIG": str(config_path)})
+
+
 def test_toml_config_preserves_hashes_and_colons_inside_strings(settings, tmp_path):
   settings.TASKS = {
     "default": {
