@@ -195,7 +195,8 @@ def _mysql_family_semaphore_acquire(alias, key, *, limit, expires_at, now):
   expires_at_column = connection.ops.quote_name("expires_at")
   created_at_column = connection.ops.quote_name("created_at")
   updated_at_column = connection.ops.quote_name("updated_at")
-  reconciled_available = f"LEAST(VALUES({limit_column}), GREATEST(0, {value_column} + VALUES({limit_column}) - {limit_column}))"
+  reconciled_available = f"LEAST(%s, GREATEST(0, {value_column} + %s - {limit_column}))"
+  reconciled_available_params = (limit, limit)
 
   # one upsert avoids mysql-family deadlocks from mixing ignored inserts and follow-up updates
   with connection.cursor() as cursor:
@@ -227,9 +228,24 @@ def _mysql_family_semaphore_acquire(alias, key, *, limit, expires_at, now):
           {reconciled_available} - 1,
           {reconciled_available}
         ),
-        {limit_column} = VALUES({limit_column})
+        {limit_column} = %s
       """,
-      [key, limit - 1, limit, expires_at, now, now, expires_at, now],
+      [
+        key,
+        limit - 1,
+        limit,
+        expires_at,
+        now,
+        now,
+        *reconciled_available_params,
+        expires_at,
+        now,
+        *reconciled_available_params,
+        *reconciled_available_params,
+        *reconciled_available_params,
+        *reconciled_available_params,
+        limit,
+      ],
     )
     return cursor.lastrowid != 0
 

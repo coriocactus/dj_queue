@@ -1236,6 +1236,37 @@ def test_postgres_semaphore_acquire_uses_one_semaphore_query_per_attempt():
   assert len(queries_touching(ctx, "dj_queue_semaphores")) == 2
 
 
+def test_mysql_family_semaphore_acquire_avoids_deprecated_values_function(monkeypatch):
+  captured = {}
+
+  class FakeCursor:
+    lastrowid = 1
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *args):
+      return None
+
+    def execute(self, sql, params):
+      captured["sql"] = sql
+      captured["params"] = params
+
+  monkeypatch.setattr(connections["default"], "cursor", lambda: FakeCursor())
+  now = timezone.now()
+
+  assert concurrency_operations._mysql_family_semaphore_acquire(
+    "default",
+    "account:mysql-syntax",
+    limit=3,
+    expires_at=now + timedelta(seconds=60),
+    now=now,
+  ) is True
+
+  assert "VALUES(" not in captured["sql"]
+  assert captured["sql"].count("%s") == len(captured["params"])
+
+
 @pytest.mark.skipif(
   os.environ.get("DB_BACKEND", "sqlite") not in {"mysql", "mariadb"},
   reason="requires DB_BACKEND=mysql or DB_BACKEND=mariadb",
