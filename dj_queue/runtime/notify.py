@@ -78,7 +78,6 @@ class NotifyWakeupBackend:
   def _open_connection(self):
     alias = get_database_alias(self.backend_alias)
     wrapper = connections[alias]
-    wrapper.ensure_connection()
     connection = wrapper.Database.connect(**wrapper.get_connection_params())
     connection.autocommit = True
     with connection.cursor() as cursor:

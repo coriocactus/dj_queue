@@ -1,4 +1,5 @@
 from datetime import timedelta
+from contextlib import contextmanager
 import time
 import threading
 import signal
@@ -571,6 +572,44 @@ def test_async_supervisor_drains_crashed_runner_before_failing_leftovers():
   supervisor._run_managed_runner(runner)
 
   assert events == ["poll", "stop", "fail"]
+
+
+def test_async_supervisor_starts_managed_runners_inside_app_executor(monkeypatch):
+  supervisor = build_async_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[]),
+  )
+  events = []
+
+  @contextmanager
+  def executor():
+    events.append("enter")
+    try:
+      yield
+    finally:
+      events.append("exit")
+
+  class Runner:
+    process_kind = "Worker"
+    name = "worker-1"
+
+    def start(self):
+      events.append("start")
+
+    def run_managed_poll_loop(self, *, host_stop_requested):
+      events.append("run")
+      return True
+
+    def stop(self):
+      events.append("stop")
+
+  monkeypatch.setattr("dj_queue.runtime.supervisor.app_executor", executor)
+  monkeypatch.setattr(supervisor, "_build_runners", lambda: [Runner()])
+
+  supervisor.start_runners()
+  supervisor.runner_threads[0].join(timeout=1)
+
+  assert supervisor.runner_threads[0].is_alive() is False
+  assert events[:3] == ["enter", "start", "exit"]
 
 
 def test_async_supervisor_waits_for_undrained_crashed_runner_before_replacement():

@@ -241,7 +241,8 @@ class AsyncSupervisor(Supervisor):
       return self.runners
 
     for runner in self._build_runners():
-      runner.start()
+      with app_executor():
+        runner.start()
       thread = threading.Thread(target=self._run_managed_runner, args=(runner,))
       self.runners.append(runner)
       self.runner_threads.append(thread)

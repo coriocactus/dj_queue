@@ -3,6 +3,7 @@ import threading
 import time
 
 import pytest
+from django.db import connections
 
 from dj_queue.config import WorkerConfig
 from dj_queue.models import Job
@@ -137,6 +138,25 @@ def test_notify_connection_failure_falls_back_to_polling(monkeypatch):
 
   assert isinstance(backend, NotifyWakeupBackend)
   assert backend.failed is True
+
+
+@pytest.mark.django_db(transaction=True)
+def test_notify_raw_connection_does_not_open_django_wrapper(monkeypatch):
+  wrapper = connections["default"]
+  wrapper.close()
+  monkeypatch.setattr(
+    wrapper,
+    "ensure_connection",
+    lambda: (_ for _ in ()).throw(AssertionError("wrapper connection opened")),
+  )
+  backend = NotifyWakeupBackend(backend_alias="default", queues=("*",), wake_up=lambda: None)
+
+  connection = backend._open_connection()
+
+  try:
+    assert connection.closed is False
+  finally:
+    connection.close()
 
 
 @pytest.mark.django_db(transaction=True)
