@@ -405,6 +405,7 @@ Notes:
 - cron supports five fields or an optional leading seconds field, presets like `@daily`, optional timezone suffixes, wraparound ranges, `L`/`last` and negative monthdays, weekday `#` and `%` extensions, and normal day-of-month/day-of-week OR semantics
 - add `&` to either day field to require day-of-month and day-of-week to both match
 - natural-language schedules support `every`, `at`, `on`, and `from` forms such as `every day at noon`, `every weekday at five`, `every 5 minutes`, `every month on day 2 at 10:00`, `from monday to friday at 9`, and `at minute 5`
+- natural interval counts must fit inside the cron field they map to; misleading forms such as `every 90 seconds`, `every 90 minutes`, and `every 24 hours` are rejected
 - natural-language schedules that expand to multiple cron expressions, such as `every day at 16:15 and 18:30`, are treated as the union of those schedules
 - recurring task keys are scoped per backend alias
 - only dynamic tasks can be unscheduled at runtime; unscheduling a static task returns `0`

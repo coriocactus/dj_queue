@@ -198,6 +198,11 @@ def test_cron_supports_natural_point_schedules():
     "0 0 * * mon#6",
     "0 0 * * sun%0",
     "every 2 weeks",
+    "every 60 seconds",
+    "every 90 minutes",
+    "every 24 hours",
+    "every 32 days",
+    "every 13 months",
     "every day at 25:00",
   ),
 )

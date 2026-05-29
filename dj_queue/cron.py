@@ -521,6 +521,7 @@ def _parse_every_interval_slot(subject: str) -> list[_NaturalSlot] | None:
   count = int(count_text or 1)
   if count <= 0:
     raise ValueError("natural interval count must be positive")
+  _validate_natural_interval_count(count, unit)
   step = "*" if count == 1 else f"*/{count}"
   if unit == "second":
     return [_NaturalSlot("second", step)]
@@ -539,6 +540,18 @@ def _parse_every_interval_slot(subject: str) -> list[_NaturalSlot] | None:
   if count != 1:
     raise ValueError("natural year intervals only support every year")
   return [_NaturalSlot("month", 1, weak=True), _NaturalSlot("monthday", 1, weak=True)]
+
+
+def _validate_natural_interval_count(count: int, unit: str) -> None:
+  maximum = {
+    "second": 59,
+    "minute": 59,
+    "hour": 23,
+    "day": 31,
+    "month": 12,
+  }.get(unit)
+  if maximum is not None and count > maximum:
+    raise ValueError(f"natural {unit} intervals cannot exceed {maximum}")
 
 
 def _parse_on_segment(segment: str) -> list[_NaturalSlot]:
