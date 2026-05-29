@@ -65,18 +65,17 @@ class NotifyWakeupBackend:
     while not self._stop_event.is_set():
       try:
         notifications = connection.notifies(timeout=0.5, stop_after=1)
+        for notification in notifications:
+          if any_queue_matches_selectors(
+            _queue_names_from_payload(notification.payload), self.queues
+          ):
+            self.wake_up()
       except Exception as error:
         if self._stop_event.is_set():
           return
         self.failed = True
         handle_thread_error(error, context="worker.notify", backend_alias=self.backend_alias)
         return
-
-      for notification in notifications:
-        if any_queue_matches_selectors(
-          _queue_names_from_payload(notification.payload), self.queues
-        ):
-          self.wake_up()
 
   def _open_connection(self):
     alias = get_database_alias(self.backend_alias)

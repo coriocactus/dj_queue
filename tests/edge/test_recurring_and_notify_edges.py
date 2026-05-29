@@ -328,7 +328,11 @@ def test_notify_watcher_suppresses_connection_close_errors_during_stop(monkeypat
 
   class ClosingConnection:
     def notifies(self, *, timeout, stop_after):
-      raise RuntimeError("connection closed")
+      def notifications():
+        raise RuntimeError("connection closed")
+        yield
+
+      return notifications()
 
   monkeypatch.setattr(
     "dj_queue.runtime.notify.handle_thread_error",
