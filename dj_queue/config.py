@@ -561,7 +561,7 @@ def _build_recurring_config(
 
   recurring: dict[str, RecurringTaskConfig] = {}
   for key, raw_entry in raw_recurring.items():
-    key = _string_option(key, "recurring task key")
+    key = _nonempty_string_option(key, "recurring task key")
     if not isinstance(raw_entry, Mapping):
       raise ImproperlyConfigured("recurring entries must be mappings")
 
@@ -569,12 +569,12 @@ def _build_recurring_config(
     raw_schedule = raw_entry.get("schedule")
     if raw_task_path in (None, "") or raw_schedule in (None, ""):
       raise ImproperlyConfigured(f"recurring task {key!r} requires task_path and schedule")
-    task_path = _string_option(raw_task_path, f"recurring task {key!r} task_path")
-    schedule = _string_option(raw_schedule, f"recurring task {key!r} schedule")
+    task_path = _nonempty_string_option(raw_task_path, f"recurring task {key!r} task_path")
+    schedule = _nonempty_string_option(raw_schedule, f"recurring task {key!r} schedule")
     if not is_valid_cron(schedule):
       raise ImproperlyConfigured(f"recurring task {key!r} has an invalid cron schedule")
 
-    queue_name = _string_option(
+    queue_name = _nonempty_string_option(
       raw_entry.get("queue_name", "default"), f"recurring task {key!r} queue_name"
     )
     priority = _priority_int(raw_entry.get("priority", 0), f"recurring task {key!r} priority")
@@ -647,6 +647,13 @@ def _as_string_tuple(value: Any) -> tuple[str, ...]:
 def _string_option(value: Any, setting_name: str) -> str:
   if not isinstance(value, str):
     raise ImproperlyConfigured(f"dj_queue {setting_name} must be a string")
+  return value
+
+
+def _nonempty_string_option(value: Any, setting_name: str) -> str:
+  value = _string_option(value, setting_name)
+  if value == "":
+    raise ImproperlyConfigured(f"dj_queue {setting_name} must be a non-empty string")
   return value
 
 

@@ -816,8 +816,13 @@ def test_queue_selectors_must_be_strings(settings, tasks_settings):
   ("recurring", "setting_name"),
   (
     ({1: {"task_path": "tests.tasks.echo", "schedule": "* * * * *"}}, "recurring task key"),
+    ({"": {"task_path": "tests.tasks.echo", "schedule": "* * * * *"}}, "recurring task key"),
     ({"daily": {"task_path": 1, "schedule": "* * * * *"}}, "task_path"),
     ({"daily": {"task_path": "tests.tasks.echo", "schedule": 1}}, "schedule"),
+    (
+      {"daily": {"task_path": "tests.tasks.echo", "schedule": "* * * * *", "queue_name": ""}},
+      "queue_name",
+    ),
     (
       {"daily": {"task_path": "tests.tasks.echo", "schedule": "* * * * *", "args": "x"}},
       "args",
