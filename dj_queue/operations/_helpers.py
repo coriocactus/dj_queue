@@ -1,5 +1,6 @@
 import json
 
+from django.db import connections
 from django.db.models import Q
 
 from dj_queue.db import database_capabilities
@@ -199,6 +200,17 @@ def _create_ready_execution_locked(
   )
 
 
+def _bulk_create_ready_executions_locked(alias, ready_rows, *, backend_alias, check_conflicts):
+  ready_rows = tuple(ready_rows)
+  if not ready_rows:
+    return None
+
+  if check_conflicts:
+    _ensure_job_ids_have_no_other_execution_state(alias, [row.job_id for row in ready_rows])
+  _lock_active_pauses(alias, backend_alias, {row.queue_name for row in ready_rows})
+  return _bulk_create(alias, ReadyExecution, ready_rows)
+
+
 def _ready_execution_rows(jobs, *, backend_alias, ready_at=None, created_at=None):
   return [
     _ready_execution_row(
@@ -339,3 +351,16 @@ def _consume_selected_rows(alias, model, rows):
     if deleted:
       consumed_rows.append(row)
   return consumed_rows
+
+
+def _bulk_create(alias, model, objects):
+  objects = tuple(objects)
+  if not objects:
+    return None
+
+  fields = [field for field in model._meta.concrete_fields if not field.generated]
+  batch_size = connections[alias].ops.bulk_batch_size(fields, objects)
+  if batch_size is None or batch_size <= 0:
+    batch_size = len(objects)
+  model.objects.using(alias).bulk_create(objects, batch_size=batch_size)
+  return None

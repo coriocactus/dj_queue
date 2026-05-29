@@ -28,6 +28,8 @@ from dj_queue.models import (
   ScheduledExecution,
 )
 from dj_queue.operations._helpers import (
+  _bulk_create,
+  _bulk_create_ready_executions_locked,
   _consume_selected_rows,
   _create_blocked_execution,
   _create_ready_execution_locked,
@@ -174,10 +176,8 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
     with transaction.atomic(using=alias):
       jobs = [entry["job"] for entry in prepared]
       _bulk_create(alias, Job, jobs)
-      _lock_active_pauses(alias, backend_alias, {job.queue_name for job in jobs})
-      _bulk_create(
+      _bulk_create_ready_executions_locked(
         alias,
-        ReadyExecution,
         [
           _ready_execution_row(
             job=job,
@@ -187,6 +187,8 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
           )
           for job in jobs
         ],
+        backend_alias=backend_alias,
+        check_conflicts=False,
       )
 
     ready_queue_names = tuple(dict.fromkeys(job.queue_name for job in jobs))
@@ -249,8 +251,12 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
         ready_queue_names.append(job.queue_name)
       entry["dispatch_outcome"] = dispatch_outcome
 
-    _lock_active_pauses(alias, backend_alias, {row.queue_name for row in ready_rows})
-    _bulk_create(alias, ReadyExecution, ready_rows)
+    _bulk_create_ready_executions_locked(
+      alias,
+      ready_rows,
+      backend_alias=backend_alias,
+      check_conflicts=False,
+    )
     _bulk_create(alias, ScheduledExecution, scheduled_rows)
 
   if ready_queue_names:
@@ -684,24 +690,16 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
 
     direct_jobs = [job for job in jobs if not job.concurrency_key]
     if direct_jobs:
-      conflicting_job_ids = _job_ids_with_other_execution_state(
+      _bulk_create_ready_executions_locked(
         alias,
-        [job.pk for job in direct_jobs],
-      )
-      if conflicting_job_ids:
-        conflicting_job_id = next(iter(conflicting_job_ids))
-        raise EnqueueError(f"job {conflicting_job_id} already has an execution-state row")
-      queue_names = {job.queue_name for job in direct_jobs}
-      _lock_active_pauses(alias, backend_alias, queue_names)
-      _bulk_create(
-        alias,
-        ReadyExecution,
         _ready_execution_rows(
           direct_jobs,
           backend_alias=backend_alias,
           ready_at=now,
           created_at=now,
         ),
+        backend_alias=backend_alias,
+        check_conflicts=True,
       )
       ready_queue_names.extend(job.queue_name for job in direct_jobs)
 
@@ -1449,18 +1447,6 @@ def _finish_job_if_no_execution_state(
   job.finished_at = finished_at
   job.return_value = return_value
   job.updated_at = finished_at
-
-
-def _bulk_create(alias, model, objects):
-  if not objects:
-    return None
-
-  fields = [field for field in model._meta.concrete_fields if not field.generated]
-  batch_size = connections[alias].ops.bulk_batch_size(fields, objects)
-  if batch_size is None or batch_size <= 0:
-    batch_size = len(objects)
-  model.objects.using(alias).bulk_create(objects, batch_size=batch_size)
-  return None
 
 
 def _fail_claimed_job_ids(job_ids, error, *, traceback_text, backend_alias):
