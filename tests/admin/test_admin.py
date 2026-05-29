@@ -7,7 +7,7 @@ from django.urls import reverse
 from django.utils.html import format_html
 from django.utils import timezone
 
-from dj_queue.admin import DjQueueAdminSiteMixin, _install_dj_queue_admin_site
+from dj_queue.admin import _install_dj_queue_admin_site
 from dj_queue.models import (
   BlockedExecution,
   FailedExecution,
@@ -1045,13 +1045,14 @@ def test_admin_site_install_preserves_custom_admin_site_class():
       return "custom"
 
   site = CustomAdminSite(name="custom")
+  original_class = site.__class__
 
   _install_dj_queue_admin_site(site)
-  installed_class = site.__class__
+  installed_get_app_list = site.get_app_list
   _install_dj_queue_admin_site(site)
 
-  assert site.__class__ is installed_class
-  assert isinstance(site, DjQueueAdminSiteMixin)
+  assert site.__class__ is original_class
+  assert site.get_app_list is installed_get_app_list
   assert isinstance(site, CustomAdminSite)
   assert site.custom_marker() == "custom"
 

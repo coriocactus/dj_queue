@@ -45,36 +45,35 @@ from dj_queue.queue_state import (
 )
 
 
-class DjQueueAdminSiteMixin:
-  def _dashboard_app_url(self):
-    return reverse("admin:dj_queue_dashboard_changelist", current_app=self.name)
+def _install_dj_queue_admin_site(site):
+  if getattr(site, "_dj_queue_dashboard_installed", False):
+    return
 
-  def get_app_list(self, request, app_label=None):
-    app_list = super().get_app_list(request, app_label=app_label)
+  original_get_app_list = site.get_app_list
+  original_app_index = site.app_index
+
+  def dashboard_app_url():
+    return reverse("admin:dj_queue_dashboard_changelist", current_app=site.name)
+
+  def get_app_list(request, app_label=None):
+    app_list = original_get_app_list(request, app_label=app_label)
     for app in app_list:
       if app["app_label"] == "dj_queue":
-        app["app_url"] = self._dashboard_app_url()
+        app["app_url"] = dashboard_app_url()
     return sorted(app_list, key=lambda app: app["app_label"] != "dj_queue")
 
-  def app_index(self, request, app_label, extra_context=None):
+  def app_index(request, app_label, extra_context=None):
     if app_label == "dj_queue":
-      url = self._dashboard_app_url()
+      url = dashboard_app_url()
       query = request.GET.urlencode()
       if query:
         url = f"{url}?{query}"
       return HttpResponseRedirect(url)
-    return super().app_index(request, app_label, extra_context=extra_context)
+    return original_app_index(request, app_label, extra_context=extra_context)
 
-
-def _install_dj_queue_admin_site(site):
-  if isinstance(site, DjQueueAdminSiteMixin):
-    return
-
-  site.__class__ = type(
-    f"DjQueue{site.__class__.__name__}",
-    (DjQueueAdminSiteMixin, site.__class__),
-    {"__module__": __name__},
-  )
+  site.get_app_list = get_app_list
+  site.app_index = app_index
+  site._dj_queue_dashboard_installed = True
 
 
 _install_dj_queue_admin_site(admin.site)
