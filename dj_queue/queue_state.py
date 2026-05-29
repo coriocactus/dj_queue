@@ -157,71 +157,20 @@ def queue_state_summary(*, backend_alias, queue_name):
     backend_alias=backend_alias,
     queue_name=queue_name,
   )
-  return QueueStateSummary(
-    queue_name=queue_name,
-    state_counts=_state_counts_tuple(_queue_state_counts(base_queryset)),
-    oldest_ready_at=_oldest_value(
-      base_queryset,
-      state="ready",
-      expression=_ready_latency_expression(),
-    ),
-    oldest_scheduled_at=_oldest_value(
-      base_queryset,
-      state="scheduled",
-      expression="scheduled_execution__scheduled_at",
-    ),
-    oldest_blocked_at=_oldest_value(
-      base_queryset,
-      state="blocked",
-      expression="blocked_execution__expires_at",
-    ),
+  return _summary_from_row(
+    queue_name,
+    base_queryset.aggregate(**_summary_annotations()),
   )
 
 
 def queue_state_summaries_by_queue(*, backend_alias):
   alias = get_database_alias(backend_alias)
   base_queryset = Job.objects.using(alias).filter(backend_alias=backend_alias)
-  counts_by_queue = {}
-  queue_names = set()
-
-  for definition in QUEUE_STATE_DEFINITIONS:
-    for row in (
-      _filter_state_queryset(base_queryset, definition)
-      .values("queue_name")
-      .annotate(count=Count("id"))
-    ):
-      queue_name = row["queue_name"]
-      queue_names.add(queue_name)
-      counts_by_queue.setdefault(queue_name, {})[definition.name] = row["count"]
-
-  oldest_ready = _oldest_values_by_queue(
-    base_queryset,
-    state="ready",
-    expression=_ready_latency_expression(),
-  )
-  oldest_scheduled = _oldest_values_by_queue(
-    base_queryset,
-    state="scheduled",
-    expression="scheduled_execution__scheduled_at",
-  )
-  oldest_blocked = _oldest_values_by_queue(
-    base_queryset,
-    state="blocked",
-    expression="blocked_execution__expires_at",
-  )
-  queue_names.update(oldest_ready)
-  queue_names.update(oldest_scheduled)
-  queue_names.update(oldest_blocked)
-
   return {
-    queue_name: QueueStateSummary(
-      queue_name=queue_name,
-      state_counts=_state_counts_tuple(counts_by_queue.get(queue_name, {})),
-      oldest_ready_at=oldest_ready.get(queue_name),
-      oldest_scheduled_at=oldest_scheduled.get(queue_name),
-      oldest_blocked_at=oldest_blocked.get(queue_name),
-    )
-    for queue_name in sorted(queue_names)
+    row["queue_name"]: _summary_from_row(row["queue_name"], row)
+    for row in base_queryset.values("queue_name")
+    .annotate(**_summary_annotations())
+    .order_by("queue_name")
   }
 
 
@@ -244,33 +193,48 @@ def status_rank_expression():
 
 
 def _queue_state_counts(base_queryset):
+  return base_queryset.aggregate(**_state_count_annotations())
+
+
+def _summary_annotations():
   return {
-    definition.name: _filter_state_queryset(base_queryset, definition).count()
+    **_state_count_annotations(),
+    "oldest_ready_at": Min(
+      _ready_latency_expression(),
+      filter=_state_query(QUEUE_STATE_BY_NAME["ready"]),
+    ),
+    "oldest_scheduled_at": Min(
+      "scheduled_execution__scheduled_at",
+      filter=_state_query(QUEUE_STATE_BY_NAME["scheduled"]),
+    ),
+    "oldest_blocked_at": Min(
+      "blocked_execution__expires_at",
+      filter=_state_query(QUEUE_STATE_BY_NAME["blocked"]),
+    ),
+  }
+
+
+def _state_count_annotations():
+  return {
+    definition.name: Count("id", filter=_state_query(definition))
     for definition in QUEUE_STATE_DEFINITIONS
   }
+
+
+def _summary_from_row(queue_name, row):
+  return QueueStateSummary(
+    queue_name=queue_name,
+    state_counts=_state_counts_tuple(row),
+    oldest_ready_at=row["oldest_ready_at"],
+    oldest_scheduled_at=row["oldest_scheduled_at"],
+    oldest_blocked_at=row["oldest_blocked_at"],
+  )
 
 
 def _state_counts_tuple(counts):
   return tuple(
     (definition.name, counts.get(definition.name, 0)) for definition in QUEUE_STATE_DEFINITIONS
   )
-
-
-def _oldest_value(base_queryset, *, state, expression):
-  definition = queue_state_definition(state)
-  return _filter_state_queryset(base_queryset, definition).aggregate(oldest=Min(expression))[
-    "oldest"
-  ]
-
-
-def _oldest_values_by_queue(base_queryset, *, state, expression):
-  definition = queue_state_definition(state)
-  return {
-    row["queue_name"]: row["oldest"]
-    for row in _filter_state_queryset(base_queryset, definition)
-    .values("queue_name")
-    .annotate(oldest=Min(expression))
-  }
 
 
 def _ready_latency_expression():

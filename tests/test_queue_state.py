@@ -108,6 +108,16 @@ def test_queue_state_summaries_by_queue_follow_canonical_job_rows():
   assert summaries["beta"].count("failed") == 1
 
 
+def test_queue_state_summaries_by_queue_uses_one_aggregate_query(django_assert_num_queries):
+  enqueue_ready_job(queue_name="alpha")
+  make_failed_job(queue_name="beta")
+
+  with django_assert_num_queries(1):
+    summaries = queue_state_summaries_by_queue(backend_alias="default")
+
+  assert sorted(summaries) == ["alpha", "beta"]
+
+
 def test_filter_queue_state_uses_the_canonical_state_definition():
   enqueue_ready_job()
   scheduled = make_scheduled_job(scheduled_at=timezone.now())
