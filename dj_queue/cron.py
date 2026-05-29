@@ -12,6 +12,11 @@ _INT_RE = re.compile(r"[-+]?\d+\Z")
 _OFFSET_RE = re.compile(r"([+-])(\d{2})(?::?(\d{2}))?\Z")
 _WEEKDAY_MODULO_RE = re.compile(r"(\d+)(?:\+(\d+))?\Z")
 _NATURAL_LIST_RE = re.compile(r"\s*(?:,|\band\b|\bor\b)\s*", re.IGNORECASE)
+_NATURAL_SEGMENT_PREFIXES = ("every", "from", "at", "on", "in")
+_NATURAL_SEGMENT_BOUNDARY_RE = re.compile(
+  rf"\s+(?=(?:{'|'.join(_NATURAL_SEGMENT_PREFIXES)})\b)",
+  re.IGNORECASE,
+)
 _REFERENCE_MONDAY = date(2018, 12, 31)
 
 _SPECIALS = {
@@ -307,7 +312,7 @@ class _NaturalSlot:
 
 def is_valid_cron(schedule: str) -> bool:
   try:
-    _parse_schedule(str(schedule))
+    _parse_schedule(schedule)
   except (TypeError, ValueError, ZoneInfoNotFoundError):
     return False
   return True
@@ -411,32 +416,9 @@ def _parse_natural_slots(schedule: str) -> list[_NaturalSlot]:
   slots: list[_NaturalSlot] = []
 
   while remaining:
-    remaining = _strip_natural_separator(remaining)
-    if not remaining:
-      break
-
-    lower = remaining.lower()
-    if lower.startswith("every "):
-      segment, remaining = _take_natural_segment(remaining[6:])
-      slots.extend(_parse_every_segment(segment))
-    elif lower.startswith("from "):
-      segment, remaining = _take_natural_segment(remaining[5:])
-      slots.extend(_parse_from_segment(segment))
-    elif lower.startswith("at "):
-      segment, remaining = _take_natural_segment(remaining[3:])
-      slots.extend(_parse_at_segment(segment))
-    elif lower.startswith("in "):
-      segment, remaining = _take_natural_segment(remaining[3:])
-      slots.append(_parse_timezone_slot(segment))
-    elif lower.startswith("on "):
-      segment, remaining = _take_natural_segment(remaining[3:])
-      if _parse_timezone(segment, required=False) is not None:
-        slots.append(_parse_timezone_slot(segment))
-      else:
-        slots.extend(_parse_on_segment(segment))
-    else:
-      segment, remaining = _take_natural_segment(remaining)
-      slots.extend(_parse_bare_natural_segment(segment))
+    prefix, segment, remaining = _take_natural_prefixed_segment(remaining)
+    if segment:
+      slots.extend(_parse_natural_segment(prefix, segment))
 
   if not slots:
     raise ValueError("natural schedule has no time information")
@@ -447,12 +429,40 @@ def _strip_natural_separator(value: str) -> str:
   return value.strip(" ,\t")
 
 
+def _take_natural_prefixed_segment(value: str) -> tuple[str | None, str, str]:
+  value = _strip_natural_separator(value)
+  lower = value.lower()
+  for prefix in _NATURAL_SEGMENT_PREFIXES:
+    marker = f"{prefix} "
+    if lower.startswith(marker):
+      segment, remaining = _take_natural_segment(value[len(marker) :])
+      return prefix, segment, remaining
+  segment, remaining = _take_natural_segment(value)
+  return None, segment, remaining
+
+
 def _take_natural_segment(value: str) -> tuple[str, str]:
   value = _strip_natural_separator(value)
-  match = re.search(r"\s+(?=(?:every|from|at|on|in)\b)", value, re.IGNORECASE)
+  match = _NATURAL_SEGMENT_BOUNDARY_RE.search(value)
   if match is None:
     return value, ""
   return value[: match.start()].strip(), value[match.end() :]
+
+
+def _parse_natural_segment(prefix: str | None, segment: str) -> list[_NaturalSlot]:
+  if prefix == "every":
+    return _parse_every_segment(segment)
+  if prefix == "from":
+    return _parse_from_segment(segment)
+  if prefix == "at":
+    return _parse_at_segment(segment)
+  if prefix == "in":
+    return [_parse_timezone_slot(segment)]
+  if prefix == "on":
+    if _parse_timezone(segment, required=False) is not None:
+      return [_parse_timezone_slot(segment)]
+    return _parse_on_segment(segment)
+  return _parse_bare_natural_segment(segment)
 
 
 def _parse_bare_natural_segment(segment: str) -> list[_NaturalSlot]:
@@ -1189,7 +1199,7 @@ def _find_run(schedule: str, base: datetime, *, direction: int) -> datetime:
     raise TypeError("base must be a datetime")
 
   candidates = []
-  for parsed in _parse_schedule(str(schedule)):
+  for parsed in _parse_schedule(schedule):
     try:
       candidates.append(_find_run_for_schedule(parsed, base, direction=direction))
     except ValueError:

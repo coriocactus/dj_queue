@@ -20,6 +20,12 @@ def test_latest_cron_run_includes_the_base_minute():
   assert latest_cron_run("* * * * *", dt(2026, 4, 8, 12, 0)) == dt(2026, 4, 8, 12, 0)
 
 
+def test_cron_schedules_must_be_strings():
+  assert is_valid_cron(1) is False
+  with pytest.raises(TypeError, match="cron schedule must be a string"):
+    next_cron_run(1, dt(2026, 4, 8, 12, 0))
+
+
 def test_cron_steps_ranges_and_names():
   schedule = "*/15 9-17 * jan mon-fri"
 
