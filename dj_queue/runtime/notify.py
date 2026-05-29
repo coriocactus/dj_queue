@@ -16,7 +16,7 @@ class NoopWakeupBackend:
   def start(self):
     return None
 
-  def stop(self):
+  def stop(self, *, timeout=None):
     return None
 
 
@@ -44,12 +44,13 @@ class NotifyWakeupBackend:
       handle_thread_error(error, context="worker.notify", backend_alias=self.backend_alias)
     return None
 
-  def stop(self):
+  def stop(self, *, timeout=1):
     self._stop_event.set()
-    if self._watcher is not None:
-      self._watcher.join(timeout=1)
-      self._watcher = None
     self._close_connection()
+    if self._watcher is not None:
+      self._watcher.join(timeout=timeout)
+      if not self._watcher.is_alive():
+        self._watcher = None
     return None
 
   def _start_watcher(self):
@@ -65,6 +66,8 @@ class NotifyWakeupBackend:
       try:
         notifications = connection.notifies(timeout=0.5, stop_after=1)
       except Exception as error:
+        if self._stop_event.is_set():
+          return
         self.failed = True
         handle_thread_error(error, context="worker.notify", backend_alias=self.backend_alias)
         return

@@ -130,15 +130,17 @@ def worker_exit(_server, worker):
   worker._dj_queue_supervisor_exiting = True
   retry_stop = getattr(worker, "_dj_queue_supervisor_retry_stop", None)
   retry_thread = getattr(worker, "_dj_queue_supervisor_retry_thread", None)
+  supervisor = getattr(worker, "_dj_queue_supervisor", None)
+  timeout = _supervisor_shutdown_timeout(supervisor)
 
   if retry_stop is not None:
     retry_stop.set()
   if retry_thread is not None:
-    retry_thread.join(timeout=1)
-    worker._dj_queue_supervisor_retry_thread = None
+    retry_thread.join(timeout=timeout)
+    if not retry_thread.is_alive():
+      worker._dj_queue_supervisor_retry_thread = None
   worker._dj_queue_supervisor_retry_stop = None
 
-  supervisor = getattr(worker, "_dj_queue_supervisor", None)
   lock_file = getattr(worker, "_dj_queue_supervisor_lock", None)
   stop_event = getattr(worker, "_dj_queue_supervisor_poll_stop", None)
   poll_thread = getattr(worker, "_dj_queue_supervisor_poll_thread", None)
@@ -146,8 +148,9 @@ def worker_exit(_server, worker):
   if stop_event is not None:
     stop_event.set()
   if poll_thread is not None:
-    poll_thread.join()
-    worker._dj_queue_supervisor_poll_thread = None
+    poll_thread.join(timeout=timeout)
+    if not poll_thread.is_alive():
+      worker._dj_queue_supervisor_poll_thread = None
   worker._dj_queue_supervisor_poll_stop = None
   if supervisor is None:
     if lock_file is not None:
@@ -160,6 +163,15 @@ def worker_exit(_server, worker):
   _release_supervisor_lock(lock_file)
   worker._dj_queue_supervisor_lock = None
   return None
+
+
+def _supervisor_shutdown_timeout(supervisor, default=1.0):
+  config = getattr(supervisor, "config", None)
+  value = getattr(config, "shutdown_timeout", default)
+  try:
+    return max(float(value), 0)
+  except (TypeError, ValueError):
+    return default
 
 
 def _backend_alias(server, worker):

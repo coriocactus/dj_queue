@@ -55,12 +55,14 @@ class FakeWakeupBackend:
   def __init__(self):
     self.started = 0
     self.stopped = 0
+    self.stop_timeout = None
 
   def start(self):
     self.started += 1
 
-  def stop(self):
+  def stop(self, *, timeout=None):
     self.stopped += 1
+    self.stop_timeout = timeout
 
 
 class FailingSubmitPool:

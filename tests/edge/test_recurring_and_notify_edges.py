@@ -294,6 +294,55 @@ def test_notify_watcher_shutdown_is_clean():
   assert watcher.is_alive() is False
 
 
+def test_notify_stop_keeps_live_watcher_visible_until_it_exits():
+  closed = []
+
+  class FakeConnection:
+    def close(self):
+      closed.append(True)
+
+  class LiveWatcher:
+    def __init__(self):
+      self.join_timeout = None
+
+    def join(self, timeout=None):
+      self.join_timeout = timeout
+
+    def is_alive(self):
+      return True
+
+  backend = NotifyWakeupBackend(backend_alias="default", wake_up=lambda: None)
+  watcher = LiveWatcher()
+  backend._connection = FakeConnection()
+  backend._watcher = watcher
+
+  backend.stop(timeout=0.01)
+
+  assert closed == [True]
+  assert watcher.join_timeout == 0.01
+  assert backend._watcher is watcher
+
+
+def test_notify_watcher_suppresses_connection_close_errors_during_stop(monkeypatch):
+  errors = []
+
+  class ClosingConnection:
+    def notifies(self, *, timeout, stop_after):
+      raise RuntimeError("connection closed")
+
+  monkeypatch.setattr(
+    "dj_queue.runtime.notify.handle_thread_error",
+    lambda error, **kwargs: errors.append((error, kwargs)),
+  )
+  backend = NotifyWakeupBackend(backend_alias="default", wake_up=lambda: None)
+  backend._connection = ClosingConnection()
+  backend._stop_event.set()
+
+  backend._watch()
+
+  assert errors == []
+
+
 def test_notify_wakeup_backend_start_clears_prior_stop_event(monkeypatch):
   backend = NotifyWakeupBackend(backend_alias="default", wake_up=lambda: None)
   backend._stop_event.set()

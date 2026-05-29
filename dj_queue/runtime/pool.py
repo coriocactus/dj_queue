@@ -45,20 +45,19 @@ class WorkerPool:
       worker_thread_count = len(self._worker_thread_ids)
     if not futures:
       self._close_worker_connections(worker_thread_count)
-      self._executor.shutdown(wait=False, cancel_futures=False)
+      self._executor.shutdown(wait=True, cancel_futures=False)
       self._notify_drained()
       return True
 
     _, not_done = wait(futures, timeout=timeout)
+    drained = not not_done
     cleanup_count = worker_thread_count - len(not_done)
     if cleanup_count > 0:
       self._close_worker_connections(cleanup_count)
-    if not not_done:
-      self._executor.shutdown(wait=False, cancel_futures=False)
+    self._executor.shutdown(wait=drained, cancel_futures=False)
+    if drained:
       self._notify_drained()
-    else:
-      self._executor.shutdown(wait=False, cancel_futures=False)
-    return len(not_done) == 0
+    return drained
 
   def _run(self, fn, args, kwargs):
     with self._lock:

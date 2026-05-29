@@ -201,11 +201,13 @@ class AsyncSupervisor(Supervisor):
     return process
 
   def stop(self):
+    timeout = max(float(self.config.shutdown_timeout), 0)
+    deadline = time.monotonic() + timeout
     self._stop_event.set()
     for runner in self.runners:
       runner.request_stop()
     for thread in self.runner_threads:
-      thread.join(timeout=1)
+      thread.join(timeout=max(deadline - time.monotonic(), 0))
 
     active_runners = []
     active_threads = []

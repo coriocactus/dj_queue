@@ -105,7 +105,7 @@ class Worker(BaseRunner):
           self._finish_stop(process)
       return None
 
-    self.wakeup_backend.stop()
+    self.wakeup_backend.stop(timeout=timeout)
     drained = self.pool.shutdown(timeout, on_drained=finish)
     if drained:
       finish()

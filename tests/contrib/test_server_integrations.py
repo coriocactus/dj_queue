@@ -1,6 +1,7 @@
 import asyncio
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 from django.core.management import call_command
@@ -287,6 +288,48 @@ def test_gunicorn_worker_exit_waits_for_poll_thread_before_releasing_lock(monkey
   exit_thread.join(timeout=1)
 
   assert released == [acquired_lock]
+
+
+def test_gunicorn_worker_exit_uses_shutdown_timeout_for_poll_thread(monkeypatch):
+  released = []
+  poll_started = threading.Event()
+
+  class StubSupervisor:
+    polling_interval = 0.01
+    backend_alias = "default"
+    config = SimpleNamespace(shutdown_timeout=0.01)
+
+    def start(self):
+      return None
+
+    def poll_once(self):
+      poll_started.set()
+      time.sleep(1)
+
+    def stop(self):
+      return None
+
+  monkeypatch.setattr(
+    "dj_queue.contrib.gunicorn.build_supervisor",
+    lambda backend_alias="default": StubSupervisor(),
+  )
+
+  from dj_queue.contrib import gunicorn
+
+  monkeypatch.setattr(gunicorn, "_try_acquire_supervisor_lock", lambda **_kwargs: object())
+  monkeypatch.setattr(gunicorn, "_release_supervisor_lock", lambda lock: released.append(lock))
+  worker = type("Worker", (), {"age": 1})()
+
+  gunicorn.post_fork(object(), worker)
+  acquired_lock = worker._dj_queue_supervisor_lock
+  assert poll_started.wait(timeout=1) is True
+
+  started_at = time.monotonic()
+  gunicorn.worker_exit(object(), worker)
+
+  assert time.monotonic() - started_at < 0.5
+  assert released == [acquired_lock]
+  assert worker._dj_queue_supervisor_poll_thread is not None
 
 
 def test_gunicorn_start_aborts_when_worker_exits_during_supervisor_start(monkeypatch):
