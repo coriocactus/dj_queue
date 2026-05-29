@@ -15,6 +15,7 @@ from django.utils import timezone
 
 from dj_queue.config import load_backend_config
 from dj_queue import dashboard
+from dj_queue import dashboard_actions
 from dj_queue.api import QueueInfo, unschedule_recurring_task
 from dj_queue.db import get_database_alias
 from dj_queue.exceptions import EnqueueError
@@ -155,7 +156,7 @@ class DashboardAdmin(admin.ModelAdmin):
     context = {
       **self.admin_site.each_context(request),
       **queue_context,
-      "job_actions": dashboard.job_actions_for_state(state),
+      "job_actions": dashboard_actions.job_actions_for_state(state),
       "title": "dj_queue",
       "subtitle": queue_name,
     }
@@ -165,7 +166,7 @@ class DashboardAdmin(admin.ModelAdmin):
     backend_alias = dashboard.resolve_backend_alias(request.POST.get("backend"))
     return self._post_action_response(
       request,
-      operation=lambda: dashboard.apply_queue_action(
+      operation=lambda: dashboard_actions.apply_queue_action(
         backend_alias=backend_alias,
         queue_name=queue_name,
         action=request.POST.get("action"),
@@ -178,7 +179,7 @@ class DashboardAdmin(admin.ModelAdmin):
     state = request.POST.get("state", "ready")
     return self._post_action_response(
       request,
-      operation=lambda: dashboard.apply_job_action(
+      operation=lambda: dashboard_actions.apply_job_action(
         backend_alias=backend_alias,
         queue_name=queue_name,
         state=state,

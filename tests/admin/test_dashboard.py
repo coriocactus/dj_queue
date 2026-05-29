@@ -6,7 +6,7 @@ from django.http import Http404
 from django.urls import reverse
 from django.utils import timezone
 
-from dj_queue import dashboard, db
+from dj_queue import dashboard, dashboard_actions, db
 from dj_queue.models import (
   BlockedExecution,
   FailedExecution,
@@ -904,7 +904,11 @@ def test_dashboard_resumed_queue_latency_excludes_paused_time(admin_client):
     created_at=timezone.now() - timedelta(seconds=30)
   )
 
-  dashboard.apply_queue_action(backend_alias="default", queue_name="paused", action="resume")
+  dashboard_actions.apply_queue_action(
+    backend_alias="default",
+    queue_name="paused",
+    action="resume",
+  )
 
   queue_row = dashboard.queue_page_context(
     backend_alias="default",
