@@ -15,6 +15,7 @@ from dj_queue.queue_state import (
   status_rank_expression,
 )
 from tests.factories import (
+  enqueue_ready_job,
   make_blocked_job,
   make_failed_job,
   make_job,
@@ -27,8 +28,8 @@ pytestmark = pytest.mark.django_db
 
 
 def test_queue_state_queryset_applies_state_filter_and_ordering():
-  low_priority = make_ready_job(priority=0)
-  high_priority = make_ready_job(priority=10)
+  low_priority = enqueue_ready_job(priority=0)
+  high_priority = enqueue_ready_job(priority=10)
   make_scheduled_job(scheduled_at=timezone.now())
 
   jobs = list(queue_state_queryset(backend_alias="default", queue_name="default", state="ready"))
@@ -37,7 +38,7 @@ def test_queue_state_queryset_applies_state_filter_and_ordering():
 
 
 def test_queue_state_counts_and_count_fields_follow_state_definitions():
-  make_ready_job()
+  enqueue_ready_job()
   make_scheduled_job(scheduled_at=timezone.now())
 
   counts = queue_state_counts(backend_alias="default", queue_name="default")
@@ -51,7 +52,7 @@ def test_queue_state_counts_and_count_fields_follow_state_definitions():
 
 def test_queue_state_summaries_by_queue_follow_canonical_job_rows():
   now = timezone.now()
-  ready = make_ready_job(queue_name="alpha")
+  ready = enqueue_ready_job(queue_name="alpha")
   ReadyExecution.objects.filter(job=ready).update(
     queue_name="drifted",
     created_at=now - timedelta(seconds=20),
@@ -82,7 +83,7 @@ def test_queue_state_summaries_by_queue_follow_canonical_job_rows():
 
 
 def test_filter_queue_state_uses_the_canonical_state_definition():
-  make_ready_job()
+  enqueue_ready_job()
   scheduled = make_scheduled_job(scheduled_at=timezone.now())
 
   jobs = filter_queue_state(Job.objects.order_by("id"), "scheduled")
@@ -91,7 +92,7 @@ def test_filter_queue_state_uses_the_canonical_state_definition():
 
 
 def test_status_rank_expression_preserves_admin_status_ordering():
-  ready = make_ready_job()
+  ready = enqueue_ready_job()
   scheduled = make_scheduled_job(scheduled_at=timezone.now())
 
   ranked = Job.objects.annotate(status_rank=status_rank_expression()).order_by("status_rank")

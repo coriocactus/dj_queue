@@ -8,6 +8,8 @@ from dj_queue.models import (
   ReadyExecution,
   ScheduledExecution,
 )
+from dj_queue.operations.jobs import enqueue_job
+from tests.tasks import echo
 
 
 def make_job(task=None, **overrides):
@@ -53,6 +55,21 @@ def make_ready_job(task=None, **overrides):
     priority=job.priority,
   )
   return job
+
+
+def enqueue_ready_job(task=echo, *, args=(), kwargs=None, queue_name=None, priority=None, backend_alias=None):
+  if kwargs is None:
+    kwargs = {}
+
+  if backend_alias is None:
+    backend_alias = task.backend
+  task_options = {"backend": backend_alias}
+  if queue_name is not None:
+    task_options["queue_name"] = queue_name
+  if priority is not None:
+    task_options["priority"] = priority
+
+  return enqueue_job(task.using(**task_options), args, kwargs, backend_alias=backend_alias)
 
 
 def make_scheduled_job(task=None, **overrides):

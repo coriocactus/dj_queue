@@ -5,7 +5,7 @@ from django.utils import timezone
 
 from dj_queue import observability
 from dj_queue.models import Pause, Process, ReadyExecution, RecurringTask, Semaphore
-from tests.factories import make_ready_job
+from tests.factories import enqueue_ready_job
 
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -25,7 +25,7 @@ def test_backend_snapshot_filters_workers_to_backend(settings):
     },
   }
   now = timezone.now()
-  make_ready_job(queue_name="alpha", backend_alias="default")
+  enqueue_ready_job(queue_name="alpha", backend_alias="default")
   Process.objects.create(
     backend_alias="default",
     kind="Worker",
@@ -59,7 +59,7 @@ def test_backend_snapshot_filters_workers_to_backend(settings):
 
 def test_queue_rows_use_canonical_job_queue_names():
   now = timezone.now()
-  ready = make_ready_job(queue_name="canonical")
+  ready = enqueue_ready_job(queue_name="canonical")
   ReadyExecution.objects.filter(job=ready).update(queue_name="drifted")
 
   rows = observability.queue_rows(
