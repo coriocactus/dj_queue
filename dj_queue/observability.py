@@ -47,12 +47,6 @@ class BackendSnapshot:
   semaphore_rows: tuple[dict, ...]
   runner_metrics: dict
 
-  def __getitem__(self, key):
-    try:
-      return getattr(self, key)
-    except AttributeError as exc:
-      raise KeyError(key) from exc
-
   def stats_row(self):
     return {
       "backend_alias": self.backend_alias,

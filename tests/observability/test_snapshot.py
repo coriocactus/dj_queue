@@ -47,14 +47,14 @@ def test_backend_snapshot_filters_workers_to_backend(settings):
 
   snapshot = observability.backend_snapshot(backend_alias="default", now=now)
 
-  assert snapshot["runner_metrics"] == {
+  assert snapshot.runner_metrics == {
     "live": 1,
     "stale": 0,
     "by_kind": {"Worker": {"live": 1, "stale": 0}},
   }
-  assert snapshot["queue_rows"][0]["live_worker_count"] == 1
-  assert [row["name"] for row in snapshot["process_rows"]] == ["default-worker"]
-  assert snapshot["process_rows"][0]["backend_alias"] == "default"
+  assert snapshot.queue_rows[0]["live_worker_count"] == 1
+  assert [row["name"] for row in snapshot.process_rows] == ["default-worker"]
+  assert snapshot.process_rows[0]["backend_alias"] == "default"
 
 
 def test_queue_rows_use_canonical_job_queue_names():
@@ -107,12 +107,12 @@ def test_backend_snapshot_scopes_pause_and_recurring_rows_to_backend(settings):
 
   snapshot = observability.backend_snapshot(backend_alias="critical", now=now)
 
-  assert [row["name"] for row in snapshot["queue_rows"]] == ["shared"]
-  assert snapshot["queue_rows"][0]["paused"] is True
-  assert [row["key"] for row in snapshot["recurring_rows"]] == ["nightly"]
-  assert [row["key"] for row in snapshot["semaphore_rows"]] == ["account:1"]
-  assert snapshot["semaphore_rows"][0]["scope"] == "queue_database"
-  assert snapshot["semaphore_rows"][0]["queue_database_alias"] == "default"
+  assert [row["name"] for row in snapshot.queue_rows] == ["shared"]
+  assert snapshot.queue_rows[0]["paused"] is True
+  assert [row["key"] for row in snapshot.recurring_rows] == ["nightly"]
+  assert [row["key"] for row in snapshot.semaphore_rows] == ["account:1"]
+  assert snapshot.semaphore_rows[0]["scope"] == "queue_database"
+  assert snapshot.semaphore_rows[0]["queue_database_alias"] == "default"
 
 
 def test_configured_backend_aliases_ignore_non_dj_queue_backends(settings):
