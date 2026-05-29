@@ -45,7 +45,7 @@ class FakeWakeupBackend:
   def start(self):
     return None
 
-  def stop(self):
+  def stop(self, *, timeout=None):
     return None
 
 

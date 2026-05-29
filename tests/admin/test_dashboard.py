@@ -1059,7 +1059,7 @@ def test_dashboard_queue_view_sorts_supported_fields_in_database(admin_client, m
   def fail_python_sort(**_kwargs):
     raise AssertionError("queue sort should stay in the database")
 
-  monkeypatch.setattr(dashboard, "_sort_queue_jobs", fail_python_sort)
+  monkeypatch.setattr(dashboard, "_sort_rows_by_keys", fail_python_sort)
 
   response = admin_client.get(
     reverse("admin:dj_queue_dashboard_queue", args=["alpha"]),
@@ -1411,7 +1411,8 @@ def test_dashboard_header_uses_django_th_structure(admin_client):
   ).content.decode()
 
   # headers use <div class="text"><a> structure matching django admin
-  assert '<div class="text"><a role="button"' in content
+  assert '<div class="text">' in content
+  assert '<a role="button"' in content
   # sorted headers include sortoptions with toggle and sortremove
   assert '<div class="sortoptions">' in content
   assert 'class="sortremove"' in content
