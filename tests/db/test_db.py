@@ -1,7 +1,11 @@
 import os
+from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
+from django.db import connections
+from django.utils import timezone
 
 from dj_queue.db import (
   database_capabilities,
@@ -10,6 +14,8 @@ from dj_queue.db import (
   supports_listen_notify,
   supports_skip_locked,
 )
+from dj_queue.models import RecurringExecution
+from dj_queue.operations._insert import create_ignore_conflicts
 
 
 @pytest.mark.postgres
@@ -87,3 +93,45 @@ def test_queue_helpers_use_configured_database_alias(settings, monkeypatch):
 
   assert get_database_alias() == "queue"
   assert get_queue_connection().alias == "queue"
+
+
+def test_mysql_create_ignore_conflicts_uses_duplicate_key_noop(monkeypatch):
+  statements = []
+
+  class FakeCursor:
+    lastrowid = 0
+
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *_args):
+      return None
+
+    def execute(self, sql, params):
+      statements.append((sql, params))
+
+  class FakeConnection:
+    ops = connections["default"].ops
+
+    def cursor(self):
+      return FakeCursor()
+
+  monkeypatch.setattr("dj_queue.operations._insert.connections", {"default": FakeConnection()})
+  monkeypatch.setattr(
+    "dj_queue.operations._insert.database_capabilities",
+    lambda using: SimpleNamespace(backend_family="mysql"),
+  )
+
+  created = create_ignore_conflicts(
+    RecurringExecution,
+    using="default",
+    backend_alias="default",
+    task_key="nightly",
+    run_at=timezone.now() - timedelta(minutes=1),
+  )
+
+  sql, _params = statements[0]
+  assert created is False
+  assert "INSERT IGNORE" not in sql
+  assert "ON DUPLICATE KEY UPDATE" in sql
+  assert "LAST_INSERT_ID(0)" in sql

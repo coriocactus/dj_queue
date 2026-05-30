@@ -20,13 +20,20 @@ def create_ignore_conflicts(model, /, *, using, **fields):
   ]
 
   table = quote(model._meta.db_table)
-  if database_capabilities(using).backend_family in {"mysql", "mariadb"}:
-    sql = f"INSERT IGNORE INTO {table} ({columns}) VALUES ({placeholders})"
+  backend_family = database_capabilities(using).backend_family
+  if backend_family in {"mysql", "mariadb"}:
+    pk_column = quote(model._meta.pk.column)
+    sql = (
+      f"INSERT INTO {table} ({columns}) VALUES ({placeholders}) "
+      f"ON DUPLICATE KEY UPDATE {pk_column} = {pk_column} + LAST_INSERT_ID(0)"
+    )
   else:
     sql = f"INSERT INTO {table} ({columns}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
 
   with connection.cursor() as cursor:
     cursor.execute(sql, params)
+    if backend_family in {"mysql", "mariadb"}:
+      return cursor.lastrowid != 0
     rowcount = cursor.rowcount
 
   return rowcount > 0
