@@ -12,33 +12,34 @@ JOB_STATUS_RELATIONS = (
   ("blocked", "blocked_execution"),
   ("failed", "failed_execution"),
 )
+JOB_STATUS_RELATION_BY_NAME = dict(JOB_STATUS_RELATIONS)
 INVALID_JOB_STATUS = "invalid"
 
 
 class JobQuerySet(models.QuerySet):
   def ready(self):
-    return self._valid_state(ready_execution__isnull=False)
+    return self._valid_state("ready")
 
   def scheduled(self):
-    return self._valid_state(scheduled_execution__isnull=False)
+    return self._valid_state("scheduled")
 
   def claimed(self):
-    return self._valid_state(claimed_execution__isnull=False)
+    return self._valid_state("claimed")
 
   def blocked(self):
-    return self._valid_state(blocked_execution__isnull=False)
+    return self._valid_state("blocked")
 
   def failed(self):
-    return self._valid_state(failed_execution__isnull=False)
+    return self._valid_state("failed")
 
   def finished(self):
-    return self._valid_state(finished_at__isnull=False)
+    return self._valid_state("finished")
 
   def invalid_execution_state(self):
     return self.filter(invalid_execution_state_query())
 
-  def _valid_state(self, **filters):
-    return self.filter(**filters).exclude(invalid_execution_state_query())
+  def _valid_state(self, status):
+    return self.filter(**job_status_query_filter(status)).exclude(invalid_execution_state_query())
 
 
 class Job(models.Model):
@@ -138,7 +139,7 @@ class Job(models.Model):
 
 
 def invalid_execution_state_query():
-  relation_names = tuple(relation_name for _status_name, relation_name in JOB_STATUS_RELATIONS)
+  relation_names = job_status_relation_names()
   query = None
   for first_relation, second_relation in combinations(relation_names, 2):
     query = _or_query(
@@ -156,6 +157,16 @@ def invalid_execution_state_query():
       Q(finished_at__isnull=False, **{f"{relation_name}__isnull": False}),
     )
   return query or Q(pk__in=[])
+
+
+def job_status_relation_names():
+  return tuple(relation_name for _status_name, relation_name in JOB_STATUS_RELATIONS)
+
+
+def job_status_query_filter(status):
+  if status == "finished":
+    return {"finished_at__isnull": False}
+  return {f"{JOB_STATUS_RELATION_BY_NAME[status]}__isnull": False}
 
 
 def _or_query(current, next_query):

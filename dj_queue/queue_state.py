@@ -6,7 +6,11 @@ from django.db.models.functions import Coalesce
 
 from dj_queue.db import get_database_alias
 from dj_queue.models import Job
-from dj_queue.models.jobs import INVALID_JOB_STATUS, invalid_execution_state_query
+from dj_queue.models.jobs import (
+  INVALID_JOB_STATUS,
+  invalid_execution_state_query,
+  job_status_query_filter,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,14 +48,14 @@ QUEUE_STATE_DEFINITIONS = (
   QueueStateDefinition(
     name="ready",
     label="ready",
-    query_filter={"ready_execution__isnull": False},
+    query_filter=job_status_query_filter("ready"),
     query_order=("-priority", "ready_execution__id"),
     rank=0,
   ),
   QueueStateDefinition(
     name="scheduled",
     label="scheduled",
-    query_filter={"scheduled_execution__isnull": False},
+    query_filter=job_status_query_filter("scheduled"),
     query_order=(
       "scheduled_execution__scheduled_at",
       "-priority",
@@ -62,28 +66,28 @@ QUEUE_STATE_DEFINITIONS = (
   QueueStateDefinition(
     name="claimed",
     label="claimed",
-    query_filter={"claimed_execution__isnull": False},
+    query_filter=job_status_query_filter("claimed"),
     query_order=("claimed_execution__created_at", "id"),
     rank=2,
   ),
   QueueStateDefinition(
     name="blocked",
     label="blocked",
-    query_filter={"blocked_execution__isnull": False},
+    query_filter=job_status_query_filter("blocked"),
     query_order=("blocked_execution__expires_at", "-priority", "blocked_execution__id"),
     rank=3,
   ),
   QueueStateDefinition(
     name="failed",
     label="failed",
-    query_filter={"failed_execution__isnull": False},
+    query_filter=job_status_query_filter("failed"),
     query_order=("-failed_execution__created_at", "id"),
     rank=4,
   ),
   QueueStateDefinition(
     name="finished",
     label="finished",
-    query_filter={"finished_at__isnull": False},
+    query_filter=job_status_query_filter("finished"),
     query_order=("-finished_at", "id"),
     rank=5,
   ),

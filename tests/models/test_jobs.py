@@ -13,6 +13,7 @@ from dj_queue.models import (
   ReadyExecution,
   ScheduledExecution,
 )
+from dj_queue.operations._helpers import EXECUTION_STATE_MODELS, STATE_RELATIONS
 
 STATUS_NAMES = ("ready", "claimed", "blocked", "scheduled", "failed", "finished")
 STATUS_RELATIONS = (
@@ -195,6 +196,14 @@ def test_invalid_execution_state_queryset_finds_corrupt_jobs():
   invalid_job_ids = set(Job.objects.invalid_execution_state().values_list("pk", flat=True))
 
   assert invalid_job_ids == {multi_state.pk, finished_with_state.pk}
+
+
+def test_execution_state_relation_catalog_matches_models():
+  assert tuple(STATE_RELATIONS) == EXECUTION_STATE_MODELS
+  assert tuple(STATE_RELATIONS.values()) == tuple(
+    model._meta.get_field("job").remote_field.get_accessor_name()
+    for model in EXECUTION_STATE_MODELS
+  )
 
 
 @pytest.mark.django_db

@@ -14,6 +14,7 @@ from dj_queue.models import (
   ReadyExecution,
   ScheduledExecution,
 )
+from dj_queue.models.jobs import job_status_relation_names
 
 EXECUTION_STATE_MODELS = (
   ReadyExecution,
@@ -23,14 +24,7 @@ EXECUTION_STATE_MODELS = (
   FailedExecution,
 )
 STATE_RELATIONS = {
-  model: relation_name
-  for model, relation_name in (
-    (ReadyExecution, "ready_execution"),
-    (ScheduledExecution, "scheduled_execution"),
-    (ClaimedExecution, "claimed_execution"),
-    (BlockedExecution, "blocked_execution"),
-    (FailedExecution, "failed_execution"),
-  )
+  model: relation_name for model, relation_name in zip(EXECUTION_STATE_MODELS, job_status_relation_names())
 }
 
 
