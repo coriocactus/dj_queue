@@ -73,6 +73,36 @@ def test_queue_rows_use_canonical_job_queue_names():
   assert rows[0]["latency_seconds"] is not None
 
 
+def test_process_rows_expose_shutdown_drain_state():
+  now = timezone.now()
+  Process.objects.create(
+    backend_alias="default",
+    kind="Worker",
+    pid=101,
+    hostname="localhost",
+    name="draining-worker",
+    metadata={
+      "shutdown_state": "draining",
+      "shutdown_started_at": (now - timedelta(seconds=5)).isoformat(),
+      "shutdown_timeout": 0.01,
+      "active_jobs": 1,
+    },
+    last_heartbeat_at=now,
+  )
+
+  rows = observability.process_rows(
+    backend_alias="default",
+    now=now,
+    process_cutoff=now - timedelta(minutes=1),
+    scope="backend",
+  )
+
+  assert rows[0]["shutdown_state"] == "draining"
+  assert rows[0]["shutdown_age_seconds"] == 5.0
+  assert rows[0]["shutdown_timeout"] == 0.01
+  assert rows[0]["active_jobs"] == 1
+
+
 def test_backend_snapshot_scopes_pause_and_recurring_rows_to_backend(settings):
   settings.TASKS = {
     "default": {

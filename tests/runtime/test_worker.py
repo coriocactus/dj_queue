@@ -507,7 +507,11 @@ def test_worker_timeout_shutdown_keeps_process_until_work_finishes():
   drained = worker.stop(timeout=0.01)
 
   assert drained is False
-  assert Process.objects.filter(name="worker-timeout-shutdown").exists() is True
+  process = Process.objects.get(name="worker-timeout-shutdown")
+  assert process.metadata["shutdown_state"] == "draining"
+  assert process.metadata["shutdown_timeout"] == 0.01
+  assert process.metadata["active_jobs"] == 1
+  assert "shutdown_started_at" in process.metadata
 
   release.set()
   wait_until(lambda: Process.objects.filter(name="worker-timeout-shutdown").exists() is False)

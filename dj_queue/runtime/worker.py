@@ -3,8 +3,12 @@ import socket
 import threading
 import traceback
 
+from django.utils import timezone
+
 from dj_queue.config import load_backend_config
+from dj_queue.db import get_database_alias
 from dj_queue.exceptions import ProcessExitError
+from dj_queue.models import Process
 from dj_queue.operations.jobs import claim_ready_jobs, execute_claimed_job, fail_claimed_job
 from dj_queue.runtime.base import BaseRunner, app_executor
 from dj_queue.runtime.errors import handle_thread_error
@@ -109,6 +113,8 @@ class Worker(BaseRunner):
     drained = self.pool.shutdown(timeout, on_drained=finish)
     if drained:
       finish()
+    else:
+      self._mark_shutdown_draining(process, timeout=timeout)
     return drained
 
   def process_metadata(self):
@@ -117,6 +123,23 @@ class Worker(BaseRunner):
       "threads": self.config.threads,
       "polling_interval": self.config.polling_interval,
     }
+
+  def _mark_shutdown_draining(self, process, *, timeout):
+    metadata = dict(process.metadata or {})
+    metadata.update(
+      {
+        "shutdown_state": "draining",
+        "shutdown_started_at": timezone.now().isoformat(),
+        "shutdown_timeout": timeout,
+      }
+    )
+    active_jobs = getattr(self.pool, "in_flight", None)
+    if active_jobs is not None:
+      metadata["active_jobs"] = active_jobs
+    process.metadata = metadata
+    alias = get_database_alias(self.backend_alias)
+    with app_executor():
+      Process.objects.using(alias).filter(pk=process.pk).update(metadata=metadata)
 
   def _execute_job(self, claimed_job):
     with app_executor():

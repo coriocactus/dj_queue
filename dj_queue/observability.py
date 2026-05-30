@@ -17,6 +17,7 @@ from django.db.models import (
   When,
 )
 from django.db.models.functions import Coalesce
+from django.utils.dateparse import parse_datetime
 from django.utils import timezone
 
 from dj_queue.config import configured_backend_aliases as configured_dj_queue_backend_aliases
@@ -453,6 +454,8 @@ def _state_backend_mismatch_count(model, *, alias, backend_alias):
 
 def process_row(process, *, now, process_cutoff):
   age_seconds = max((now - process.last_heartbeat_at).total_seconds(), 0.0)
+  metadata = process.metadata or {}
+  shutdown_started_at = metadata.get("shutdown_started_at")
   return {
     "id": process.id,
     "name": process.name,
@@ -465,7 +468,23 @@ def process_row(process, *, now, process_cutoff):
     "heartbeat_age_seconds": age_seconds,
     "is_live": process.last_heartbeat_at >= process_cutoff,
     "supervisor_name": process.supervisor.name if process.supervisor_id else None,
+    "shutdown_state": metadata.get("shutdown_state"),
+    "shutdown_started_at": shutdown_started_at,
+    "shutdown_age_seconds": _metadata_age_seconds(now, shutdown_started_at),
+    "shutdown_timeout": metadata.get("shutdown_timeout"),
+    "active_jobs": metadata.get("active_jobs"),
   }
+
+
+def _metadata_age_seconds(now, value):
+  if not isinstance(value, str):
+    return None
+  parsed = parse_datetime(value)
+  if parsed is None:
+    return None
+  if timezone.is_naive(parsed):
+    parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+  return max((now - parsed).total_seconds(), 0.0)
 
 
 def recurring_rows_for_backend(*, backend_alias, now):

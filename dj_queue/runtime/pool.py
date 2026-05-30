@@ -21,6 +21,11 @@ class WorkerPool:
     with self._lock:
       return max(0, self.max_workers - self._in_flight)
 
+  @property
+  def in_flight(self):
+    with self._lock:
+      return self._in_flight
+
   def submit(self, fn, *args, **kwargs):
     with self._lock:
       if self._closing.is_set():
