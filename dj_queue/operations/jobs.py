@@ -1,5 +1,4 @@
 import inspect
-import json
 import time
 import traceback
 from dataclasses import dataclass
@@ -40,6 +39,7 @@ from dj_queue.operations._helpers import (
   _exclude_active_pauses,
   _job_ids_with_other_execution_state,
   _lock_active_pauses,
+  _normalize_json_round_trip,
   _normalize_payload,
   _ready_execution_rows,
   _ready_execution_row,
@@ -1310,10 +1310,11 @@ def _is_transient_claim_error(error):
 
 
 def _normalize_return_value(return_value):
-  try:
-    return json.loads(json.dumps(return_value))
-  except (TypeError, ValueError) as exc:
-    raise ValueError("return value must be JSON round-trippable") from exc
+  return _normalize_json_round_trip(
+    return_value,
+    exception_class=ValueError,
+    message="return value must be JSON round-trippable",
+  )
 
 
 def _load_claimed_job(job_id, *, backend_alias):

@@ -29,10 +29,18 @@ STATE_RELATIONS = {
 
 
 def _normalize_payload(args, kwargs):
+  return _normalize_json_round_trip(
+    {"args": list(args), "kwargs": dict(kwargs)},
+    exception_class=EnqueueError,
+    message="payload must be JSON round-trippable",
+  )
+
+
+def _normalize_json_round_trip(value, *, exception_class, message):
   try:
-    return json.loads(json.dumps({"args": list(args), "kwargs": dict(kwargs)}))
+    return json.loads(json.dumps(value))
   except (TypeError, ValueError) as exc:
-    raise EnqueueError("payload must be JSON round-trippable") from exc
+    raise exception_class(message) from exc
 
 
 def _ensure_no_other_execution_state(alias, job, *, ignored_models=()):
