@@ -25,6 +25,10 @@ from dj_queue.runtime.errors import handle_thread_error
 from dj_queue.runtime.pidfile import PidFile
 from dj_queue.runtime.topology import runner_definitions
 
+SUPERVISOR_RESTART_BACKOFF_BASE_DELAY = 0.1
+SUPERVISOR_RESTART_BACKOFF_MAX_DELAY = 30.0
+SUPERVISOR_RESTART_BACKOFF_RESET_AFTER = 60.0
+
 
 class Supervisor(BaseRunner):
   process_kind = "Supervisor"
@@ -56,6 +60,7 @@ class Supervisor(BaseRunner):
     self.standalone = standalone
     self.pidfile = None
     self._last_housekeeping_at = None
+    self._restart_failures = {}
 
   @classmethod
   def from_backend_config(
@@ -137,6 +142,31 @@ class Supervisor(BaseRunner):
     if self._last_housekeeping_at is None:
       return True
     return (time.monotonic() - self._last_housekeeping_at) >= self.housekeeping_interval
+
+  def _restart_backoff_delay(self, name, *, started_at=None):
+    if started_at is not None:
+      runtime = time.monotonic() - started_at
+      if runtime >= SUPERVISOR_RESTART_BACKOFF_RESET_AFTER:
+        self._restart_failures.pop(name, None)
+        return 0
+
+    failures = self._restart_failures.get(name, 0) + 1
+    self._restart_failures[name] = failures
+    if failures <= 1:
+      return 0
+    return min(
+      SUPERVISOR_RESTART_BACKOFF_BASE_DELAY * (2 ** (failures - 2)),
+      SUPERVISOR_RESTART_BACKOFF_MAX_DELAY,
+    )
+
+  def _wait_restart_backoff(self, delay):
+    deadline = time.monotonic() + delay
+    while not self.stop_requested():
+      remaining = deadline - time.monotonic()
+      if remaining <= 0:
+        return False
+      time.sleep(min(0.05, remaining))
+    return True
 
   def process_metadata(self):
     return {
@@ -257,6 +287,7 @@ class AsyncSupervisor(Supervisor):
     return self.runners
 
   def _run_managed_runner(self, runner):
+    runner_started_at = time.monotonic()
     try:
       while not self.stop_requested():
         if runner.run_managed_poll_loop(host_stop_requested=self.stop_requested):
@@ -278,6 +309,9 @@ class AsyncSupervisor(Supervisor):
           return
         if drained is False and not self._wait_for_runner_stop(runner):
           return
+        delay = self._restart_backoff_delay(runner.name, started_at=runner_started_at)
+        if delay and self._wait_restart_backoff(delay):
+          return
         while not self.stop_requested():
           replacement = self._rebuild_runner(runner)
           try:
@@ -289,7 +323,9 @@ class AsyncSupervisor(Supervisor):
               backend_alias=self.backend_alias,
             )
             replacement.stop()
-            time.sleep(self.polling_interval)
+            delay = self._restart_backoff_delay(runner.name)
+            if delay and self._wait_restart_backoff(delay):
+              return
             continue
           self._replace_runner(runner, replacement)
           log_event(
@@ -299,6 +335,7 @@ class AsyncSupervisor(Supervisor):
             kind=runner.process_kind,
           )
           runner = replacement
+          runner_started_at = time.monotonic()
           break
     finally:
       if not self.stop_requested():
@@ -374,6 +411,8 @@ class ForkSupervisor(Supervisor):
   ):
     super().__init__(*args, **kwargs)
     self.children = {}
+    self._child_started_at = {}
+    self._pending_child_replacements = []
     self._graceful_shutdown_requested = False
     self._launcher = launcher or self._default_launcher
     self._waitpid = waitpid or os.waitpid
@@ -446,6 +485,8 @@ class ForkSupervisor(Supervisor):
         pass
       self._fail_claimed_jobs_for_child(pid, spec)
       self.children.pop(pid, None)
+      self._child_started_at.pop(pid, None)
+    self._pending_child_replacements.clear()
     return super().stop()
 
   def register_signal_handlers(self):
@@ -470,11 +511,16 @@ class ForkSupervisor(Supervisor):
       return self.children
 
     for spec in self._build_runner_specs():
-      pid = self._launcher(spec)
-      self.children[pid] = spec
+      self._launch_child(spec)
     return self.children
 
   def check_children(self):
+    replacement_pid = self._start_due_child_replacement()
+    if replacement_pid is not None:
+      return replacement_pid
+    if not self.children:
+      return None
+
     try:
       pid, status = self._waitpid(-1, os.WNOHANG)
     except ChildProcessError:
@@ -484,15 +530,51 @@ class ForkSupervisor(Supervisor):
       return None
 
     spec = self.children.pop(pid, None)
+    started_at = self._child_started_at.pop(pid, None)
     if spec is None:
       return None
     self._fail_claimed_jobs_for_child(pid, spec, status=status)
-    replacement_pid = self._launcher(spec)
-    self.children[replacement_pid] = spec
+    return self._replace_child(spec, old_pid=pid, status=status, started_at=started_at)
+
+  def _launch_child(self, spec):
+    pid = self._launcher(spec)
+    self.children[pid] = spec
+    self._child_started_at[pid] = time.monotonic()
+    return pid
+
+  def _replace_child(self, spec, *, old_pid, status, started_at):
+    delay = self._restart_backoff_delay(spec["kwargs"]["name"], started_at=started_at)
+    if delay:
+      self._pending_child_replacements.append(
+        {
+          "not_before": time.monotonic() + delay,
+          "old_pid": old_pid,
+          "spec": spec,
+          "status": status,
+        }
+      )
+      return None
+    return self._launch_replacement_child(spec, old_pid=old_pid, status=status)
+
+  def _start_due_child_replacement(self):
+    now = time.monotonic()
+    for index, pending in enumerate(self._pending_child_replacements):
+      if pending["not_before"] > now:
+        continue
+      self._pending_child_replacements.pop(index)
+      return self._launch_replacement_child(
+        pending["spec"],
+        old_pid=pending["old_pid"],
+        status=pending["status"],
+      )
+    return None
+
+  def _launch_replacement_child(self, spec, *, old_pid, status):
+    replacement_pid = self._launch_child(spec)
     log_event(
       "process.replaced",
       backend_alias=self.backend_alias,
-      old_pid=pid,
+      old_pid=old_pid,
       new_pid=replacement_pid,
       exit_status=status,
       kind=spec["kind"],
@@ -508,6 +590,7 @@ class ForkSupervisor(Supervisor):
         for child_pid, spec in tuple(self.children.items()):
           self._fail_claimed_jobs_for_child(child_pid, spec)
         self.children.clear()
+        self._child_started_at.clear()
         return None
 
       if not pid:
@@ -515,6 +598,7 @@ class ForkSupervisor(Supervisor):
         continue
 
       spec = self.children.pop(pid, None)
+      self._child_started_at.pop(pid, None)
       if spec is not None:
         self._fail_claimed_jobs_for_child(pid, spec, status=status)
     return None

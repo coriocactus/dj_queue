@@ -1115,6 +1115,45 @@ def test_dead_child_fails_claimed_jobs_and_replaces_runner():
     supervisor.stop()
 
 
+def test_fork_supervisor_backs_off_repeated_short_child_restarts(monkeypatch):
+  now = 100.0
+  launched = []
+  waitpid_results = [(90001, 0), (90002, 0)]
+
+  monkeypatch.setattr("dj_queue.runtime.supervisor.time.monotonic", lambda: now)
+
+  def launcher(spec):
+    launched.append((spec["kind"], now))
+    return 90000 + len(launched)
+
+  def waitpid(_pid, _flags):
+    if waitpid_results:
+      return waitpid_results.pop(0)
+    raise ChildProcessError
+
+  supervisor = build_fork_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[], recurring={}),
+    launcher=launcher,
+    waitpid=waitpid,
+    killer=lambda _pid, _sig: None,
+  )
+
+  supervisor.start()
+  try:
+    assert supervisor.check_children() == 90002
+
+    now += 0.01
+    assert supervisor.check_children() is None
+    assert launched == [("worker", 100.0), ("worker", 100.0)]
+
+    now += 0.2
+    assert supervisor.check_children() == 90003
+    assert [kind for kind, _started_at in launched] == ["worker", "worker", "worker"]
+    assert launched[-1][1] > 100.1
+  finally:
+    supervisor.stop()
+
+
 def test_fork_supervisor_ignores_unknown_reaped_child_pid():
   waitpid_results = [(90009, 0)]
 
