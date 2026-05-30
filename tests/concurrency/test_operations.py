@@ -1255,13 +1255,16 @@ def test_mysql_family_semaphore_acquire_avoids_deprecated_values_function(monkey
   monkeypatch.setattr(connections["default"], "cursor", lambda: FakeCursor())
   now = timezone.now()
 
-  assert concurrency_operations._mysql_family_semaphore_acquire(
-    "default",
-    "account:mysql-syntax",
-    limit=3,
-    expires_at=now + timedelta(seconds=60),
-    now=now,
-  ) is True
+  assert (
+    concurrency_operations._mysql_family_semaphore_acquire(
+      "default",
+      "account:mysql-syntax",
+      limit=3,
+      expires_at=now + timedelta(seconds=60),
+      now=now,
+    )
+    is True
+  )
 
   assert "VALUES(" not in captured["sql"]
   assert captured["sql"].count("%s") == len(captured["params"])

@@ -24,7 +24,8 @@ EXECUTION_STATE_MODELS = (
   FailedExecution,
 )
 STATE_RELATIONS = {
-  model: relation_name for model, relation_name in zip(EXECUTION_STATE_MODELS, job_status_relation_names())
+  model: relation_name
+  for model, relation_name in zip(EXECUTION_STATE_MODELS, job_status_relation_names())
 }
 
 

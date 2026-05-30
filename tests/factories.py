@@ -76,7 +76,9 @@ def make_ready_job(task=echo, **overrides):
   )
 
 
-def enqueue_ready_job(task=echo, *, args=(), kwargs=None, queue_name=None, priority=None, backend_alias=None):
+def enqueue_ready_job(
+  task=echo, *, args=(), kwargs=None, queue_name=None, priority=None, backend_alias=None
+):
   if kwargs is None:
     kwargs = {}
 

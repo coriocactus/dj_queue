@@ -675,7 +675,9 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     if action == "retry":
       return self._run_change_operation(
         request,
-        operation=lambda: retry_failed_job(obj.failed_execution.job_id, backend_alias=obj.backend_alias),
+        operation=lambda: retry_failed_job(
+          obj.failed_execution.job_id, backend_alias=obj.backend_alias
+        ),
         success_message="Retried failed job",
         error_message="Could not retry failed job",
         success_redirect=lambda _result: self._current_object_redirect(
@@ -733,7 +735,9 @@ class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     try:
       discarded = 0
       for execution in queryset.select_related("job"):
-        discarded += discard_failed_job(execution.job_id, backend_alias=execution.job.backend_alias)
+        discarded += discard_failed_job(
+          execution.job_id, backend_alias=execution.job.backend_alias
+        )
     except ADMIN_ACTION_ERRORS as exc:
       self.message_user(request, f"Could not discard failed jobs: {exc}", level=messages.ERROR)
       return

@@ -70,10 +70,12 @@ def test_queue_state_counts_report_invalid_jobs_without_double_counting():
   assert counts["ready"] == 0
   assert counts["failed"] == 0
   assert counts["invalid"] == 1
-  assert list(queue_state_queryset(backend_alias="default", queue_name="default", state="ready")) == []
-  assert list(queue_state_queryset(backend_alias="default", queue_name="default", state="invalid")) == [
-    job
-  ]
+  assert (
+    list(queue_state_queryset(backend_alias="default", queue_name="default", state="ready")) == []
+  )
+  assert list(
+    queue_state_queryset(backend_alias="default", queue_name="default", state="invalid")
+  ) == [job]
 
 
 def test_queue_state_summaries_by_queue_follow_canonical_job_rows():

@@ -380,10 +380,7 @@ def deep_health_problems(*, backend_alias, max_age=None, now=None):
   problems = []
 
   invalid_jobs = (
-    Job.objects.using(alias)
-    .filter(backend_alias=backend_alias)
-    .invalid_execution_state()
-    .count()
+    Job.objects.using(alias).filter(backend_alias=backend_alias).invalid_execution_state().count()
   )
   if invalid_jobs:
     problems.append(f"{invalid_jobs} jobs have invalid execution state")
@@ -417,7 +414,9 @@ def deep_health_problems(*, backend_alias, max_age=None, now=None):
 
   recurring_mismatched = (
     RecurringExecution.objects.using(alias)
-    .filter(Q(backend_alias=backend_alias) | Q(job__backend_alias=backend_alias), job__isnull=False)
+    .filter(
+      Q(backend_alias=backend_alias) | Q(job__backend_alias=backend_alias), job__isnull=False
+    )
     .exclude(backend_alias=F("job__backend_alias"))
     .count()
   )
@@ -426,9 +425,11 @@ def deep_health_problems(*, backend_alias, max_age=None, now=None):
       f"{recurring_mismatched} recurring execution rows have mismatched backend ownership"
     )
 
-  bad_semaphores = Semaphore.objects.using(alias).filter(
-    Q(limit__lt=1) | Q(value__lt=0) | Q(value__gt=F("limit"))
-  ).count()
+  bad_semaphores = (
+    Semaphore.objects.using(alias)
+    .filter(Q(limit__lt=1) | Q(value__lt=0) | Q(value__gt=F("limit")))
+    .count()
+  )
   if bad_semaphores:
     problems.append(f"{bad_semaphores} semaphores have impossible slot counts")
 
