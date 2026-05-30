@@ -1019,6 +1019,48 @@ def test_fork_launcher_closes_parent_connections_around_fork(monkeypatch):
   assert events == ["close", "close"]
 
 
+def test_fork_child_bootstrap_error_is_reported_and_exits_nonzero(monkeypatch):
+  class ChildExit(BaseException):
+    pass
+
+  class BrokenRunner:
+    def __init__(self, **_kwargs):
+      raise RuntimeError("bootstrap failed")
+
+  handled = []
+  exits = []
+  supervisor = build_fork_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[], recurring={}),
+    launcher=lambda spec: 80001,
+  )
+
+  def exit_child(status):
+    exits.append(status)
+    raise ChildExit
+
+  supervisor._child_exit_fn = exit_child
+
+  monkeypatch.setattr("dj_queue.runtime.supervisor.os.fork", lambda: 0)
+  monkeypatch.setattr(
+    "dj_queue.runtime.supervisor.handle_thread_error",
+    lambda error, **kwargs: handled.append((error, kwargs)),
+  )
+
+  with pytest.raises(ChildExit):
+    supervisor._default_launcher(
+      {
+        "kind": "worker",
+        "runner_class": BrokenRunner,
+        "kwargs": {"name": "worker-1"},
+      }
+    )
+
+  error, kwargs = handled[0]
+  assert str(error) == "bootstrap failed"
+  assert kwargs == {"context": "supervisor.child", "backend_alias": "default"}
+  assert exits == [1]
+
+
 def test_fork_child_sigterm_requests_runner_stop(monkeypatch):
   registered = {}
   stopped = []

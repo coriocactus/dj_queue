@@ -574,13 +574,21 @@ class ForkSupervisor(Supervisor):
     pid = os.fork()
     if pid == 0:
       connections.close_all()
+      exit_status = 0
       try:
         runner = spec["runner_class"](**spec["kwargs"])
         self._register_child_signal_handlers(runner)
         runner.run()
+      except Exception as error:
+        exit_status = 1
+        handle_thread_error(
+          error,
+          context="supervisor.child",
+          backend_alias=self.backend_alias,
+        )
       finally:
         connections.close_all()
-      self._child_exit_fn(0)
+      self._child_exit_fn(exit_status)
     connections.close_all()
     return pid
 
