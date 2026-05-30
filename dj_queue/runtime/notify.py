@@ -5,11 +5,14 @@ from django.db import connections
 
 from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias, supports_listen_notify
+from dj_queue.log import log_event
 from dj_queue.queue_selectors import any_queue_matches_selectors
 from dj_queue.runtime.errors import handle_thread_error
 
 READY_CHANNEL = "dj_queue_ready"
 READY_PAYLOAD = "ready"
+NOTIFY_RECONNECT_BASE_DELAY = 0.5
+NOTIFY_RECONNECT_MAX_DELAY = 5.0
 
 
 class NoopWakeupBackend:
@@ -21,10 +24,20 @@ class NoopWakeupBackend:
 
 
 class NotifyWakeupBackend:
-  def __init__(self, *, backend_alias, wake_up, queues=("*",)):
+  def __init__(
+    self,
+    *,
+    backend_alias,
+    wake_up,
+    queues=("*",),
+    reconnect_base_delay=NOTIFY_RECONNECT_BASE_DELAY,
+    reconnect_max_delay=NOTIFY_RECONNECT_MAX_DELAY,
+  ):
     self.backend_alias = backend_alias
     self.wake_up = wake_up
     self.queues = tuple(queues or ("*",))
+    self.reconnect_base_delay = reconnect_base_delay
+    self.reconnect_max_delay = reconnect_max_delay
     self.failed = False
     self._connection = None
     self._watcher = None
@@ -58,11 +71,21 @@ class NotifyWakeupBackend:
     self._watcher.start()
 
   def _watch(self):
-    connection = self._connection
-    if connection is None:
+    if self._connection is None:
       return
 
+    failures = 0
     while not self._stop_event.is_set():
+      connection = self._connection
+      if connection is None:
+        if self._stop_event.wait(self._reconnect_delay(failures)):
+          return
+        if self._reconnect():
+          failures = 0
+        else:
+          failures += 1
+        continue
+
       try:
         notifications = connection.notifies(timeout=0.5, stop_after=1)
         for notification in notifications:
@@ -73,9 +96,27 @@ class NotifyWakeupBackend:
       except Exception as error:
         if self._stop_event.is_set():
           return
+        failures += 1
         self.failed = True
+        self._close_connection()
         handle_thread_error(error, context="worker.notify", backend_alias=self.backend_alias)
-        return
+
+  def _reconnect(self):
+    try:
+      self._connection = self._open_connection()
+    except Exception as error:
+      self.failed = True
+      self._close_connection()
+      handle_thread_error(error, context="worker.notify", backend_alias=self.backend_alias)
+      return False
+
+    self.failed = False
+    log_event("notify.restored", backend_alias=self.backend_alias)
+    return True
+
+  def _reconnect_delay(self, failures):
+    delay = self.reconnect_base_delay * (2 ** max(failures - 1, 0))
+    return min(delay, self.reconnect_max_delay)
 
   def _open_connection(self):
     alias = get_database_alias(self.backend_alias)
