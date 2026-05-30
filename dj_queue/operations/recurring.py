@@ -254,6 +254,28 @@ def unschedule_recurring_task(key, *, backend_alias="default"):
   return deleted
 
 
+def fire_due_recurring_tasks(now, *, include_dynamic_tasks=False, backend_alias="default"):
+  alias = get_database_alias(backend_alias)
+  queryset = (
+    RecurringTask.objects.using(alias)
+    .filter(backend_alias=backend_alias)
+    .filter(Q(next_run_at__isnull=True) | Q(next_run_at__lte=now))
+    .order_by("next_run_at", "key")
+  )
+  if not include_dynamic_tasks:
+    queryset = queryset.filter(static=True)
+
+  fired_jobs = []
+  for recurring_task in queryset:
+    run_at = latest_cron_run(recurring_task.schedule, now)
+    if run_at is None:
+      continue
+    execution = fire_recurring_task(recurring_task, run_at, backend_alias=backend_alias)
+    if execution is not None and execution.job_id is not None:
+      fired_jobs.append(execution.job)
+  return fired_jobs
+
+
 def fire_recurring_task(recurring_task, run_at, *, backend_alias="default"):
   alias = get_database_alias(backend_alias)
 

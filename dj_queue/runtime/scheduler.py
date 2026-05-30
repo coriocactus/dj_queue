@@ -1,19 +1,15 @@
 import os
 import socket
 
-from django.db.models import Q
 from django.utils import timezone
 
 from dj_queue.config import load_backend_config
-from dj_queue.cron import latest_cron_run
-from dj_queue.db import get_database_alias
-from dj_queue.models import RecurringTask
 from dj_queue.operations.cleanup import (
   clear_failed_jobs,
   clear_finished_jobs,
   clear_recurring_executions,
 )
-from dj_queue.operations.recurring import fire_recurring_task, upsert_static_recurring_tasks
+from dj_queue.operations.recurring import fire_due_recurring_tasks, upsert_static_recurring_tasks
 from dj_queue.runtime.base import BaseRunner, app_executor
 
 
@@ -122,29 +118,12 @@ class Scheduler(BaseRunner):
       self.ensure_static_tasks_synced()
 
     with app_executor():
-      fired_jobs = self._fire_due_tasks(now)
+      fired_jobs = fire_due_recurring_tasks(
+        now,
+        include_dynamic_tasks=self.config.scheduler.dynamic_tasks_enabled,
+        backend_alias=self.backend_alias,
+      )
       self._run_cleanup(now)
-    return fired_jobs
-
-  def _fire_due_tasks(self, now):
-    alias = get_database_alias(self.backend_alias)
-    queryset = (
-      RecurringTask.objects.using(alias)
-      .filter(backend_alias=self.backend_alias)
-      .filter(Q(next_run_at__isnull=True) | Q(next_run_at__lte=now))
-      .order_by("next_run_at", "key")
-    )
-    if not self.config.scheduler.dynamic_tasks_enabled:
-      queryset = queryset.filter(static=True)
-
-    fired_jobs = []
-    for recurring_task in queryset:
-      run_at = _latest_run_at(recurring_task.schedule, now)
-      if run_at is None:
-        continue
-      execution = fire_recurring_task(recurring_task, run_at, backend_alias=self.backend_alias)
-      if execution is not None and execution.job_id is not None:
-        fired_jobs.append(execution.job)
     return fired_jobs
 
   def _run_cleanup(self, now):
@@ -168,7 +147,3 @@ class Scheduler(BaseRunner):
         now=now,
       )
     return deleted
-
-
-def _latest_run_at(schedule, now):
-  return latest_cron_run(schedule, now)

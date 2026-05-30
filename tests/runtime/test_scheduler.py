@@ -339,7 +339,7 @@ def test_scheduler_skips_recurring_tasks_before_persisted_next_run(monkeypatch):
   def fire_unexpectedly(*args, **kwargs):
     raise AssertionError("recurring task is not due")
 
-  monkeypatch.setattr("dj_queue.runtime.scheduler.fire_recurring_task", fire_unexpectedly)
+  monkeypatch.setattr("dj_queue.operations.recurring.fire_recurring_task", fire_unexpectedly)
 
   fired_jobs = scheduler.poll_once(now=now)
 

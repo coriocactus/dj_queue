@@ -9,6 +9,7 @@ from django.db.models.query import QuerySet
 from django.utils import timezone
 
 from dj_queue.api import unschedule_recurring_task
+from dj_queue.cron import latest_cron_run
 from dj_queue.models import Job, RecurringExecution, RecurringTask
 from dj_queue.runtime.notify import (
   NoopWakeupBackend,
@@ -16,7 +17,7 @@ from dj_queue.runtime.notify import (
   build_wakeup_backend,
   notify_ready_queues,
 )
-from dj_queue.runtime.scheduler import Scheduler, _latest_run_at
+from dj_queue.runtime.scheduler import Scheduler
 from dj_queue.wakeup import notify_ready_queues_on_commit
 from tests.tasks import echo
 
@@ -149,7 +150,7 @@ def test_recurring_reservation_without_job_backfill_does_not_double_fire(monkeyp
   )
   scheduler.sync_static_tasks()
   recurring_task = RecurringTask.objects.get(backend_alias="default", key="static-task")
-  run_at = _latest_run_at(recurring_task.schedule, now)
+  run_at = latest_cron_run(recurring_task.schedule, now)
   RecurringExecution.objects.create(
     backend_alias="default",
     task_key=recurring_task.key,
@@ -190,7 +191,7 @@ def test_recurring_reservation_does_not_insert_when_already_reserved(monkeypatch
   )
   scheduler.sync_static_tasks()
   recurring_task = RecurringTask.objects.get(backend_alias="default", key="static-task")
-  run_at = _latest_run_at(recurring_task.schedule, now)
+  run_at = latest_cron_run(recurring_task.schedule, now)
   RecurringExecution.objects.create(
     backend_alias="default",
     task_key=recurring_task.key,
