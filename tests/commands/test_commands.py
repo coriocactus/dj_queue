@@ -8,7 +8,15 @@ from django.core.management.base import CommandError
 from django.utils import timezone
 
 from dj_queue.config import load_backend_config
-from dj_queue.models import FailedExecution, Job, Process, RecurringExecution
+from dj_queue.models import (
+  ClaimedExecution,
+  FailedExecution,
+  Job,
+  Process,
+  ReadyExecution,
+  RecurringExecution,
+  Semaphore,
+)
 
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -481,6 +489,10 @@ def test_dj_queue_health_reports_live_and_dead_states():
   call_command("dj_queue_health", stdout=healthy_stdout)
   assert healthy_stdout.getvalue().strip() == "healthy"
 
+  deep_stdout = StringIO()
+  call_command("dj_queue_health", "--deep", stdout=deep_stdout)
+  assert deep_stdout.getvalue().strip() == "healthy"
+
   Process.objects.all().update(last_heartbeat_at=timezone.now() - timedelta(hours=1))
 
   with pytest.raises(SystemExit, match="1"):
@@ -514,6 +526,80 @@ def test_health_command_stays_backend_scoped_on_shared_queue_db(settings):
 
   with pytest.raises(SystemExit, match="1"):
     call_command("dj_queue_health", "--backend", "default")
+
+
+def test_health_command_deep_reports_invalid_execution_state(capsys):
+  make_process(last_heartbeat_at=timezone.now())
+  job = make_finished_job()
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias="default",
+    queue_name="default",
+    priority=0,
+  )
+
+  with pytest.raises(SystemExit, match="1"):
+    call_command("dj_queue_health", "--deep")
+
+  assert "jobs have invalid execution state" in capsys.readouterr().err
+
+
+def test_health_command_deep_reports_state_backend_mismatch(capsys):
+  make_process(last_heartbeat_at=timezone.now())
+  job = Job.objects.create(
+    task_path="tests.tasks.echo",
+    queue_name="default",
+    priority=0,
+    payload={"args": [], "kwargs": {}},
+    backend_alias="default",
+  )
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias="secondary",
+    queue_name="default",
+    priority=0,
+  )
+
+  with pytest.raises(SystemExit, match="1"):
+    call_command("dj_queue_health", "--deep")
+
+  assert "ready execution rows have mismatched backend ownership" in capsys.readouterr().err
+
+
+def test_health_command_deep_reports_runtime_integrity_problems(capsys):
+  make_process(name="live-worker", last_heartbeat_at=timezone.now())
+  stale_process = make_process(
+    name="stale-worker",
+    last_heartbeat_at=timezone.now() - timedelta(hours=1),
+  )
+  job = Job.objects.create(
+    task_path="tests.tasks.echo",
+    queue_name="default",
+    priority=0,
+    payload={"args": [], "kwargs": {}},
+    backend_alias="default",
+  )
+  ClaimedExecution.objects.create(job=job, process=stale_process)
+  RecurringExecution.objects.create(
+    backend_alias="default",
+    task_key="nightly",
+    run_at=timezone.now(),
+    job=None,
+  )
+  Semaphore.objects.create(
+    key="account:1",
+    value=-1,
+    limit=1,
+    expires_at=timezone.now() + timedelta(minutes=1),
+  )
+
+  with pytest.raises(SystemExit, match="1"):
+    call_command("dj_queue_health", "--deep")
+
+  stderr = capsys.readouterr().err
+  assert "claimed execution rows have missing or stale processes" in stderr
+  assert "recurring execution reservations have no job" in stderr
+  assert "semaphores have impossible slot counts" in stderr
 
 
 def test_procline_is_best_effort_when_dependency_missing(monkeypatch):

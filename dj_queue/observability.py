@@ -7,9 +7,11 @@ from django.conf import settings
 from django.db.models import (
   Case,
   Count,
+  F,
   IntegerField,
   Max,
   OuterRef,
+  Q,
   Subquery,
   Value,
   When,
@@ -23,11 +25,15 @@ from dj_queue.cron import next_cron_run
 from dj_queue.db import get_database_alias
 from dj_queue.models import (
   BlockedExecution,
+  ClaimedExecution,
+  Job,
   Pause,
   Process,
+  ReadyExecution,
   RecurringExecution,
   RecurringTask,
   Semaphore,
+  ScheduledExecution,
 )
 from dj_queue.queue_selectors import queue_matches_selectors
 from dj_queue.queue_state import (
@@ -363,6 +369,86 @@ def has_live_processes(*, backend_alias, max_age=None, now=None):
     "live",
     process_cutoff=process_cutoff_for_backend(backend_alias, now=now, max_age=max_age),
   ).exists()
+
+
+def deep_health_problems(*, backend_alias, max_age=None, now=None):
+  if now is None:
+    now = timezone.now()
+  alias = get_database_alias(backend_alias)
+  process_cutoff = process_cutoff_for_backend(backend_alias, now=now, max_age=max_age)
+  problems = []
+
+  invalid_jobs = (
+    Job.objects.using(alias)
+    .filter(backend_alias=backend_alias)
+    .invalid_execution_state()
+    .count()
+  )
+  if invalid_jobs:
+    problems.append(f"{invalid_jobs} jobs have invalid execution state")
+
+  for label, model in _backend_owned_state_models():
+    mismatched = _state_backend_mismatch_count(model, alias=alias, backend_alias=backend_alias)
+    if mismatched:
+      problems.append(f"{mismatched} {label} execution rows have mismatched backend ownership")
+
+  bad_claims = (
+    ClaimedExecution.objects.using(alias)
+    .filter(job__backend_alias=backend_alias)
+    .filter(
+      Q(process__isnull=True)
+      | Q(process__backend_alias__isnull=True)
+      | ~Q(process__backend_alias=backend_alias)
+      | Q(process__last_heartbeat_at__lt=process_cutoff)
+    )
+    .count()
+  )
+  if bad_claims:
+    problems.append(f"{bad_claims} claimed execution rows have missing or stale processes")
+
+  recurring_without_jobs = (
+    RecurringExecution.objects.using(alias)
+    .filter(backend_alias=backend_alias, job__isnull=True)
+    .count()
+  )
+  if recurring_without_jobs:
+    problems.append(f"{recurring_without_jobs} recurring execution reservations have no job")
+
+  recurring_mismatched = (
+    RecurringExecution.objects.using(alias)
+    .filter(Q(backend_alias=backend_alias) | Q(job__backend_alias=backend_alias), job__isnull=False)
+    .exclude(backend_alias=F("job__backend_alias"))
+    .count()
+  )
+  if recurring_mismatched:
+    problems.append(
+      f"{recurring_mismatched} recurring execution rows have mismatched backend ownership"
+    )
+
+  bad_semaphores = Semaphore.objects.using(alias).filter(
+    Q(limit__lt=1) | Q(value__lt=0) | Q(value__gt=F("limit"))
+  ).count()
+  if bad_semaphores:
+    problems.append(f"{bad_semaphores} semaphores have impossible slot counts")
+
+  return tuple(problems)
+
+
+def _backend_owned_state_models():
+  return (
+    ("ready", ReadyExecution),
+    ("scheduled", ScheduledExecution),
+    ("blocked", BlockedExecution),
+  )
+
+
+def _state_backend_mismatch_count(model, *, alias, backend_alias):
+  return (
+    model.objects.using(alias)
+    .filter(Q(backend_alias=backend_alias) | Q(job__backend_alias=backend_alias))
+    .exclude(backend_alias=F("job__backend_alias"))
+    .count()
+  )
 
 
 def process_row(process, *, now, process_cutoff):
