@@ -2,7 +2,7 @@
 
 > Median key metric on the 10k workload across PostgreSQL, MariaDB, MySQL, and SQLite.
 
-Generated: 2026-05-27T06:10:06.893404+00:00
+Generated: 2026-05-30T10:00:59.783723+00:00
 
 ## Metadata
 
@@ -16,7 +16,7 @@ Generated: 2026-05-27T06:10:06.893404+00:00
 | dj_queue | `0.10.6` | `0.10.6` | `0.10.6` | `0.10.6` |
 | platform | `macOS-26.5-arm64-arm-64bit-Mach-O` | `macOS-26.5-arm64-arm-64bit-Mach-O` | `macOS-26.5-arm64-arm-64bit-Mach-O` | `macOS-26.5-arm64-arm-64bit-Mach-O` |
 | machine | `arm64` | `arm64` | `arm64` | `arm64` |
-| revision | `8a524c8f1d1f` | `8a524c8f1d1f` | `8a524c8f1d1f` | `8a524c8f1d1f` |
+| revision | `75282c93bac5` | `75282c93bac5` | `75282c93bac5` | `75282c93bac5` |
 | workers | `4` | `4` | `4` | `1` |
 | worker threads | `8` | `8` | `8` | `1` |
 | preserve finished jobs | `True` | `True` | `True` | `True` |
@@ -39,11 +39,11 @@ Generated: 2026-05-27T06:10:06.893404+00:00
 
 | scenario | key metric | postgres | mariadb | mysql | sqlite |
 |---|---|---|---|---|---|
-| `single-enqueue` | `latency_p95_ms` | 11.493 | 9.968 | 7.828 | 1.293 |
-| `bulk-enqueue` | `jobs_per_second` | 13667.625 | 8147.801 | 7113.719 | 14937.038 |
-| `scheduled-promotion` | `rows_per_second` | 8743.241 | 9698.549 | 9194.345 | 10431.558 |
-| `recurring-scale` | `duration_seconds` | 0.018 | 0.029 | 0.023 | 0.006 |
-| `worker-drain` | `jobs_per_second` | 631.940 | 775.122 | 681.169 | 300.701 |
-| `concurrency-contention` | `drain_jobs_per_second` | 51.640 | 34.929 | 56.078 | not supported |
-| `runtime-hot-key-contention` | `drain_jobs_per_second` | 87.484 | 69.666 | 68.072 | not supported |
-| `ordered-selector-claim` | `jobs_per_second` | 104.741 | 93.979 | 123.059 | not supported |
+| `single-enqueue` | `latency_p95_ms` | 4.628 | 10.033 | 6.748 | 1.553 |
+| `bulk-enqueue` | `jobs_per_second` | 13281.851 | 8015.745 | 7704.971 | 14194.356 |
+| `scheduled-promotion` | `rows_per_second` | 10081.571 | 10511.092 | 9644.297 | 10057.498 |
+| `recurring-scale` | `duration_seconds` | 0.013 | 0.029 | 0.025 | 0.006 |
+| `worker-drain` | `jobs_per_second` | 586.237 | 762.550 | 677.032 | 278.917 |
+| `concurrency-contention` | `drain_jobs_per_second` | 76.879 | 39.570 | 85.993 | not supported |
+| `runtime-hot-key-contention` | `drain_jobs_per_second` | 93.602 | 67.449 | 79.277 | not supported |
+| `ordered-selector-claim` | `jobs_per_second` | 124.476 | 104.940 | 177.496 | not supported |
