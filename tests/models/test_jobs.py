@@ -378,6 +378,30 @@ def test_job_queryset_scopes_match_statuses():
     finished_at=timezone.now(),
     return_value={"ok": True},
   )
+  invalid_finished_job = make_job(
+    task_path="tests.tasks.invalid_finished",
+    finished_at=timezone.now(),
+    return_value={"ok": True},
+  )
+  ReadyExecution.objects.create(
+    job=invalid_finished_job,
+    backend_alias=invalid_finished_job.backend_alias,
+    queue_name=invalid_finished_job.queue_name,
+    priority=invalid_finished_job.priority,
+  )
+  invalid_multi_state_job = make_job(task_path="tests.tasks.invalid_multi")
+  ReadyExecution.objects.create(
+    job=invalid_multi_state_job,
+    backend_alias=invalid_multi_state_job.backend_alias,
+    queue_name=invalid_multi_state_job.queue_name,
+    priority=invalid_multi_state_job.priority,
+  )
+  FailedExecution.objects.create(
+    job=invalid_multi_state_job,
+    exception_class="ValueError",
+    message="boom",
+    traceback="traceback",
+  )
 
   assert set(Job.objects.ready().values_list("pk", flat=True)) == {ready_job.pk}
   assert set(Job.objects.claimed().values_list("pk", flat=True)) == {claimed_job.pk}

@@ -17,25 +17,28 @@ INVALID_JOB_STATUS = "invalid"
 
 class JobQuerySet(models.QuerySet):
   def ready(self):
-    return self.filter(ready_execution__isnull=False)
+    return self._valid_state(ready_execution__isnull=False)
 
   def scheduled(self):
-    return self.filter(scheduled_execution__isnull=False)
+    return self._valid_state(scheduled_execution__isnull=False)
 
   def claimed(self):
-    return self.filter(claimed_execution__isnull=False)
+    return self._valid_state(claimed_execution__isnull=False)
 
   def blocked(self):
-    return self.filter(blocked_execution__isnull=False)
+    return self._valid_state(blocked_execution__isnull=False)
 
   def failed(self):
-    return self.filter(failed_execution__isnull=False)
+    return self._valid_state(failed_execution__isnull=False)
 
   def finished(self):
-    return self.filter(finished_at__isnull=False)
+    return self._valid_state(finished_at__isnull=False)
 
   def invalid_execution_state(self):
     return self.filter(invalid_execution_state_query())
+
+  def _valid_state(self, **filters):
+    return self.filter(**filters).exclude(invalid_execution_state_query())
 
 
 class Job(models.Model):
