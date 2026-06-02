@@ -112,7 +112,7 @@ def test_queue_state_summaries_by_queue_follow_canonical_job_rows():
   assert summaries["beta"].count("failed") == 1
 
 
-def test_queue_state_summaries_by_queue_uses_state_table_aggregates_for_live_counts():
+def test_queue_state_summaries_by_queue_uses_one_canonical_aggregate_for_live_counts():
   enqueue_ready_job(queue_name="alpha")
   make_failed_job(queue_name="beta")
 
@@ -121,9 +121,10 @@ def test_queue_state_summaries_by_queue_uses_state_table_aggregates_for_live_cou
 
   assert sorted(summaries) == ["alpha", "beta"]
   sql = "\n".join(query["sql"] for query in captured.captured_queries)
+  assert "dj_queue_jobs" in sql
   assert "dj_queue_ready_executions" in sql
   assert "dj_queue_failed_executions" in sql
-  assert len(captured.captured_queries) <= 7
+  assert len(captured.captured_queries) == 1
 
 
 def test_filter_queue_state_uses_the_canonical_state_definition():
