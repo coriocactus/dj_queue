@@ -254,7 +254,13 @@ def unschedule_recurring_task(key, *, backend_alias="default"):
   return deleted
 
 
-def fire_due_recurring_tasks(now, *, include_dynamic_tasks=False, backend_alias="default"):
+def fire_due_recurring_tasks(
+  now,
+  *,
+  include_dynamic_tasks=False,
+  backend_alias="default",
+  batch_size=500,
+):
   alias = get_database_alias(backend_alias)
   queryset = (
     RecurringTask.objects.using(alias)
@@ -264,6 +270,8 @@ def fire_due_recurring_tasks(now, *, include_dynamic_tasks=False, backend_alias=
   )
   if not include_dynamic_tasks:
     queryset = queryset.filter(static=True)
+  if batch_size is not None:
+    queryset = queryset[:batch_size]
 
   fired_jobs = []
   for recurring_task in queryset:

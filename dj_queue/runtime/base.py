@@ -87,6 +87,7 @@ class BaseRunner:
     self._process_alive_threshold = process_alive_threshold
     self._started = False
     self._stopped = False
+    self._last_liveness_check_at = None
 
   @property
   def polling_interval(self):
@@ -161,10 +162,13 @@ class BaseRunner:
       return False
     if self.process is None:
       return False
+    if not self._liveness_check_due():
+      return True
 
     alias = get_database_alias(self.backend_alias)
     with app_executor():
       exists = Process.objects.using(alias).filter(pk=self.process.pk).exists()
+    self._last_liveness_check_at = time.monotonic()
     if exists:
       return True
 
@@ -344,3 +348,22 @@ class BaseRunner:
     if not math.isfinite(threshold) or threshold <= 0:
       return 1.0
     return max(min(threshold / 2, 60.0), 0.01)
+
+  def _liveness_check_due(self):
+    if self._last_liveness_check_at is None:
+      return True
+    return time.monotonic() - self._last_liveness_check_at >= self._liveness_check_interval()
+
+  def _liveness_check_interval(self):
+    threshold = self._process_alive_threshold
+    if threshold is None:
+      threshold = load_backend_config(self.backend_alias).process_alive_threshold
+    try:
+      threshold = float(threshold)
+    except (TypeError, ValueError):
+      threshold = 0
+
+    intervals = [5.0, self._effective_heartbeat_interval()]
+    if math.isfinite(threshold) and threshold > 0:
+      intervals.append(threshold / 10)
+    return max(min(intervals), self.polling_interval)

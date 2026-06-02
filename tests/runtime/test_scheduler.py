@@ -348,6 +348,81 @@ def test_scheduler_skips_recurring_tasks_before_persisted_next_run(monkeypatch):
   scheduler.stop()
 
 
+def test_scheduler_skips_recurring_query_when_only_cleanup_is_configured(monkeypatch):
+  now = fixed_now()
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      clear_finished_jobs_after=60,
+      preserve_finished_jobs=True,
+    )
+  )
+
+  monkeypatch.setattr(
+    "dj_queue.runtime.scheduler.fire_due_recurring_tasks",
+    lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("no recurring work")),
+  )
+
+  assert scheduler.poll_once(now=now) == []
+  scheduler.stop()
+
+
+def test_scheduler_runs_cleanup_on_separate_cadence():
+  now = fixed_now()
+  first_old_job = make_finished_job(
+    finished_at=now - timedelta(minutes=10),
+    return_value="first",
+  )
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      clear_finished_jobs_after=60,
+      preserve_finished_jobs=True,
+    )
+  )
+
+  scheduler.poll_once(now=now)
+  assert Job.objects.filter(pk=first_old_job.pk).exists() is False
+
+  second_old_job = make_finished_job(
+    finished_at=now - timedelta(minutes=10),
+    return_value="second",
+  )
+  scheduler.poll_once(now=now + timedelta(seconds=1))
+  assert Job.objects.filter(pk=second_old_job.pk).exists() is True
+
+  scheduler.poll_once(now=now + timedelta(seconds=61))
+  assert Job.objects.filter(pk=second_old_job.pk).exists() is False
+  scheduler.stop()
+
+
+def test_scheduler_limits_due_recurring_work_per_poll(monkeypatch):
+  now = fixed_now()
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      recurring={
+        "static-a": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "* * * * *",
+          "args": ["a"],
+        },
+        "static-b": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "* * * * *",
+          "args": ["b"],
+        },
+      }
+    )
+  )
+  monkeypatch.setattr("dj_queue.runtime.scheduler.RECURRING_BATCH_SIZE", 1)
+
+  first_batch = scheduler.poll_once(now=now)
+  second_batch = scheduler.poll_once(now=now)
+
+  assert len(first_batch) == 1
+  assert len(second_batch) == 1
+  assert Job.objects.count() == 2
+  scheduler.stop()
+
+
 def test_scheduler_dedup_across_instances():
   now = fixed_now()
   tasks_settings = scheduler_tasks_settings(

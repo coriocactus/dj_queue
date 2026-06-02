@@ -112,6 +112,27 @@ def test_runner_liveness_check_uses_app_executor(monkeypatch):
   assert entered.count(test_thread) == 1
 
 
+def test_runner_liveness_check_is_throttled(monkeypatch):
+  entered = []
+
+  @contextmanager
+  def executor():
+    entered.append(True)
+    yield
+
+  monkeypatch.setattr("dj_queue.runtime.base.app_executor", executor)
+  runner = DummyRunner(heartbeat_interval=60)
+  runner.start()
+
+  try:
+    assert runner.should_continue() is True
+    assert runner.should_continue() is True
+  finally:
+    runner.stop()
+
+  assert entered == [True]
+
+
 def test_runner_poll_loop_routes_liveness_errors(monkeypatch):
   handled = []
   runner = DummyRunner(heartbeat_interval=60)

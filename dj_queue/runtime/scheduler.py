@@ -12,6 +12,9 @@ from dj_queue.operations.cleanup import (
 from dj_queue.operations.recurring import fire_due_recurring_tasks, upsert_static_recurring_tasks
 from dj_queue.runtime.base import BaseRunner, app_executor
 
+CLEANUP_INTERVAL = 60
+RECURRING_BATCH_SIZE = 500
+
 
 class Scheduler(BaseRunner):
   process_kind = "Scheduler"
@@ -47,6 +50,7 @@ class Scheduler(BaseRunner):
       supervisor=supervisor,
     )
     self._static_tasks_synced = False
+    self._last_cleanup_at = None
 
   @classmethod
   def from_backend_config(
@@ -118,13 +122,37 @@ class Scheduler(BaseRunner):
       self.ensure_static_tasks_synced()
 
     with app_executor():
-      fired_jobs = fire_due_recurring_tasks(
-        now,
-        include_dynamic_tasks=self.config.scheduler.dynamic_tasks_enabled,
-        backend_alias=self.backend_alias,
-      )
-      self._run_cleanup(now)
+      fired_jobs = []
+      if self._has_recurring_work():
+        fired_jobs = fire_due_recurring_tasks(
+          now,
+          include_dynamic_tasks=self.config.scheduler.dynamic_tasks_enabled,
+          backend_alias=self.backend_alias,
+          batch_size=RECURRING_BATCH_SIZE,
+        )
+      if self._cleanup_due(now):
+        self._run_cleanup(now)
+        self._last_cleanup_at = now
     return fired_jobs
+
+  def _has_recurring_work(self):
+    return self.config.scheduler.dynamic_tasks_enabled or bool(self.config.recurring)
+
+  def _cleanup_due(self, now):
+    if not self._cleanup_enabled():
+      return False
+    if self._last_cleanup_at is None:
+      return True
+    return (now - self._last_cleanup_at).total_seconds() >= CLEANUP_INTERVAL
+
+  def _cleanup_enabled(self):
+    return any(
+      (
+        self.config.preserve_finished_jobs and self.config.clear_finished_jobs_after is not None,
+        self.config.clear_failed_jobs_after is not None,
+        self.config.clear_recurring_executions_after is not None,
+      )
+    )
 
   def _run_cleanup(self, now):
     deleted = 0
