@@ -521,13 +521,16 @@ def _fail_claimed_job(job, error, *, traceback_text="", backend_alias="default",
 
 def fail_orphaned_claimed_jobs(error, *, traceback_text="", backend_alias="default"):
   alias = get_database_alias(backend_alias)
-  job_ids = list(
-    ClaimedExecution.objects.using(alias)
-    .filter(process__isnull=True, job__backend_alias=backend_alias)
-    .values_list("job_id", flat=True)
-  )
-  return _fail_claimed_job_ids(
-    job_ids,
+  jobs = [
+    claimed.job
+    for claimed in (
+      ClaimedExecution.objects.using(alias)
+      .select_related("job")
+      .filter(process__isnull=True, job__backend_alias=backend_alias)
+    )
+  ]
+  return _fail_claimed_jobs(
+    jobs,
     error,
     traceback_text=traceback_text,
     backend_alias=backend_alias,
@@ -546,13 +549,16 @@ def fail_claimed_jobs_for_process(
     return []
 
   alias = get_database_alias(backend_alias)
-  job_ids = list(
-    ClaimedExecution.objects.using(alias)
-    .filter(process_id=process.id)
-    .values_list("job_id", flat=True)
-  )
-  failed_jobs = _fail_claimed_job_ids(
-    job_ids,
+  jobs = [
+    claimed.job
+    for claimed in (
+      ClaimedExecution.objects.using(alias)
+      .select_related("job")
+      .filter(process_id=process.id)
+    )
+  ]
+  failed_jobs = _fail_claimed_jobs(
+    jobs,
     error,
     traceback_text=traceback_text,
     backend_alias=backend_alias,
@@ -636,11 +642,14 @@ def prune_stale_processes(
       return []
 
     for process in stale_processes:
-      job_ids = list(
-        ClaimedExecution.objects.using(alias)
-        .filter(process_id=process.id)
-        .values_list("job_id", flat=True)
-      )
+      jobs = [
+        claimed.job
+        for claimed in (
+          ClaimedExecution.objects.using(alias)
+          .select_related("job")
+          .filter(process_id=process.id)
+        )
+      ]
       deleted, _ = (
         Process.objects.using(alias)
         .filter(
@@ -653,8 +662,8 @@ def prune_stale_processes(
       if not deleted:
         continue
 
-      _fail_claimed_job_ids(
-        job_ids,
+      _fail_claimed_jobs(
+        jobs,
         error,
         traceback_text=traceback_text,
         backend_alias=backend_alias,
@@ -1440,12 +1449,12 @@ def _finish_job_if_no_execution_state(
   job.updated_at = finished_at
 
 
-def _fail_claimed_job_ids(job_ids, error, *, traceback_text, backend_alias):
+def _fail_claimed_jobs(jobs, error, *, traceback_text, backend_alias):
   failed_jobs = []
-  for job_id in job_ids:
+  for job in jobs:
     failed_jobs.append(
       fail_claimed_job(
-        job_id,
+        job,
         error,
         traceback_text=traceback_text,
         backend_alias=backend_alias,
