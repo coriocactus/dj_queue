@@ -606,6 +606,51 @@ def test_dashboard_overview_pages_large_sections(admin_client):
   assert "queue-18" in second_page.content.decode()
 
 
+def test_dashboard_pages_control_sections_without_full_snapshot_rows(monkeypatch):
+  monkeypatch.setitem(dashboard.OVERVIEW_PAGE_SIZES, "recurring", 1)
+  monkeypatch.setitem(dashboard.OVERVIEW_PAGE_SIZES, "semaphores", 1)
+  now = timezone.now()
+  RecurringTask.objects.create(
+    backend_alias="default",
+    key="alpha",
+    task_path="tests.tasks.echo",
+    payload={"args": ["alpha"], "kwargs": {}},
+    schedule="0 0 * * *",
+    queue_name="default",
+    priority=0,
+    static=False,
+  )
+  RecurringTask.objects.create(
+    backend_alias="default",
+    key="zeta",
+    task_path="tests.tasks.echo",
+    payload={"args": ["zeta"], "kwargs": {}},
+    schedule="0 0 * * *",
+    queue_name="default",
+    priority=0,
+    static=False,
+  )
+  Semaphore.objects.create(key="acct:1", value=1, limit=2, expires_at=now + timedelta(minutes=5))
+  Semaphore.objects.create(key="acct:2", value=1, limit=2, expires_at=now + timedelta(minutes=5))
+
+  def fail_full_recurring_rows(**kwargs):
+    raise AssertionError("dashboard should page recurring rows directly")
+
+  def fail_full_semaphore_rows(**kwargs):
+    raise AssertionError("dashboard should page semaphore rows directly")
+
+  monkeypatch.setattr(dashboard.observability, "recurring_rows_for_backend", fail_full_recurring_rows)
+  monkeypatch.setattr(dashboard.observability, "semaphore_rows_for_backend", fail_full_semaphore_rows)
+
+  context = dashboard.dashboard_context(backend_alias="default")
+
+  assert [row["key"] for row in context["recurring_section"]["rows"]] == ["alpha"]
+  assert context["recurring_section"]["total_count"] == 2
+  assert [row["key"] for row in context["semaphore_section"]["rows"]] == ["acct:1"]
+  assert context["semaphore_section"]["total_count"] == 2
+  assert context["summary_cards"][-1]["value"] == 4
+
+
 def test_dashboard_queue_pause_resume_and_clear_actions(admin_client, settings):
   settings.TASKS = {
     "default": {

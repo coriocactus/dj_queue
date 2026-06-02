@@ -4,7 +4,7 @@ from urllib.parse import urlencode
 from uuid import UUID
 
 from django.core.paginator import Paginator
-from django.db.models import F
+from django.db.models import DateTimeField, F, Max, OuterRef, Subquery
 from django.http import Http404
 from django.urls import reverse
 from django.utils import timezone
@@ -20,6 +20,7 @@ from dj_queue.queue_state import (
   queue_state_count_key,
   queue_state_queryset,
 )
+from dj_queue.models import RecurringExecution, RecurringTask, Semaphore
 
 
 PAGE_SIZE = 100
@@ -256,84 +257,74 @@ def dashboard_context(*, backend_alias, query_params=None):
   if query_params is None:
     query_params = {}
 
-  snapshot = observability.backend_snapshot(backend_alias=backend_alias)
-  queue_rows = snapshot.queue_rows
-  process_rows = snapshot.process_rows
-  recurring_rows = [
-    {
-      **row,
-      "jobs_url": _job_changelist_url(
-        backend_alias=backend_alias,
-        recurring_task_key=row["key"],
-      ),
-    }
-    for row in snapshot.recurring_rows
-  ]
-  semaphore_rows = [
-    {
-      **row,
-      "jobs_url": _job_changelist_url(
-        backend_alias=backend_alias,
-        concurrency_key=row["key"],
-      ),
-    }
-    for row in snapshot.semaphore_rows
-  ]
+  now = timezone.now()
+  queue_database_alias = get_database_alias(backend_alias)
+  process_cutoff = observability.process_cutoff_for_backend(
+    backend_alias,
+    now=now,
+    max_age=config.process_alive_threshold,
+  )
+  queue_rows = observability.queue_rows(
+    backend_alias=backend_alias,
+    now=now,
+    process_cutoff=process_cutoff,
+  )
+  process_rows = observability.process_rows(
+    backend_alias=backend_alias,
+    now=now,
+    process_cutoff=process_cutoff,
+    scope="backend",
+  )
+  queue_section = _overview_section(
+    section="queues",
+    rows=queue_rows,
+    page_param="queues_page",
+    page_size=OVERVIEW_PAGE_SIZES["queues"],
+    sort_param="queues_sort",
+    query_params=query_params,
+    anchor="queue-summary",
+  )
+  process_section = _overview_section(
+    section="processes",
+    rows=process_rows,
+    page_param="processes_page",
+    page_size=OVERVIEW_PAGE_SIZES["processes"],
+    sort_param="processes_sort",
+    query_params=query_params,
+    anchor="process-summary",
+  )
+  recurring_section = _recurring_overview_section(
+    backend_alias=backend_alias,
+    now=now,
+    query_params=query_params,
+  )
+  semaphore_section = _semaphore_overview_section(
+    backend_alias=backend_alias,
+    query_params=query_params,
+  )
 
   return {
     "backend_alias": backend_alias,
     "backend_choices": backend_choices(),
     "config": config,
-    "queue_database_alias": snapshot.queue_database_alias,
+    "queue_database_alias": queue_database_alias,
     "summary_cards": _summary_cards(
       backend_alias=backend_alias,
       queue_rows=queue_rows,
       process_rows=process_rows,
-      recurring_rows=recurring_rows,
-      semaphore_rows=semaphore_rows,
+      recurring_count=recurring_section["total_count"],
+      semaphore_count=semaphore_section["total_count"],
     ),
     "backend_facts": _backend_facts(
       config=config,
-      queue_database_alias=snapshot.queue_database_alias,
-      recurring_count=len(recurring_rows),
-      semaphore_count=len(semaphore_rows),
+      queue_database_alias=queue_database_alias,
+      recurring_count=recurring_section["total_count"],
+      semaphore_count=semaphore_section["total_count"],
     ),
-    "queue_section": _overview_section(
-      section="queues",
-      rows=queue_rows,
-      page_param="queues_page",
-      page_size=OVERVIEW_PAGE_SIZES["queues"],
-      sort_param="queues_sort",
-      query_params=query_params,
-      anchor="queue-summary",
-    ),
-    "process_section": _overview_section(
-      section="processes",
-      rows=process_rows,
-      page_param="processes_page",
-      page_size=OVERVIEW_PAGE_SIZES["processes"],
-      sort_param="processes_sort",
-      query_params=query_params,
-      anchor="process-summary",
-    ),
-    "recurring_section": _overview_section(
-      section="recurring",
-      rows=recurring_rows,
-      page_param="recurring_page",
-      page_size=OVERVIEW_PAGE_SIZES["recurring"],
-      sort_param="recurring_sort",
-      query_params=query_params,
-      anchor="recurring-summary",
-    ),
-    "semaphore_section": _overview_section(
-      section="semaphores",
-      rows=semaphore_rows,
-      page_param="semaphores_page",
-      page_size=OVERVIEW_PAGE_SIZES["semaphores"],
-      sort_param="semaphores_sort",
-      query_params=query_params,
-      anchor="semaphore-summary",
-    ),
+    "queue_section": queue_section,
+    "process_section": process_section,
+    "recurring_section": recurring_section,
+    "semaphore_section": semaphore_section,
   }
 
 
@@ -449,7 +440,7 @@ def queue_page_context(*, backend_alias, queue_name, state, page_number, query_p
   }
 
 
-def _summary_cards(*, backend_alias, queue_rows, process_rows, recurring_rows, semaphore_rows):
+def _summary_cards(*, backend_alias, queue_rows, process_rows, recurring_count, semaphore_count):
   paused_count = sum(1 for row in queue_rows if row["paused"])
   ready_count = sum(row[queue_state_count_key("ready")] for row in queue_rows)
   scheduled_count = sum(row[queue_state_count_key("scheduled")] for row in queue_rows)
@@ -497,8 +488,8 @@ def _summary_cards(*, backend_alias, queue_rows, process_rows, recurring_rows, s
     },
     {
       "label": "control-plane",
-      "value": len(recurring_rows) + len(semaphore_rows),
-      "detail": f"{len(recurring_rows)} recurring and {len(semaphore_rows)} semaphores",
+      "value": recurring_count + semaphore_count,
+      "detail": f"{recurring_count} recurring and {semaphore_count} semaphores",
     },
   )
 
@@ -547,7 +538,6 @@ def _overview_section(*, section, rows, page_param, page_size, sort_param, query
   raw_sort = query_params.get(sort_param)
   sort, explicit_sort = _resolve_overview_sort(section=section, raw_sort=raw_sort)
   rows = _sort_overview_rows(rows=rows, section=section, sort=sort)
-  sort_value = sort if explicit_sort else None
 
   if section == "processes":
     page = _paginate_process_rows(
@@ -562,6 +552,72 @@ def _overview_section(*, section, rows, page_param, page_size, sort_param, query
       page_number=query_params.get(page_param, 1),
     )
 
+  return _section_payload_from_page(
+    section=section,
+    page=page,
+    query_params=query_params,
+    page_param=page_param,
+    sort_param=sort_param,
+    sort=sort,
+    explicit_sort=explicit_sort,
+    anchor=anchor,
+  )
+
+
+def _recurring_overview_section(*, backend_alias, now, query_params):
+  section = "recurring"
+  page_param = "recurring_page"
+  sort_param = "recurring_sort"
+  anchor = "recurring-summary"
+  raw_sort = query_params.get(sort_param)
+  sort, explicit_sort = _resolve_overview_sort(section=section, raw_sort=raw_sort)
+  page = _recurring_overview_page(
+    backend_alias=backend_alias,
+    now=now,
+    page_size=OVERVIEW_PAGE_SIZES[section],
+    page_number=query_params.get(page_param, 1),
+    sort=sort,
+  )
+  return _section_payload_from_page(
+    section=section,
+    page=page,
+    query_params=query_params,
+    page_param=page_param,
+    sort_param=sort_param,
+    sort=sort,
+    explicit_sort=explicit_sort,
+    anchor=anchor,
+  )
+
+
+def _semaphore_overview_section(*, backend_alias, query_params):
+  section = "semaphores"
+  page_param = "semaphores_page"
+  sort_param = "semaphores_sort"
+  anchor = "semaphore-summary"
+  raw_sort = query_params.get(sort_param)
+  sort, explicit_sort = _resolve_overview_sort(section=section, raw_sort=raw_sort)
+  page = _semaphore_overview_page(
+    backend_alias=backend_alias,
+    page_size=OVERVIEW_PAGE_SIZES[section],
+    page_number=query_params.get(page_param, 1),
+    sort=sort,
+  )
+  return _section_payload_from_page(
+    section=section,
+    page=page,
+    query_params=query_params,
+    page_param=page_param,
+    sort_param=sort_param,
+    sort=sort,
+    explicit_sort=explicit_sort,
+    anchor=anchor,
+  )
+
+
+def _section_payload_from_page(
+  *, section, page, query_params, page_param, sort_param, sort, explicit_sort, anchor
+):
   return _section_payload(
     section=section,
     rows=page["rows"],
@@ -574,7 +630,7 @@ def _overview_section(*, section, rows, page_param, page_size, sort_param, query
     page_param=page_param,
     sort_param=sort_param,
     sort=sort,
-    sort_value=sort_value,
+    sort_value=sort if explicit_sort else None,
     explicit_sort=explicit_sort,
     anchor=anchor,
   )
@@ -643,6 +699,146 @@ def _paginate_standard_rows(*, rows, page_size, page_number):
     "start_index": page_obj.start_index() if total_count else 0,
     "end_index": page_obj.end_index() if total_count else 0,
   }
+
+
+def _recurring_overview_page(*, backend_alias, now, page_size, page_number, sort):
+  if _recurring_sort_requires_python(sort):
+    rows = [
+      _recurring_row_with_jobs_url(row, backend_alias=backend_alias)
+      for row in observability.recurring_rows_for_backend(backend_alias=backend_alias, now=now)
+    ]
+    rows = _sort_overview_rows(rows=rows, section="recurring", sort=sort)
+    return _paginate_standard_rows(rows=rows, page_size=page_size, page_number=page_number)
+
+  alias = get_database_alias(backend_alias)
+  last_run_at = (
+    RecurringExecution.objects.using(alias)
+    .filter(backend_alias=backend_alias, task_key=OuterRef("key"))
+    .values("task_key")
+    .annotate(value=Max("run_at"))
+    .values("value")[:1]
+  )
+  queryset = (
+    RecurringTask.objects.using(alias)
+    .filter(backend_alias=backend_alias)
+    .annotate(last_run_at=Subquery(last_run_at, output_field=DateTimeField()))
+    .order_by(*_overview_queryset_ordering(section="recurring", sort=sort, tie_breaker="key"))
+  )
+  paginator = Paginator(queryset, page_size)
+  page_obj = paginator.get_page(page_number)
+  total_count = paginator.count
+  return {
+    "rows": _recurring_task_rows(
+      page_obj.object_list,
+      backend_alias=backend_alias,
+      now=now,
+    ),
+    "number": page_obj.number,
+    "total_pages": paginator.num_pages,
+    "total_count": total_count,
+    "start_index": page_obj.start_index() if total_count else 0,
+    "end_index": page_obj.end_index() if total_count else 0,
+  }
+
+
+def _semaphore_overview_page(*, backend_alias, page_size, page_number, sort):
+  alias = get_database_alias(backend_alias)
+  queryset = (
+    Semaphore.objects.using(alias)
+    .annotate(blocked_waiters=observability.semaphore_blocked_waiter_count_expression(alias))
+    .order_by(
+      *_overview_queryset_ordering(
+        section="semaphores",
+        sort=sort,
+        field_map={"available_slots": "value"},
+        tie_breaker="key",
+      )
+    )
+  )
+  paginator = Paginator(queryset, page_size)
+  page_obj = paginator.get_page(page_number)
+  total_count = paginator.count
+  return {
+    "rows": _semaphore_rows(page_obj.object_list, backend_alias=backend_alias, alias=alias),
+    "number": page_obj.number,
+    "total_pages": paginator.num_pages,
+    "total_count": total_count,
+    "start_index": page_obj.start_index() if total_count else 0,
+    "end_index": page_obj.end_index() if total_count else 0,
+  }
+
+
+def _recurring_sort_requires_python(sort):
+  return any(part.removeprefix("-") == "next_run" for part in _parse_sort_fields(sort))
+
+
+def _recurring_task_rows(tasks, *, backend_alias, now):
+  return [
+    _recurring_row_with_jobs_url(
+      {
+        "key": task.key,
+        "task_path": task.task_path,
+        "queue_name": task.queue_name,
+        "schedule": task.schedule,
+        "static": task.static,
+        "last_run_at": task.last_run_at,
+        "next_run_at": task.next_run_at or _next_run_at(task.schedule, now),
+      },
+      backend_alias=backend_alias,
+    )
+    for task in tasks
+  ]
+
+
+def _recurring_row_with_jobs_url(row, *, backend_alias):
+  return {
+    **row,
+    "jobs_url": _job_changelist_url(
+      backend_alias=backend_alias,
+      recurring_task_key=row["key"],
+    ),
+  }
+
+
+def _semaphore_rows(semaphores, *, backend_alias, alias):
+  return [
+    {
+      "scope": "queue_database",
+      "queue_database_alias": alias,
+      "key": semaphore.key,
+      "available_slots": semaphore.value,
+      "limit": semaphore.limit,
+      "blocked_waiters": semaphore.blocked_waiters,
+      "expires_at": semaphore.expires_at,
+      "jobs_url": _job_changelist_url(
+        backend_alias=backend_alias,
+        concurrency_key=semaphore.key,
+      ),
+    }
+    for semaphore in semaphores
+  ]
+
+
+def _overview_queryset_ordering(*, section, sort, field_map=None, tie_breaker=None):
+  if field_map is None:
+    field_map = {}
+
+  order_by = []
+  ordered_fields = set()
+  for part in _parse_sort_fields(sort):
+    field_name = part.removeprefix("-")
+    key_name = OVERVIEW_SORTS[section]["fields"][field_name]["key"]
+    query_field = field_map.get(key_name, key_name)
+    descending = part.startswith("-")
+    expression = F(query_field)
+    order_by.append(
+      expression.desc(nulls_last=True) if descending else expression.asc(nulls_last=True)
+    )
+    ordered_fields.add(query_field)
+
+  if tie_breaker and tie_breaker not in ordered_fields:
+    order_by.append(F(tie_breaker).asc())
+  return order_by
 
 
 def _overview_query(*, query_params, page_param, page_number, sort_param=None, sort=None):
