@@ -54,7 +54,13 @@ class NotifyWakeupBackend:
       self.failed = True
       self._close_connection()
       handle_thread_error(error, context="worker.notify", backend_alias=self.backend_alias)
-    self._start_watcher()
+    try:
+      self._start_watcher()
+    except Exception as error:
+      self.failed = True
+      self._watcher = None
+      self._close_connection()
+      handle_thread_error(error, context="worker.notify", backend_alias=self.backend_alias)
     return None
 
   def stop(self, *, timeout=1):

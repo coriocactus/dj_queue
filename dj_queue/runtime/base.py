@@ -26,6 +26,7 @@ def app_executor():
 
 _sqlite_process_write_lock = threading.Lock()
 _safe_polling_interval = 1.0
+_liveness_check_min_interval = 1.0
 
 
 def _process_write_context(alias):
@@ -366,4 +367,4 @@ class BaseRunner:
     intervals = [5.0, self._effective_heartbeat_interval()]
     if math.isfinite(threshold) and threshold > 0:
       intervals.append(threshold / 10)
-    return max(min(intervals), self.polling_interval)
+    return max(min(intervals), self.polling_interval, _liveness_check_min_interval)

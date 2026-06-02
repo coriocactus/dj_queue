@@ -133,6 +133,33 @@ def test_runner_liveness_check_is_throttled(monkeypatch):
   assert entered == [True]
 
 
+def test_runner_liveness_check_keeps_minimum_cadence(monkeypatch):
+  entered = []
+
+  @contextmanager
+  def executor():
+    entered.append(True)
+    yield
+
+  monkeypatch.setattr("dj_queue.runtime.base.app_executor", executor)
+  runner = FallbackRunner(
+    SimpleNamespace(polling_interval=0.01, process_alive_threshold=0.05),
+    name=f"minimum-cadence-runner-{uuid4()}",
+    pid=12345,
+    hostname="localhost",
+    heartbeat_interval=60,
+  )
+  runner.start()
+
+  try:
+    assert runner.should_continue() is True
+    assert runner.should_continue() is True
+  finally:
+    runner.stop()
+
+  assert entered == [True]
+
+
 def test_runner_poll_loop_routes_liveness_errors(monkeypatch):
   handled = []
   runner = DummyRunner(heartbeat_interval=60)
