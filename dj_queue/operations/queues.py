@@ -41,29 +41,26 @@ def resume_queue(queue_name, *, backend_alias="default", resumed_at=None):
       resumed_at = timezone.now()
     paused_at = pause.created_at
     pause_duration = Value(resumed_at - paused_at, output_field=DurationField())
-    ready_row_ids = list(
-      ReadyExecution.objects.using(alias)
-      .filter(backend_alias=backend_alias, queue_name=queue_name)
-      .values_list("id", flat=True)
-    )
-    if ready_row_ids:
-      ReadyExecution.objects.using(alias).filter(pk__in=ready_row_ids).update(
-        latency_started_at=Case(
-          When(
-            latency_started_at__isnull=True,
-            created_at__lt=paused_at,
-            then=ExpressionWrapper(F("created_at") + pause_duration, output_field=DateTimeField()),
-          ),
-          When(
-            latency_started_at__lt=paused_at,
-            then=ExpressionWrapper(
-              F("latency_started_at") + pause_duration, output_field=DateTimeField()
-            ),
-          ),
-          default=Value(resumed_at, output_field=DateTimeField()),
-          output_field=DateTimeField(),
+    ReadyExecution.objects.using(alias).filter(
+      backend_alias=backend_alias,
+      queue_name=queue_name,
+    ).update(
+      latency_started_at=Case(
+        When(
+          latency_started_at__isnull=True,
+          created_at__lt=paused_at,
+          then=ExpressionWrapper(F("created_at") + pause_duration, output_field=DateTimeField()),
         ),
-      )
+        When(
+          latency_started_at__lt=paused_at,
+          then=ExpressionWrapper(
+            F("latency_started_at") + pause_duration, output_field=DateTimeField()
+          ),
+        ),
+        default=Value(resumed_at, output_field=DateTimeField()),
+        output_field=DateTimeField(),
+      ),
+    )
     pause.delete()
   log_event("queue.resumed", backend_alias=backend_alias, queue_name=queue_name)
   return True

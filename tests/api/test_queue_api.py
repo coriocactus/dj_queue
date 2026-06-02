@@ -183,6 +183,28 @@ def test_queue_info_resume_preserves_pre_pause_active_wait_time():
   assert 5.0 <= latency <= 20.0
 
 
+def test_queue_info_resume_updates_ready_rows_without_materializing_ids(monkeypatch):
+  job = make_ready_job(queue_name="emails")
+  before_pause = timezone.now() - timedelta(seconds=40)
+  ReadyExecution.objects.filter(job=job).update(
+    created_at=before_pause,
+    latency_started_at=before_pause,
+  )
+  QueueInfo("emails").pause()
+  Pause.objects.filter(backend_alias="default", queue_name="emails").update(
+    created_at=timezone.now() - timedelta(seconds=30)
+  )
+
+  def fail_values_list(self, *args, **kwargs):
+    raise AssertionError("resume should not materialize ready-row ids")
+
+  monkeypatch.setattr("django.db.models.query.QuerySet.values_list", fail_values_list)
+
+  QueueInfo("emails").resume()
+
+  assert QueueInfo("emails").latency < 20.0
+
+
 def test_queue_info_resume_stays_backend_scoped_on_shared_queue_db(settings):
   settings.TASKS = {
     "default": {
