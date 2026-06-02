@@ -1,6 +1,8 @@
 from datetime import timedelta
 
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from dj_queue.models import FailedExecution, Job, ReadyExecution
@@ -110,14 +112,18 @@ def test_queue_state_summaries_by_queue_follow_canonical_job_rows():
   assert summaries["beta"].count("failed") == 1
 
 
-def test_queue_state_summaries_by_queue_uses_one_aggregate_query(django_assert_num_queries):
+def test_queue_state_summaries_by_queue_uses_state_table_aggregates_for_live_counts():
   enqueue_ready_job(queue_name="alpha")
   make_failed_job(queue_name="beta")
 
-  with django_assert_num_queries(1):
+  with CaptureQueriesContext(connection) as captured:
     summaries = queue_state_summaries_by_queue(backend_alias="default")
 
   assert sorted(summaries) == ["alpha", "beta"]
+  sql = "\n".join(query["sql"] for query in captured.captured_queries)
+  assert "dj_queue_ready_executions" in sql
+  assert "dj_queue_failed_executions" in sql
+  assert len(captured.captured_queries) <= 7
 
 
 def test_filter_queue_state_uses_the_canonical_state_definition():

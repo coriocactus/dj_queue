@@ -5,7 +5,14 @@ from django.db.models import Case, Count, IntegerField, Min, Q, Value, When
 from django.db.models.functions import Coalesce
 
 from dj_queue.db import get_database_alias
-from dj_queue.models import Job
+from dj_queue.models import (
+  BlockedExecution,
+  ClaimedExecution,
+  FailedExecution,
+  Job,
+  ReadyExecution,
+  ScheduledExecution,
+)
 from dj_queue.models.jobs import (
   INVALID_JOB_STATUS,
   invalid_execution_state_query,
@@ -147,16 +154,28 @@ def queue_state_queryset(*, backend_alias, queue_name, state):
 
 
 def queue_state_counts(*, backend_alias, queue_name):
-  alias = get_database_alias(backend_alias)
-  base_queryset = Job.objects.using(alias).filter(
-    backend_alias=backend_alias,
-    queue_name=queue_name,
-  )
-  return _queue_state_counts(base_queryset)
+  return queue_state_summary(backend_alias=backend_alias, queue_name=queue_name).counts_by_state()
 
 
 def queue_state_summary(*, backend_alias, queue_name):
   alias = get_database_alias(backend_alias)
+  if _invalid_execution_state_exists(alias, backend_alias, queue_name=queue_name):
+    return _job_state_summary(alias, backend_alias=backend_alias, queue_name=queue_name)
+  return _state_table_summaries_by_queue(
+    alias,
+    backend_alias=backend_alias,
+    queue_name=queue_name,
+  ).get(queue_name) or empty_queue_state_summary(queue_name)
+
+
+def queue_state_summaries_by_queue(*, backend_alias):
+  alias = get_database_alias(backend_alias)
+  if _invalid_execution_state_exists(alias, backend_alias):
+    return _job_state_summaries_by_queue(alias, backend_alias=backend_alias)
+  return _state_table_summaries_by_queue(alias, backend_alias=backend_alias)
+
+
+def _job_state_summary(alias, *, backend_alias, queue_name):
   base_queryset = Job.objects.using(alias).filter(
     backend_alias=backend_alias,
     queue_name=queue_name,
@@ -167,8 +186,7 @@ def queue_state_summary(*, backend_alias, queue_name):
   )
 
 
-def queue_state_summaries_by_queue(*, backend_alias):
-  alias = get_database_alias(backend_alias)
+def _job_state_summaries_by_queue(alias, *, backend_alias):
   base_queryset = Job.objects.using(alias).filter(backend_alias=backend_alias)
   return {
     row["queue_name"]: _summary_from_row(row["queue_name"], row)
@@ -176,6 +194,113 @@ def queue_state_summaries_by_queue(*, backend_alias):
     .annotate(**_summary_annotations())
     .order_by("queue_name")
   }
+
+
+def _state_table_summaries_by_queue(alias, *, backend_alias, queue_name=None):
+  rows = {}
+  _merge_ready_summary(rows, alias=alias, backend_alias=backend_alias, queue_name=queue_name)
+  _merge_scheduled_summary(rows, alias=alias, backend_alias=backend_alias, queue_name=queue_name)
+  _merge_blocked_summary(rows, alias=alias, backend_alias=backend_alias, queue_name=queue_name)
+  _merge_claimed_summary(rows, alias=alias, backend_alias=backend_alias, queue_name=queue_name)
+  _merge_failed_summary(rows, alias=alias, backend_alias=backend_alias, queue_name=queue_name)
+  _merge_finished_summary(rows, alias=alias, backend_alias=backend_alias, queue_name=queue_name)
+  return {name: _summary_from_row(name, row) for name, row in sorted(rows.items())}
+
+
+def _empty_summary_values(queue_name):
+  return {
+    "queue_name": queue_name,
+    **{definition.name: 0 for definition in QUEUE_STATE_DEFINITIONS},
+    "oldest_ready_at": None,
+    "oldest_scheduled_at": None,
+    "oldest_blocked_at": None,
+  }
+
+
+def _summary_values(rows, queue_name):
+  return rows.setdefault(queue_name, _empty_summary_values(queue_name))
+
+
+def _merge_ready_summary(rows, *, alias, backend_alias, queue_name):
+  queryset = ReadyExecution.objects.using(alias).filter(
+    backend_alias=backend_alias,
+    job__backend_alias=backend_alias,
+  )
+  if queue_name is not None:
+    queryset = queryset.filter(job__queue_name=queue_name)
+  for row in queryset.values("job__queue_name").annotate(
+    count=Count("id"),
+    oldest_ready_at=Min(Coalesce("latency_started_at", "created_at")),
+  ):
+    values = _summary_values(rows, row["job__queue_name"])
+    values["ready"] = row["count"]
+    values["oldest_ready_at"] = row["oldest_ready_at"]
+
+
+def _merge_scheduled_summary(rows, *, alias, backend_alias, queue_name):
+  queryset = ScheduledExecution.objects.using(alias).filter(
+    backend_alias=backend_alias,
+    job__backend_alias=backend_alias,
+  )
+  if queue_name is not None:
+    queryset = queryset.filter(job__queue_name=queue_name)
+  for row in queryset.values("job__queue_name").annotate(
+    count=Count("id"),
+    oldest_scheduled_at=Min("scheduled_at"),
+  ):
+    values = _summary_values(rows, row["job__queue_name"])
+    values["scheduled"] = row["count"]
+    values["oldest_scheduled_at"] = row["oldest_scheduled_at"]
+
+
+def _merge_blocked_summary(rows, *, alias, backend_alias, queue_name):
+  queryset = BlockedExecution.objects.using(alias).filter(
+    backend_alias=backend_alias,
+    job__backend_alias=backend_alias,
+  )
+  if queue_name is not None:
+    queryset = queryset.filter(job__queue_name=queue_name)
+  for row in queryset.values("job__queue_name").annotate(
+    count=Count("id"),
+    oldest_blocked_at=Min("expires_at"),
+  ):
+    values = _summary_values(rows, row["job__queue_name"])
+    values["blocked"] = row["count"]
+    values["oldest_blocked_at"] = row["oldest_blocked_at"]
+
+
+def _merge_claimed_summary(rows, *, alias, backend_alias, queue_name):
+  queryset = ClaimedExecution.objects.using(alias).filter(job__backend_alias=backend_alias)
+  if queue_name is not None:
+    queryset = queryset.filter(job__queue_name=queue_name)
+  for row in queryset.values("job__queue_name").annotate(count=Count("id")):
+    _summary_values(rows, row["job__queue_name"])["claimed"] = row["count"]
+
+
+def _merge_failed_summary(rows, *, alias, backend_alias, queue_name):
+  queryset = FailedExecution.objects.using(alias).filter(job__backend_alias=backend_alias)
+  if queue_name is not None:
+    queryset = queryset.filter(job__queue_name=queue_name)
+  for row in queryset.values("job__queue_name").annotate(count=Count("id")):
+    _summary_values(rows, row["job__queue_name"])["failed"] = row["count"]
+
+
+def _merge_finished_summary(rows, *, alias, backend_alias, queue_name):
+  queryset = Job.objects.using(alias).filter(
+    backend_alias=backend_alias,
+    finished_at__isnull=False,
+  )
+  if queue_name is not None:
+    queryset = queryset.filter(queue_name=queue_name)
+  for row in queryset.values("queue_name").annotate(count=Count("id")):
+    _summary_values(rows, row["queue_name"])["finished"] = row["count"]
+
+
+def _invalid_execution_state_exists(alias, backend_alias, *, queue_name=None):
+  queryset = Job.objects.using(alias).filter(backend_alias=backend_alias)
+  if queue_name is not None:
+    queryset = queryset.filter(queue_name=queue_name)
+  return queryset.filter(invalid_execution_state_query()).exists()
 
 
 def empty_queue_state_summary(queue_name):
