@@ -57,6 +57,10 @@ class Process(models.Model):
       models.Index(fields=["backend_alias"]),
       models.Index(fields=["name", "supervisor"]),
       models.Index(fields=["last_heartbeat_at"]),
+      models.Index(
+        fields=["backend_alias", "last_heartbeat_at", "id"],
+        name="djq_pr_b_heart_id_idx",
+      ),
     ]
 
 

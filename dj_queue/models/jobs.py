@@ -71,6 +71,8 @@ class Job(models.Model):
       models.Index(fields=["scheduled_at", "finished_at"]),
       models.Index(fields=["finished_at"]),
       models.Index(fields=["backend_alias", "finished_at", "id"]),
+      models.Index(fields=["backend_alias", "queue_name", "id"], name="djq_jobs_b_queue_id_idx"),
+      models.Index(fields=["backend_alias", "concurrency_key"], name="djq_jobs_b_conc_idx"),
     ]
 
   @property
