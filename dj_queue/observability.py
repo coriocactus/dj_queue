@@ -87,7 +87,7 @@ def backend_choices():
   ]
 
 
-def backend_snapshot(*, backend_alias, now=None):
+def backend_snapshot(*, backend_alias, now=None, semaphore_rows=None):
   config = load_backend_config(backend_alias)
   queue_database_alias = get_database_alias(backend_alias)
   if now is None:
@@ -109,7 +109,8 @@ def backend_snapshot(*, backend_alias, now=None):
     scope="backend",
   )
   recurring_rows = recurring_rows_for_backend(backend_alias=backend_alias, now=now)
-  semaphore_rows = semaphore_rows_for_backend(backend_alias=backend_alias)
+  if semaphore_rows is None:
+    semaphore_rows = semaphore_rows_for_backend(backend_alias=backend_alias)
   runner_metrics = process_counts(backend_process_rows)
 
   return BackendSnapshot(
@@ -127,7 +128,18 @@ def backend_snapshot(*, backend_alias, now=None):
 def all_backend_snapshots(*, now=None):
   if now is None:
     now = timezone.now()
-  return [backend_snapshot(backend_alias=alias, now=now) for alias in configured_backend_aliases()]
+  shared_semaphore_rows = {}
+  snapshots = []
+  for alias in configured_backend_aliases():
+    queue_database_alias = get_database_alias(alias)
+    semaphore_rows = shared_semaphore_rows.get(queue_database_alias)
+    if semaphore_rows is None:
+      semaphore_rows = tuple(semaphore_rows_for_backend(backend_alias=alias))
+      shared_semaphore_rows[queue_database_alias] = semaphore_rows
+    snapshots.append(
+      backend_snapshot(backend_alias=alias, now=now, semaphore_rows=semaphore_rows)
+    )
+  return snapshots
 
 
 def stats_payload(*, now=None):
@@ -256,7 +268,7 @@ def queue_snapshot(
     "live_worker_count": sum(
       1
       for worker in live_workers
-      if queue_matches_selectors(queue_name, worker.metadata.get("queues") or ("*",))
+      if _worker_matches_queue(queue_name, worker)
     ),
   }
 
@@ -455,7 +467,7 @@ def _state_backend_mismatch_count(model, *, alias, backend_alias):
 
 def process_row(process, *, now, process_cutoff):
   age_seconds = max((now - process.last_heartbeat_at).total_seconds(), 0.0)
-  metadata = process.metadata or {}
+  metadata = process.metadata if isinstance(process.metadata, dict) else {}
   shutdown_started_at = metadata.get("shutdown_started_at")
   return {
     "id": process.id,
@@ -556,6 +568,27 @@ def _live_processes_for_backend(*, alias, backend_alias, kind, process_cutoff):
     for process in Process.objects.using(alias).filter(kind=kind, backend_alias=backend_alias)
     if process.last_heartbeat_at >= process_cutoff
   ]
+
+
+def _worker_matches_queue(queue_name, worker):
+  selectors = _worker_queue_selectors(worker)
+  if selectors is None:
+    return False
+  return queue_matches_selectors(queue_name, selectors)
+
+
+def _worker_queue_selectors(worker):
+  if worker.metadata is not None and not isinstance(worker.metadata, dict):
+    return None
+  metadata = worker.metadata or {}
+  selectors = metadata.get("queues") or ("*",)
+  if isinstance(selectors, str):
+    return selectors
+  if not isinstance(selectors, (list, tuple)):
+    return None
+  if not all(isinstance(selector, str) for selector in selectors):
+    return None
+  return tuple(selectors)
 
 
 def _counts_by_value(queryset, *, field_name):

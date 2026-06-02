@@ -57,6 +57,65 @@ def test_backend_snapshot_filters_workers_to_backend(settings):
   assert snapshot.process_rows[0]["backend_alias"] == "default"
 
 
+def test_backend_snapshot_treats_malformed_worker_queue_metadata_as_no_match():
+  now = timezone.now()
+  enqueue_ready_job(queue_name="alpha")
+  Process.objects.create(
+    backend_alias="default",
+    kind="Worker",
+    pid=101,
+    hostname="localhost",
+    name="bad-container-worker",
+    metadata=["not", "a", "mapping"],
+    last_heartbeat_at=now,
+  )
+  Process.objects.create(
+    backend_alias="default",
+    kind="Worker",
+    pid=102,
+    hostname="localhost",
+    name="bad-selector-worker",
+    metadata={"queues": [1]},
+    last_heartbeat_at=now,
+  )
+
+  snapshot = observability.backend_snapshot(backend_alias="default", now=now)
+
+  assert snapshot.queue_rows[0]["live_worker_count"] == 0
+  assert [row["name"] for row in snapshot.process_rows] == [
+    "bad-container-worker",
+    "bad-selector-worker",
+  ]
+
+
+def test_all_backend_snapshots_reuses_shared_queue_database_semaphore_rows(settings, monkeypatch):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {"database_alias": "default"},
+    },
+    "critical": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {"database_alias": "default"},
+    },
+  }
+  calls = []
+
+  def semaphore_rows_for_backend(*, backend_alias):
+    calls.append(backend_alias)
+    return ({"key": f"{backend_alias}:semaphore"},)
+
+  monkeypatch.setattr(observability, "semaphore_rows_for_backend", semaphore_rows_for_backend)
+
+  snapshots = observability.all_backend_snapshots(now=timezone.now())
+
+  assert calls == ["default"]
+  assert [snapshot.backend_alias for snapshot in snapshots] == ["default", "critical"]
+  assert snapshots[0].semaphore_rows == snapshots[1].semaphore_rows
+
+
 def test_queue_rows_use_canonical_job_queue_names():
   now = timezone.now()
   ready = enqueue_ready_job(queue_name="canonical")

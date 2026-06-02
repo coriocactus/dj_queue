@@ -530,7 +530,19 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
 
   def get_queryset(self, request):
     queryset = super().get_queryset(request)
-    return queryset.annotate(status_rank=status_rank_expression())
+    if self._orders_by_status(request):
+      return queryset.annotate(status_rank=status_rank_expression())
+    return queryset
+
+  def _orders_by_status(self, request):
+    ordering = request.GET.get("o")
+    if not ordering:
+      return False
+    try:
+      status_index = self.get_list_display(request).index("display_status") + 1
+    except ValueError:
+      return False
+    return any(part.lstrip("-") == str(status_index) for part in ordering.split("."))
 
   @admin.display(description="status", ordering="status_rank")
   def display_status(self, obj):

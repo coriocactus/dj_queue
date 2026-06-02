@@ -114,6 +114,22 @@ def test_job_admin_changelist_renders(admin_client):
   assert "By backend" in response.content.decode()
 
 
+def test_job_admin_default_changelist_does_not_build_status_rank(admin_client, monkeypatch):
+  make_job()
+
+  monkeypatch.setattr(
+    "dj_queue.admin.status_rank_expression",
+    lambda: (_ for _ in ()).throw(AssertionError("status rank should be opt-in")),
+  )
+
+  response = admin_client.get(
+    reverse("admin:dj_queue_job_changelist"),
+    {"backend": "default"},
+  )
+
+  assert response.status_code == 200
+
+
 def test_job_admin_status_filter(admin_client):
   finished_job = make_job(queue_name="finished", finished_at=timezone.now())
   ready_job = make_job(queue_name="ready")
