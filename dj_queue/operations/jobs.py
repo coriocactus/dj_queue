@@ -552,9 +552,7 @@ def fail_claimed_jobs_for_process(
   jobs = [
     claimed.job
     for claimed in (
-      ClaimedExecution.objects.using(alias)
-      .select_related("job")
-      .filter(process_id=process.id)
+      ClaimedExecution.objects.using(alias).select_related("job").filter(process_id=process.id)
     )
   ]
   failed_jobs = _fail_claimed_jobs(
@@ -645,9 +643,7 @@ def prune_stale_processes(
       jobs = [
         claimed.job
         for claimed in (
-          ClaimedExecution.objects.using(alias)
-          .select_related("job")
-          .filter(process_id=process.id)
+          ClaimedExecution.objects.using(alias).select_related("job").filter(process_id=process.id)
         )
       ]
       deleted, _ = (

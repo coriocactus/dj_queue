@@ -136,9 +136,7 @@ def all_backend_snapshots(*, now=None):
     if semaphore_rows is None:
       semaphore_rows = tuple(semaphore_rows_for_backend(backend_alias=alias))
       shared_semaphore_rows[queue_database_alias] = semaphore_rows
-    snapshots.append(
-      backend_snapshot(backend_alias=alias, now=now, semaphore_rows=semaphore_rows)
-    )
+    snapshots.append(backend_snapshot(backend_alias=alias, now=now, semaphore_rows=semaphore_rows))
   return snapshots
 
 
@@ -266,9 +264,7 @@ def queue_snapshot(
     "oldest_scheduled_at": oldest_scheduled_at,
     "oldest_blocked_at": oldest_blocked_at,
     "live_worker_count": sum(
-      1
-      for worker in live_workers
-      if _worker_matches_queue(queue_name, worker)
+      1 for worker in live_workers if _worker_matches_queue(queue_name, worker)
     ),
   }
 

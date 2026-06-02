@@ -639,8 +639,12 @@ def test_dashboard_pages_control_sections_without_full_snapshot_rows(monkeypatch
   def fail_full_semaphore_rows(**kwargs):
     raise AssertionError("dashboard should page semaphore rows directly")
 
-  monkeypatch.setattr(dashboard.observability, "recurring_rows_for_backend", fail_full_recurring_rows)
-  monkeypatch.setattr(dashboard.observability, "semaphore_rows_for_backend", fail_full_semaphore_rows)
+  monkeypatch.setattr(
+    dashboard.observability, "recurring_rows_for_backend", fail_full_recurring_rows
+  )
+  monkeypatch.setattr(
+    dashboard.observability, "semaphore_rows_for_backend", fail_full_semaphore_rows
+  )
 
   context = dashboard.dashboard_context(backend_alias="default")
 
