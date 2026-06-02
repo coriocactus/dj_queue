@@ -17,7 +17,7 @@ from dj_queue.operations.jobs import (
   execute_claimed_job,
 )
 from dj_queue.runtime.worker import Worker
-from tests.tasks import echo, fail, non_json_result, with_context
+from tests.tasks import echo, fail, nan_result, non_json_result, with_context
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -375,6 +375,20 @@ def test_worker_executes_failure_path():
 
 def test_worker_fails_non_json_result_instead_of_stranding_claim():
   job = make_ready_job(task=non_json_result)
+  worker = make_worker()
+  worker.start()
+
+  worker.poll_once()
+
+  failed_execution = FailedExecution.objects.get(job=job)
+  assert failed_execution.message == "return value must be JSON round-trippable"
+  assert ClaimedExecution.objects.filter(job=job).exists() is False
+  assert Job.objects.get(pk=job.pk).finished_at is None
+  worker.stop()
+
+
+def test_worker_fails_non_standard_json_number_result_instead_of_persisting_nan():
+  job = make_ready_job(task=nan_result)
   worker = make_worker()
   worker.start()
 

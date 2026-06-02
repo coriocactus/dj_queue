@@ -39,7 +39,7 @@ def _normalize_payload(args, kwargs):
 
 def _normalize_json_round_trip(value, *, exception_class, message):
   try:
-    return json.loads(json.dumps(value))
+    return json.loads(json.dumps(value, allow_nan=False))
   except (TypeError, ValueError) as exc:
     raise exception_class(message) from exc
 

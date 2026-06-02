@@ -1,6 +1,7 @@
 import asyncio
 import copy
 from datetime import timedelta
+import math
 import uuid
 
 import pytest
@@ -1009,6 +1010,16 @@ def test_enqueue_rejects_non_json_round_trippable_payload():
 
   with pytest.raises(EnqueueError, match="JSON"):
     echo.enqueue(object())
+
+  assert Job.objects.count() == job_count
+
+
+@pytest.mark.django_db
+def test_enqueue_rejects_non_standard_json_numbers():
+  job_count = Job.objects.count()
+
+  with pytest.raises(EnqueueError, match="JSON"):
+    echo.enqueue(math.nan)
 
   assert Job.objects.count() == job_count
 

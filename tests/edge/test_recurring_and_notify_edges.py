@@ -394,6 +394,59 @@ def test_notify_watcher_reconnects_after_connection_error(monkeypatch):
   assert events == [("notify.restored", {"backend_alias": "default"})]
 
 
+def test_notify_wakeup_backend_starts_reconnect_watcher_after_initial_failure(monkeypatch):
+  errors = []
+  started = []
+
+  monkeypatch.setattr(
+    "dj_queue.runtime.notify.handle_thread_error",
+    lambda error, **kwargs: errors.append((error, kwargs)),
+  )
+  backend = NotifyWakeupBackend(backend_alias="default", wake_up=lambda: None)
+  monkeypatch.setattr(
+    backend,
+    "_open_connection",
+    lambda: (_ for _ in ()).throw(RuntimeError("initial notify failure")),
+  )
+  monkeypatch.setattr(backend, "_start_watcher", lambda: started.append(True))
+
+  backend.start()
+
+  assert [(str(error), kwargs["context"]) for error, kwargs in errors] == [
+    ("initial notify failure", "worker.notify")
+  ]
+  assert backend.failed is True
+  assert started == [True]
+
+
+def test_notify_watcher_reconnects_when_started_without_connection(monkeypatch):
+  wakes = []
+  events = []
+
+  class RestoredConnection:
+    def notifies(self, *, timeout, stop_after):
+      backend._stop_event.set()
+      return [SimpleNamespace(payload=json.dumps(["alpha"]))]
+
+  monkeypatch.setattr(
+    "dj_queue.runtime.notify.log_event",
+    lambda event, **kwargs: events.append((event, kwargs)),
+  )
+  backend = NotifyWakeupBackend(
+    backend_alias="default",
+    queues=("alpha",),
+    wake_up=lambda: wakes.append("wake"),
+    reconnect_base_delay=0,
+  )
+  monkeypatch.setattr(backend, "_open_connection", lambda: RestoredConnection())
+
+  backend._watch()
+
+  assert wakes == ["wake"]
+  assert backend.failed is False
+  assert events == [("notify.restored", {"backend_alias": "default"})]
+
+
 def test_notify_wakeup_backend_start_clears_prior_stop_event(monkeypatch):
   backend = NotifyWakeupBackend(backend_alias="default", wake_up=lambda: None)
   backend._stop_event.set()

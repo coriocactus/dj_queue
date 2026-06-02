@@ -370,6 +370,8 @@ def _load_toml_options(config_path: Any, *, backend_alias: str) -> dict[str, Any
 
   try:
     config_payload = tomllib.loads(Path(config_path).read_text(encoding="utf-8"))
+  except OSError as exc:
+    raise ImproperlyConfigured(f"DJ_QUEUE_CONFIG could not be read: {exc}") from exc
   except tomllib.TOMLDecodeError as exc:
     raise ImproperlyConfigured(f"DJ_QUEUE_CONFIG TOML is invalid: {exc}") from exc
   if not isinstance(config_payload, dict):

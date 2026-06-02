@@ -417,6 +417,19 @@ def test_multi_backend_toml_rejects_mixed_shapes(settings, tmp_path):
     )
 
 
+def test_config_file_read_errors_are_wrapped(settings, tmp_path):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {},
+    }
+  }
+  missing_config_path = tmp_path / "missing.toml"
+
+  with pytest.raises(ImproperlyConfigured, match="DJ_QUEUE_CONFIG could not be read"):
+    load_backend_config(env={"DJ_QUEUE_CONFIG": str(missing_config_path)})
+
+
 def test_workers_single_mapping_is_normalized_to_one_item_list(settings):
   settings.TASKS = {
     "default": {

@@ -16,6 +16,11 @@ def non_json_result():
 
 
 @task
+def nan_result():
+  return float("nan")
+
+
+@task
 def add(left, right):
   return left + right
 
