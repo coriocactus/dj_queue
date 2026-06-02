@@ -43,8 +43,28 @@ SCENARIO_ORDER = (
   "stats-payload",
   "metric-families",
   "dashboard-overview",
+  "dashboard-queues-sort-ready",
+  "dashboard-queues-sort-latency",
+  "dashboard-queues-sort-workers",
+  "dashboard-processes-sort-status",
+  "dashboard-recurring-sort-next-run",
+  "dashboard-semaphores-sort-blocked-waiters",
   "queue-info-all",
   "queue-page-ready",
+  "queue-page-ready-deep",
+  "queue-page-scheduled",
+  "queue-page-claimed",
+  "queue-page-blocked",
+  "queue-page-failed",
+  "queue-page-finished",
+  "queue-page-finished-deep",
+  "queue-page-invalid",
+  "worker-empty-claim",
+  "dispatcher-no-due-scheduled",
+  "dispatcher-no-expired-blocked",
+  "dispatcher-no-expired-semaphores",
+  "scheduler-no-due-recurring",
+  "scheduler-cleanup-not-due",
   "deep-health",
 )
 
@@ -169,7 +189,7 @@ def seed_profile_data(shape):
         key=semaphore_key(index),
         value=index % 5,
         limit=5,
-        expires_at=now + timedelta(minutes=index % 60),
+        expires_at=now + timedelta(days=1, minutes=index % 60),
         created_at=now,
         updated_at=now,
       )
@@ -265,7 +285,7 @@ def seed_recurring(shape, now):
         queue_name=queue_name(index),
         priority=index % 5,
         static=False,
-        next_run_at=now + timedelta(minutes=index % 30),
+        next_run_at=now + timedelta(days=1, minutes=index % 30),
         created_at=now,
         updated_at=now,
       )
@@ -347,7 +367,7 @@ def seed_jobs(shape, now, processes):
             queue_name=job.queue_name,
             priority=job.priority,
             concurrency_key=job.concurrency_key,
-            expires_at=now + timedelta(minutes=index % 60),
+            expires_at=now + timedelta(days=1, minutes=index % 60),
             created_at=created_at,
           )
         )
@@ -394,8 +414,7 @@ def state_for_index(index):
 def scheduled_at_for_state(state, now, index):
   if state != "scheduled":
     return None
-  offset = -(index % 60) if index % 2 == 0 else index % 60
-  return now + timedelta(minutes=offset)
+  return now + timedelta(days=1, minutes=index % 60)
 
 
 def queue_name(index):
@@ -476,6 +495,42 @@ def scenario_dashboard_overview():
 
   stub_dashboard_urls(dashboard)
   context = dashboard.dashboard_context(backend_alias="default")
+  return dashboard_metrics(context)
+
+
+def scenario_dashboard_queues_sort_ready():
+  return scenario_dashboard_sort({"queues_sort": "-ready"})
+
+
+def scenario_dashboard_queues_sort_latency():
+  return scenario_dashboard_sort({"queues_sort": "-latency"})
+
+
+def scenario_dashboard_queues_sort_workers():
+  return scenario_dashboard_sort({"queues_sort": "-workers"})
+
+
+def scenario_dashboard_processes_sort_status():
+  return scenario_dashboard_sort({"processes_sort": "-status"})
+
+
+def scenario_dashboard_recurring_sort_next_run():
+  return scenario_dashboard_sort({"recurring_sort": "next_run"})
+
+
+def scenario_dashboard_semaphores_sort_blocked_waiters():
+  return scenario_dashboard_sort({"semaphores_sort": "-blocked_waiters"})
+
+
+def scenario_dashboard_sort(query_params):
+  from dj_queue import dashboard
+
+  stub_dashboard_urls(dashboard)
+  context = dashboard.dashboard_context(backend_alias="default", query_params=query_params)
+  return dashboard_metrics(context)
+
+
+def dashboard_metrics(context):
   return {
     "summary_cards": len(context["summary_cards"]),
     "queue_rows": len(context["queue_section"]["rows"]),
@@ -499,19 +554,141 @@ def scenario_queue_info_all():
 
 
 def scenario_queue_page_ready():
+  return scenario_queue_page("ready")
+
+
+def scenario_queue_page_ready_deep():
+  return scenario_queue_page("ready", page_number=5)
+
+
+def scenario_queue_page_scheduled():
+  return scenario_queue_page("scheduled")
+
+
+def scenario_queue_page_claimed():
+  return scenario_queue_page("claimed")
+
+
+def scenario_queue_page_blocked():
+  return scenario_queue_page("blocked")
+
+
+def scenario_queue_page_failed():
+  return scenario_queue_page("failed")
+
+
+def scenario_queue_page_finished():
+  return scenario_queue_page("finished")
+
+
+def scenario_queue_page_finished_deep():
+  return scenario_queue_page("finished", page_number=5)
+
+
+def scenario_queue_page_invalid():
+  return scenario_queue_page("invalid")
+
+
+def scenario_queue_page(state, *, page_number=1):
   from dj_queue import dashboard
 
   stub_dashboard_urls(dashboard)
   context = dashboard.queue_page_context(
     backend_alias="default",
-    queue_name=queue_name(1),
-    state="ready",
-    page_number=1,
+    queue_name=queue_name(queue_index_for_state(state)),
+    state=state,
+    page_number=page_number,
   )
   return {
     "job_rows": len(context["jobs"]),
+    "page_number": context["page_obj"].number,
     "result_count_text": context["result_count_text"],
     "state_tabs": len(context["state_tabs"]),
+  }
+
+
+def queue_index_for_state(state):
+  return {
+    "ready": 1,
+    "scheduled": 3,
+    "blocked": 5,
+    "failed": 7,
+    "claimed": 9,
+    "finished": 10,
+    "invalid": 1,
+  }[state]
+
+
+def scenario_worker_empty_claim():
+  from dj_queue.operations.jobs import claim_ready_jobs
+
+  claimed_jobs = claim_ready_jobs(
+    limit=100, queues=("__profile_empty__",), backend_alias="default"
+  )
+  return {"claimed_count": len(claimed_jobs)}
+
+
+def scenario_dispatcher_no_due_scheduled():
+  from dj_queue.operations.jobs import promote_scheduled_jobs
+
+  promoted_jobs = promote_scheduled_jobs(batch_size=500, backend_alias="default")
+  return {"promoted_count": len(promoted_jobs)}
+
+
+def scenario_dispatcher_no_expired_blocked():
+  from dj_queue.operations.concurrency import promote_expired_blocked_jobs
+
+  promoted_jobs = promote_expired_blocked_jobs(batch_size=500, backend_alias="default")
+  return {"promoted_count": len(promoted_jobs)}
+
+
+def scenario_dispatcher_no_expired_semaphores():
+  from dj_queue.operations.concurrency import cleanup_expired_semaphores
+
+  return {"deleted_count": cleanup_expired_semaphores(backend_alias="default")}
+
+
+def scenario_scheduler_no_due_recurring():
+  from django.utils import timezone
+
+  from dj_queue.operations.recurring import fire_due_recurring_tasks
+
+  fired_jobs = fire_due_recurring_tasks(
+    timezone.now(),
+    include_dynamic_tasks=True,
+    backend_alias="default",
+    batch_size=500,
+  )
+  return {"fired_count": len(fired_jobs)}
+
+
+def scenario_scheduler_cleanup_not_due():
+  from django.utils import timezone
+
+  from dj_queue.operations.cleanup import (
+    clear_failed_jobs,
+    clear_finished_jobs,
+    clear_recurring_executions,
+  )
+
+  now = timezone.now()
+  older_than = 10 * 365 * 24 * 60 * 60
+  return {
+    "finished_deleted": clear_finished_jobs(
+      older_than=older_than,
+      backend_alias="default",
+      now=now,
+    ),
+    "failed_deleted": clear_failed_jobs(
+      older_than=older_than,
+      backend_alias="default",
+      now=now,
+    ),
+    "recurring_deleted": clear_recurring_executions(
+      older_than=older_than,
+      backend_alias="default",
+      now=now,
+    ),
   }
 
 
@@ -618,8 +795,30 @@ SCENARIOS = {
   "stats-payload": scenario_stats_payload,
   "metric-families": scenario_metric_families,
   "dashboard-overview": scenario_dashboard_overview,
+  "dashboard-queues-sort-ready": scenario_dashboard_queues_sort_ready,
+  "dashboard-queues-sort-latency": scenario_dashboard_queues_sort_latency,
+  "dashboard-queues-sort-workers": scenario_dashboard_queues_sort_workers,
+  "dashboard-processes-sort-status": scenario_dashboard_processes_sort_status,
+  "dashboard-recurring-sort-next-run": scenario_dashboard_recurring_sort_next_run,
+  "dashboard-semaphores-sort-blocked-waiters": (
+    scenario_dashboard_semaphores_sort_blocked_waiters
+  ),
   "queue-info-all": scenario_queue_info_all,
   "queue-page-ready": scenario_queue_page_ready,
+  "queue-page-ready-deep": scenario_queue_page_ready_deep,
+  "queue-page-scheduled": scenario_queue_page_scheduled,
+  "queue-page-claimed": scenario_queue_page_claimed,
+  "queue-page-blocked": scenario_queue_page_blocked,
+  "queue-page-failed": scenario_queue_page_failed,
+  "queue-page-finished": scenario_queue_page_finished,
+  "queue-page-finished-deep": scenario_queue_page_finished_deep,
+  "queue-page-invalid": scenario_queue_page_invalid,
+  "worker-empty-claim": scenario_worker_empty_claim,
+  "dispatcher-no-due-scheduled": scenario_dispatcher_no_due_scheduled,
+  "dispatcher-no-expired-blocked": scenario_dispatcher_no_expired_blocked,
+  "dispatcher-no-expired-semaphores": scenario_dispatcher_no_expired_semaphores,
+  "scheduler-no-due-recurring": scenario_scheduler_no_due_recurring,
+  "scheduler-cleanup-not-due": scenario_scheduler_cleanup_not_due,
   "deep-health": scenario_deep_health,
 }
 active_shape = ProfileShape(**PROFILE_SHAPES["small"])
