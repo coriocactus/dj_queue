@@ -1138,8 +1138,31 @@ def test_queue_selector_exact_group_drains_first_selector_before_next():
 
 
 @pytest.mark.django_db
+def test_queue_selector_exact_group_uses_physical_queue_plan(monkeypatch):
+  alpha_1 = echo.using(queue_name="alpha").enqueue("alpha-1")
+  alpha_2 = echo.using(queue_name="alpha").enqueue("alpha-2")
+  echo.using(queue_name="beta").enqueue("beta")
+
+  def fail_generic_selector_plan(*args, **kwargs):
+    raise AssertionError("exact selectors should not use the generic ranked plan")
+
+  monkeypatch.setattr(
+    job_operations,
+    "_ordered_selector_rows_queryset",
+    fail_generic_selector_plan,
+  )
+
+  claimed_jobs = claim_ready_jobs(limit=2, queues=("alpha", "beta"))
+
+  assert [str(claimed_job.job.id) for claimed_job in claimed_jobs] == [
+    alpha_1.id,
+    alpha_2.id,
+  ]
+
+
+@pytest.mark.django_db
 def test_queue_selector_exact_group_query_budget_stays_claim_sized():
-  for queue_name in ("alpha", "alpha", "beta", "beta"):
+  for queue_name in ("alpha", "alpha", "alpha", "alpha", "beta", "beta"):
     echo.using(queue_name=queue_name).enqueue(queue_name)
 
   with CaptureQueriesContext(connection) as ctx:
@@ -1149,8 +1172,8 @@ def test_queue_selector_exact_group_query_budget_stays_claim_sized():
   assert [claimed_job.job.queue_name for claimed_job in claimed_jobs] == [
     "alpha",
     "alpha",
-    "beta",
-    "beta",
+    "alpha",
+    "alpha",
   ]
 
 
