@@ -55,7 +55,13 @@ def fixed_now():
 
 def make_worker(*, config=None, name="worker-1"):
   if config is None:
-    config = WorkerConfig(queues=("*",), threads=1, processes=1, polling_interval=0.1)
+    config = WorkerConfig(
+      queues=("*",),
+      threads=1,
+      processes=1,
+      polling_interval=0.1,
+      prefetch_multiplier=1,
+    )
   return Worker(
     config,
     backend_alias="default",
@@ -128,6 +134,7 @@ def test_full_lifecycle_mixed_queues_scheduled_blocked_and_recurring(monkeypatch
       threads=1,
       processes=1,
       polling_interval=0.1,
+      prefetch_multiplier=1,
     ),
     name=f"worker-{uuid4()}",
   )
