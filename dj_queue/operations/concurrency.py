@@ -115,6 +115,48 @@ def semaphore_acquire(
   return False
 
 
+def semaphore_acquire_many(
+  key,
+  *,
+  count,
+  limit,
+  duration_seconds,
+  backend_alias="default",
+):
+  if count <= 0:
+    return 0
+  alias = get_database_alias(backend_alias)
+  now = timezone.now()
+  expires_at = now + timedelta(seconds=duration_seconds)
+
+  with _operation_atomic(alias):
+    acquired = min(count, limit)
+    semaphore, created = (
+      Semaphore.objects.using(alias)
+      .select_for_update()
+      .get_or_create(
+        key=key,
+        defaults={
+          "value": limit - acquired,
+          "limit": limit,
+          "expires_at": expires_at,
+          "updated_at": now,
+        },
+      )
+    )
+    if created:
+      return acquired
+
+    available = min(limit, max(0, semaphore.value + limit - semaphore.limit))
+    acquired = min(count, available)
+    semaphore.value = available - acquired
+    semaphore.limit = limit
+    semaphore.expires_at = expires_at
+    semaphore.updated_at = now
+    semaphore.save(using=alias, update_fields=["value", "limit", "expires_at", "updated_at"])
+    return acquired
+
+
 def _postgresql_semaphore_acquire(alias, key, *, limit, expires_at, now):
   connection = connections[alias]
   quote = connection.ops.quote_name

@@ -27,6 +27,7 @@ from dj_queue.operations.concurrency import (
   cleanup_expired_semaphores,
   promote_expired_blocked_jobs,
   semaphore_acquire,
+  semaphore_acquire_many,
   semaphore_release,
 )
 import dj_queue.operations.concurrency as concurrency_operations
@@ -385,6 +386,30 @@ def test_enqueue_with_concurrency_slot_available_goes_ready():
   assert job.concurrency_key == "account:1"
   assert semaphore.value == 0
   assert semaphore.limit == 1
+
+
+@pytest.mark.django_db
+def test_semaphore_acquire_many_reserves_available_slots():
+  acquired = semaphore_acquire_many(
+    "account:bulk",
+    count=3,
+    limit=2,
+    duration_seconds=60,
+  )
+
+  assert acquired == 2
+  semaphore = Semaphore.objects.get(key="account:bulk")
+  assert semaphore.value == 0
+
+  assert (
+    semaphore_acquire_many(
+      "account:bulk",
+      count=1,
+      limit=2,
+      duration_seconds=60,
+    )
+    == 0
+  )
 
 
 @pytest.mark.django_db

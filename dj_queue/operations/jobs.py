@@ -53,6 +53,7 @@ from dj_queue.operations.concurrency import (
   SlotHandoffMode,
   concurrency_settings,
   semaphore_acquire,
+  semaphore_acquire_many,
   semaphore_release,
   unblock_next_blocked_job,
 )
@@ -221,6 +222,9 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
 
   ready_rows = []
   scheduled_rows = []
+  blocked_rows = []
+  discarded_jobs = []
+  concurrency_entries = []
   ready_queue_names = []
 
   with transaction.atomic(using=alias):
@@ -254,12 +258,17 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
         entry["dispatch_outcome"] = DispatchOutcome.READY
         continue
 
-      dispatch_outcome = _dispatch_job(
-        job, task=entry["task"], backend_alias=backend_alias, now=now
-      )
-      if dispatch_outcome.should_notify:
-        ready_queue_names.append(job.queue_name)
-      entry["dispatch_outcome"] = dispatch_outcome
+      concurrency_entries.append(entry)
+
+    _dispatch_bulk_concurrency_entries(
+      concurrency_entries,
+      ready_rows=ready_rows,
+      blocked_rows=blocked_rows,
+      discarded_jobs=discarded_jobs,
+      ready_queue_names=ready_queue_names,
+      backend_alias=backend_alias,
+      now=now,
+    )
 
     _bulk_create_ready_executions_locked(
       alias,
@@ -268,6 +277,12 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
       check_conflicts=False,
     )
     _bulk_create(alias, ScheduledExecution, scheduled_rows)
+    _bulk_create(alias, BlockedExecution, blocked_rows)
+    if discarded_jobs:
+      Job.objects.using(alias).bulk_update(
+        discarded_jobs,
+        ["finished_at", "return_value", "updated_at"],
+      )
 
   if ready_queue_names:
     notify_ready_queues_on_commit(
@@ -300,6 +315,71 @@ def _log_bulk_enqueued(outcomes, *, backend_alias):
     blocked_count=counts[DispatchOutcome.BLOCKED],
     discarded_count=counts[DispatchOutcome.DISCARDED],
   )
+
+
+def _dispatch_bulk_concurrency_entries(
+  entries,
+  *,
+  ready_rows,
+  blocked_rows,
+  discarded_jobs,
+  ready_queue_names,
+  backend_alias,
+  now,
+):
+  groups = {}
+  for entry in entries:
+    job = entry["job"]
+    limit, duration_seconds, on_conflict = concurrency_settings(
+      entry["task"], backend_alias=backend_alias
+    )
+    groups.setdefault(
+      (job.concurrency_key, limit, duration_seconds, on_conflict),
+      [],
+    ).append(entry)
+
+  for (concurrency_key, limit, duration_seconds, on_conflict), group in groups.items():
+    acquired_count = semaphore_acquire_many(
+      concurrency_key,
+      count=len(group),
+      limit=limit,
+      duration_seconds=duration_seconds,
+      backend_alias=backend_alias,
+    )
+    for index, entry in enumerate(group):
+      job = entry["job"]
+      if index < acquired_count:
+        ready_rows.append(
+          _ready_execution_row(
+            job=job,
+            backend_alias=backend_alias,
+            created_at=job.created_at,
+            ready_at=now,
+          )
+        )
+        ready_queue_names.append(job.queue_name)
+        entry["dispatch_outcome"] = DispatchOutcome.READY
+        continue
+
+      if on_conflict == "discard":
+        job.finished_at = now
+        job.return_value = None
+        job.updated_at = now
+        discarded_jobs.append(job)
+        entry["dispatch_outcome"] = DispatchOutcome.DISCARDED
+        continue
+
+      blocked_rows.append(
+        BlockedExecution(
+          job=job,
+          backend_alias=backend_alias,
+          queue_name=job.queue_name,
+          priority=job.priority,
+          concurrency_key=concurrency_key,
+          expires_at=now + timedelta(seconds=duration_seconds),
+        )
+      )
+      entry["dispatch_outcome"] = DispatchOutcome.BLOCKED
 
 
 def claim_ready_jobs(

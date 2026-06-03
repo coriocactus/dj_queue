@@ -376,6 +376,73 @@ def test_enqueue_bulk_caches_formatted_concurrency_key_signature(monkeypatch):
 
 
 @pytest.mark.django_db
+def test_enqueue_bulk_groups_concurrency_slot_acquisition(monkeypatch):
+  backend = limited.get_backend()
+  acquire_calls = []
+
+  def acquire_many(key, *, count, limit, duration_seconds, backend_alias):
+    acquire_calls.append(
+      {
+        "key": key,
+        "count": count,
+        "limit": limit,
+        "duration_seconds": duration_seconds,
+        "backend_alias": backend_alias,
+      }
+    )
+    return 1
+
+  def acquire_one(*args, **kwargs):
+    raise AssertionError("single acquire used")
+
+  monkeypatch.setattr("dj_queue.operations.jobs.semaphore_acquire_many", acquire_many)
+  monkeypatch.setattr(
+    "dj_queue.operations.jobs.semaphore_acquire",
+    acquire_one,
+  )
+
+  backend.enqueue_all(
+    [
+      (limited, (1,), {"value": "first"}),
+      (limited, (1,), {"value": "second"}),
+      (limited, (1,), {"value": "third"}),
+    ]
+  )
+
+  assert acquire_calls == [
+    {
+      "key": "account:1",
+      "count": 3,
+      "limit": 1,
+      "duration_seconds": 60,
+      "backend_alias": "default",
+    }
+  ]
+  assert ReadyExecution.objects.count() == 1
+  assert Job.objects.blocked().count() == 2
+
+
+@pytest.mark.django_db
+def test_enqueue_bulk_grouped_concurrency_preserves_discard_outcome():
+  backend = limited_discard.get_backend()
+
+  results = backend.enqueue_all(
+    [
+      (limited_discard, (1,), {"value": "first"}),
+      (limited_discard, (1,), {"value": "second"}),
+    ]
+  )
+
+  assert [result.status for result in results] == [
+    TaskResultStatus.READY,
+    TaskResultStatus.SUCCESSFUL,
+  ]
+  assert ReadyExecution.objects.count() == 1
+  assert Job.objects.finished().count() == 1
+  assert Job.objects.blocked().count() == 0
+
+
+@pytest.mark.django_db
 def test_get_result_ready():
   result = echo.enqueue("ready")
 
