@@ -26,6 +26,7 @@ queues = ["default", "email*"]
 threads = 8
 processes = 1
 polling_interval = 0.1
+prefetch_multiplier = 3
 
 [[dispatchers]]
 batch_size = 500
@@ -55,6 +56,7 @@ description = "nightly cleanup"
   assert config.database_alias == "queue"
   assert config.workers[0].queues == ("default", "email*")
   assert config.workers[0].threads == 8
+  assert config.workers[0].prefetch_multiplier == 3
   assert config.dispatchers[0].concurrency_maintenance is True
   assert config.scheduler.dynamic_tasks_enabled is True
   assert config.recurring["nightly_cleanup"].args == ("hello",)

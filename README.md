@@ -786,7 +786,7 @@ Global options:
 | Option | Default | Meaning |
 |---|---|---|
 | `mode` | `"fork"` | standalone runtime mode, either `"fork"` or `"async"` |
-| `workers` | `[{"queues": "*", "threads": 3, "processes": 1, "polling_interval": 0.1}]` | worker topology and queue selectors |
+| `workers` | `[{"queues": "*", "threads": 3, "processes": 1, "polling_interval": 0.1, "prefetch_multiplier": 2}]` | worker topology and queue selectors |
 | `dispatchers` | `[{"batch_size": 500, "polling_interval": 1, "concurrency_maintenance": true, "concurrency_maintenance_interval": 600}]` | scheduled promotion and concurrency maintenance |
 | `scheduler` | `{"dynamic_tasks_enabled": false, "polling_interval": 5}` | dynamic recurring polling; the scheduler only starts when recurring or cleanup work exists |
 | `recurring` | `{}` | static recurring task definitions keyed by name |
@@ -813,6 +813,7 @@ Worker entry options:
 | `threads` | `3` | worker threads per worker process |
 | `processes` | `1` | worker processes in `fork` mode; normalized to `1` in `async` mode |
 | `polling_interval` | `0.1` | seconds between worker polls |
+| `prefetch_multiplier` | `2` | max claimed running/queued jobs per worker thread |
 
 Dispatcher entry options:
 
@@ -888,6 +889,7 @@ queues = ["default", "email*"]
 threads = 8
 processes = 1
 polling_interval = 0.1
+prefetch_multiplier = 2
 
 [[dispatchers]]
 batch_size = 500

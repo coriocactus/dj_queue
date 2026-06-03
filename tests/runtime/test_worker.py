@@ -117,7 +117,13 @@ def wait_until(predicate, timeout=1):
 
 def make_worker(config=None, **overrides):
   if config is None:
-    config = WorkerConfig(queues=("*",), threads=1, processes=1, polling_interval=0.1)
+    config = WorkerConfig(
+      queues=("*",),
+      threads=1,
+      processes=1,
+      polling_interval=0.1,
+      prefetch_multiplier=1,
+    )
   return Worker(
     config,
     backend_alias=overrides.pop("backend_alias", "default"),
@@ -184,6 +190,7 @@ def test_worker_registers_process_with_metadata():
   assert process.metadata == {
     "queues": ["alpha", "beta*"],
     "threads": 2,
+    "prefetch_multiplier": 2,
     "polling_interval": 0.25,
   }
 
@@ -209,13 +216,62 @@ def test_worker_respects_ordered_queue_list():
   alpha = make_ready_job(queue_name="alpha", priority=0)
   make_ready_job(queue_name="beta", priority=10)
   worker = make_worker(
-    config=WorkerConfig(queues=("alpha", "beta"), threads=1, processes=1, polling_interval=0.1)
+    config=WorkerConfig(
+      queues=("alpha", "beta"),
+      threads=1,
+      processes=1,
+      polling_interval=0.1,
+      prefetch_multiplier=1,
+    )
   )
   worker.start()
 
   claimed_jobs = worker.poll_once()
 
   assert [claimed_job.job.id for claimed_job in claimed_jobs] == [alpha.id]
+  worker.stop()
+
+
+def test_worker_prefetches_up_to_multiplier():
+  first = make_ready_job(args=["first"])
+  second = make_ready_job(args=["second"])
+  worker = make_worker(
+    config=WorkerConfig(
+      queues=("*",),
+      threads=1,
+      processes=1,
+      polling_interval=0.1,
+      prefetch_multiplier=2,
+    )
+  )
+  worker.start()
+
+  claimed_jobs = worker.poll_once()
+
+  assert [claimed_job.job.id for claimed_job in claimed_jobs] == [first.id, second.id]
+  assert ReadyExecution.objects.filter(job__in=[first, second]).exists() is False
+  worker.stop()
+
+
+def test_worker_prefetch_limit_accounts_for_in_flight_work():
+  jobs = [make_ready_job(args=[index]) for index in range(3)]
+  worker = make_worker(
+    config=WorkerConfig(
+      queues=("*",),
+      threads=2,
+      processes=1,
+      polling_interval=0.1,
+      prefetch_multiplier=2,
+    )
+  )
+  worker.start()
+  worker.pool.idle_capacity = 1
+  worker.pool.in_flight = 3
+
+  claimed_jobs = worker.poll_once()
+
+  assert [claimed_job.job.id for claimed_job in claimed_jobs] == [jobs[0].id]
+  assert ReadyExecution.objects.filter(job__in=jobs[1:]).count() == 2
   worker.stop()
 
 

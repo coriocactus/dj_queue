@@ -68,10 +68,13 @@ class Worker(BaseRunner):
     idle_capacity = self.pool.idle_capacity
     if idle_capacity <= 0:
       return []
+    claim_limit = self._claim_limit(idle_capacity)
+    if claim_limit <= 0:
+      return []
 
     with app_executor():
       claimed_jobs = claim_ready_jobs(
-        limit=idle_capacity,
+        limit=claim_limit,
         queues=self.config.queues,
         process=self.process,
         backend_alias=self.backend_alias,
@@ -121,8 +124,17 @@ class Worker(BaseRunner):
     return {
       "queues": list(self.config.queues),
       "threads": self.config.threads,
+      "prefetch_multiplier": self.config.prefetch_multiplier,
       "polling_interval": self.config.polling_interval,
     }
+
+  def _claim_limit(self, idle_capacity):
+    in_flight = getattr(self.pool, "in_flight", None)
+    if in_flight is None:
+      max_workers = getattr(self.pool, "max_workers", self.config.threads)
+      in_flight = max(0, max_workers - idle_capacity)
+    prefetch_limit = self.config.threads * self.config.prefetch_multiplier
+    return max(0, prefetch_limit - in_flight)
 
   def _mark_shutdown_draining(self, process, *, timeout):
     metadata = dict(process.metadata or {})

@@ -19,6 +19,7 @@ DEFAULT_WORKER = {
   "threads": 3,
   "processes": 1,
   "polling_interval": 0.1,
+  "prefetch_multiplier": 2,
 }
 
 DEFAULT_DISPATCHER = {
@@ -77,6 +78,7 @@ class WorkerConfig(ConfigValue):
   threads: int = 3
   processes: int = 1
   polling_interval: float = 0.1
+  prefetch_multiplier: int = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -486,6 +488,10 @@ def _build_worker_configs(raw_workers: Any, mode: str) -> tuple[WorkerConfig, ..
       polling_interval=_positive_float(
         raw_worker.get("polling_interval", DEFAULT_WORKER["polling_interval"]),
         f"workers[{index}].polling_interval",
+      ),
+      prefetch_multiplier=_positive_int(
+        raw_worker.get("prefetch_multiplier", DEFAULT_WORKER["prefetch_multiplier"]),
+        f"workers[{index}].prefetch_multiplier",
       ),
     )
 

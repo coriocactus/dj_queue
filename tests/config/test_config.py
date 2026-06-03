@@ -442,6 +442,7 @@ def test_workers_single_mapping_is_normalized_to_one_item_list(settings):
           "threads": 8,
           "processes": 2,
           "polling_interval": 0.1,
+          "prefetch_multiplier": 3,
         },
       },
     }
@@ -455,6 +456,7 @@ def test_workers_single_mapping_is_normalized_to_one_item_list(settings):
       threads=8,
       processes=2,
       polling_interval=0.1,
+      prefetch_multiplier=3,
     ),
   )
 
@@ -582,6 +584,7 @@ def test_workers_single_mapping_still_normalizes_async_processes_to_one(settings
       threads=4,
       processes=1,
       polling_interval=0.1,
+      prefetch_multiplier=2,
     ),
   )
 
@@ -758,6 +761,9 @@ def test_retention_options_must_be_nonnegative_integers(settings, setting_name):
     ({"workers": {"threads": True}}, "workers[0].threads"),
     ({"workers": {"threads": 1.9}}, "workers[0].threads"),
     ({"workers": {"processes": 0}}, "workers[0].processes"),
+    ({"workers": {"prefetch_multiplier": 0}}, "workers[0].prefetch_multiplier"),
+    ({"workers": {"prefetch_multiplier": True}}, "workers[0].prefetch_multiplier"),
+    ({"workers": {"prefetch_multiplier": 1.9}}, "workers[0].prefetch_multiplier"),
     ({"dispatchers": {"batch_size": 0}}, "dispatchers[0].batch_size"),
     (
       {"dispatchers": {"concurrency_maintenance_interval": -1}},
