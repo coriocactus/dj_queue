@@ -51,6 +51,7 @@ from dj_queue.operations.concurrency import (
   SlotHandoffMode,
   claim_next_blocked_job,
   concurrency_settings,
+  release_recovered_concurrency_slots,
   semaphore_acquire,
   semaphore_acquire_many,
   semaphore_release,
@@ -1595,7 +1596,7 @@ def _fail_claimed_jobs(jobs, error, *, traceback_text, backend_alias):
       ]
     )
 
-  for job in jobs:
+  for job in release_recovered_concurrency_slots(jobs, backend_alias=backend_alias):
     _release_concurrency_slot(job)
 
   if event_logging_enabled(backend_alias=backend_alias):

@@ -13,7 +13,15 @@ from django.utils import timezone
 
 from dj_queue.config import load_backend_config
 from dj_queue.exceptions import ProcessExitError, ProcessMissingError, ProcessPrunedError
-from dj_queue.models import ClaimedExecution, FailedExecution, Job, Process
+from dj_queue.models import (
+  BlockedExecution,
+  ClaimedExecution,
+  FailedExecution,
+  Job,
+  Process,
+  ReadyExecution,
+  Semaphore,
+)
 from dj_queue.runtime.supervisor import AsyncSupervisor, ForkSupervisor, Supervisor
 from tests.tasks import limited
 
@@ -88,6 +96,59 @@ def make_process(**overrides):
 
 def make_claimed_execution(*, job, process):
   return retry_after_sqlite_lock(lambda: ClaimedExecution.objects.create(job=job, process=process))
+
+
+def make_blocked_execution(*, job, expires_at=None):
+  return retry_after_sqlite_lock(
+    lambda: BlockedExecution.objects.create(
+      job=job,
+      backend_alias=job.backend_alias,
+      queue_name=job.queue_name,
+      priority=job.priority,
+      concurrency_key=job.concurrency_key,
+      expires_at=expires_at or timezone.now() + timedelta(minutes=1),
+    )
+  )
+
+
+def make_recovered_concurrency_group(
+  *,
+  process,
+  key,
+  limit,
+  claimed_count,
+  blocked_count,
+  task_path="tests.tasks.limited",
+):
+  claimed_jobs = [
+    make_job(
+      task_path=task_path,
+      args=[1],
+      kwargs={"value": f"claimed-{index}"},
+      concurrency_key=key,
+    )
+    for index in range(claimed_count)
+  ]
+  blocked_jobs = [
+    make_job(
+      task_path=task_path,
+      args=[1],
+      kwargs={"value": f"blocked-{index}"},
+      concurrency_key=key,
+    )
+    for index in range(blocked_count)
+  ]
+  for job in claimed_jobs:
+    make_claimed_execution(job=job, process=process)
+  for job in blocked_jobs:
+    make_blocked_execution(job=job)
+  Semaphore.objects.create(
+    key=key,
+    value=0,
+    limit=limit,
+    expires_at=timezone.now() + timedelta(minutes=1),
+  )
+  return claimed_jobs, blocked_jobs
 
 
 def make_supervisor(name=None):
@@ -287,6 +348,119 @@ def test_prune_stale_process_rows_fails_multiple_claimed_jobs_for_process():
   assert [process.name for process in pruned] == ["stale-worker"]
   assert FailedExecution.objects.filter(job__in=jobs).count() == len(jobs)
   assert ClaimedExecution.objects.filter(job__in=jobs).exists() is False
+
+
+def test_prune_stale_process_rows_promotes_recovered_concurrency_waiters(monkeypatch):
+  monkeypatch.setattr(limited.func, "concurrency_limit", 3)
+  stale_process = make_process(
+    name="stale-worker",
+    last_heartbeat_at=timezone.now() - timedelta(minutes=10),
+  )
+  claimed_jobs, blocked_jobs = make_recovered_concurrency_group(
+    process=stale_process,
+    key="account:recovered",
+    limit=3,
+    claimed_count=3,
+    blocked_count=3,
+  )
+  supervisor = make_supervisor()
+  supervisor.start()
+
+  try:
+    pruned = supervisor.prune_stale_process_rows(now=timezone.now())
+  finally:
+    supervisor.stop()
+
+  assert [process.name for process in pruned] == ["stale-worker"]
+  assert FailedExecution.objects.filter(job__in=claimed_jobs).count() == len(claimed_jobs)
+  assert ClaimedExecution.objects.filter(job__in=claimed_jobs).exists() is False
+  assert BlockedExecution.objects.filter(job__in=blocked_jobs).exists() is False
+  assert ReadyExecution.objects.filter(job__in=blocked_jobs).count() == len(blocked_jobs)
+  assert Semaphore.objects.get(key="account:recovered").value == 0
+
+
+def test_prune_stale_process_rows_grouped_concurrency_release_query_budget(monkeypatch):
+  monkeypatch.setattr(limited.func, "concurrency_limit", 5)
+  stale_process = make_process(
+    name="stale-worker",
+    last_heartbeat_at=timezone.now() - timedelta(minutes=10),
+  )
+  claimed_jobs, blocked_jobs = make_recovered_concurrency_group(
+    process=stale_process,
+    key="account:budget",
+    limit=5,
+    claimed_count=5,
+    blocked_count=5,
+  )
+  supervisor = make_supervisor()
+  supervisor.start()
+
+  try:
+    with CaptureQueriesContext(connection) as ctx:
+      pruned = supervisor.prune_stale_process_rows(now=timezone.now())
+  finally:
+    supervisor.stop()
+
+  assert len(ctx.captured_queries) <= 24
+  assert [process.name for process in pruned] == ["stale-worker"]
+  assert FailedExecution.objects.filter(job__in=claimed_jobs).count() == len(claimed_jobs)
+  assert ReadyExecution.objects.filter(job__in=blocked_jobs).count() == len(blocked_jobs)
+
+
+def test_prune_stale_process_rows_recovered_release_leaves_available_capacity(monkeypatch):
+  monkeypatch.setattr(limited.func, "concurrency_limit", 5)
+  stale_process = make_process(
+    name="stale-worker",
+    last_heartbeat_at=timezone.now() - timedelta(minutes=10),
+  )
+  _claimed_jobs, blocked_jobs = make_recovered_concurrency_group(
+    process=stale_process,
+    key="account:capacity",
+    limit=5,
+    claimed_count=5,
+    blocked_count=2,
+  )
+  supervisor = make_supervisor()
+  supervisor.start()
+
+  try:
+    supervisor.prune_stale_process_rows(now=timezone.now())
+  finally:
+    supervisor.stop()
+
+  assert ReadyExecution.objects.filter(job__in=blocked_jobs).count() == len(blocked_jobs)
+  assert Semaphore.objects.get(key="account:capacity").value == 3
+
+
+def test_prune_stale_process_rows_recovered_release_uses_semaphore_fallback():
+  stale_process = make_process(
+    name="stale-worker",
+    last_heartbeat_at=timezone.now() - timedelta(minutes=10),
+  )
+  claimed_job = make_job(
+    task_path="tests.tasks.missing_concurrency_task",
+    concurrency_key="account:missing-recovery-task",
+  )
+  blocked_job = make_job(concurrency_key="account:missing-recovery-task")
+  make_claimed_execution(job=claimed_job, process=stale_process)
+  make_blocked_execution(job=blocked_job)
+  Semaphore.objects.create(
+    key="account:missing-recovery-task",
+    value=0,
+    limit=1,
+    expires_at=timezone.now() + timedelta(minutes=1),
+  )
+  supervisor = make_supervisor()
+  supervisor.start()
+
+  try:
+    supervisor.prune_stale_process_rows(now=timezone.now())
+  finally:
+    supervisor.stop()
+
+  assert FailedExecution.objects.filter(job=claimed_job).exists() is True
+  assert ReadyExecution.objects.filter(job=blocked_job).exists() is True
+  assert Semaphore.objects.get(key="account:missing-recovery-task").value == 0
 
 
 def test_prune_stale_process_rows_query_budget_stays_process_sized():

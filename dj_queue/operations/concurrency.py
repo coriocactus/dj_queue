@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import timedelta
 from dataclasses import dataclass
 from enum import StrEnum
@@ -19,12 +20,14 @@ from dj_queue.models import (
   Semaphore,
 )
 from dj_queue.operations._helpers import (
+  _bulk_create_ready_executions_locked,
   _consume_selected_rows,
   _create_blocked_execution,
   _create_ready_execution_locked,
   _ensure_no_other_execution_state,
   _ensure_state_rows_belong_to_backend,
   _lock_active_pauses,
+  _ready_execution_row,
   _task_option,
 )
 from dj_queue.operations._insert import create_ignore_conflicts
@@ -190,6 +193,125 @@ def semaphore_release(key, *, limit=None, duration_seconds, backend_alias="defau
     )
   )
   return updated > 0
+
+
+def release_recovered_concurrency_slots(jobs, *, backend_alias="default"):
+  grouped_jobs = defaultdict(list)
+  for job in jobs:
+    if job.backend_alias != backend_alias:
+      raise EnqueueError(f"job {job.id} belongs to backend {job.backend_alias!r}")
+    if job.concurrency_key:
+      grouped_jobs[job.concurrency_key].append(job)
+
+  fallback_jobs = []
+  alias = get_database_alias(backend_alias)
+  for key, group_jobs in grouped_jobs.items():
+    settings = _recovered_release_settings(alias, group_jobs, backend_alias=backend_alias)
+    if settings is None:
+      fallback_jobs.extend(group_jobs)
+      continue
+    limit, duration_seconds = settings
+    _release_recovered_concurrency_group(
+      alias,
+      key,
+      release_count=len(group_jobs),
+      limit=limit,
+      duration_seconds=duration_seconds,
+      backend_alias=backend_alias,
+    )
+  return fallback_jobs
+
+
+def _recovered_release_settings(alias, jobs, *, backend_alias):
+  config = load_backend_config(backend_alias)
+  settings = set()
+  for job in jobs:
+    try:
+      task = import_string(job.task_path)
+      limit, duration_seconds, _ = concurrency_settings(task, backend_alias=backend_alias)
+    except (AttributeError, EnqueueError, ImportError):
+      limit = _semaphore_limit(alias, job.concurrency_key) or 1
+      duration_seconds = config.default_concurrency_duration
+    settings.add((limit, duration_seconds))
+    if len(settings) > 1:
+      return None
+  return next(iter(settings))
+
+
+def _semaphore_limit(alias, key):
+  return Semaphore.objects.using(alias).filter(key=key).values_list("limit", flat=True).first()
+
+
+def _release_recovered_concurrency_group(
+  alias,
+  key,
+  *,
+  release_count,
+  limit,
+  duration_seconds,
+  backend_alias,
+):
+  now = timezone.now()
+  expires_at = now + timedelta(seconds=duration_seconds)
+  config = load_backend_config(backend_alias)
+
+  with _operation_atomic(alias):
+    semaphore = Semaphore.objects.using(alias).select_for_update().filter(key=key).first()
+    if semaphore is None:
+      return []
+
+    available = min(limit, max(0, semaphore.value + limit - semaphore.limit + release_count))
+    blocked_rows = []
+    if available > 0:
+      queryset = (
+        BlockedExecution.objects.using(alias)
+        .select_related("job")
+        .filter(backend_alias=backend_alias, concurrency_key=key)
+        .order_by("-priority", "id")
+      )
+      blocked_rows = list(
+        locked_queryset(queryset, use_skip_locked=config.use_skip_locked)[:available]
+      )
+      if blocked_rows:
+        _ensure_state_rows_belong_to_backend(blocked_rows, backend_alias)
+        blocked_rows = _consume_selected_rows(alias, BlockedExecution, blocked_rows)
+
+    promoted_jobs = [blocked.job for blocked in blocked_rows]
+    semaphore.value = available - len(promoted_jobs)
+    semaphore.limit = limit
+    semaphore.expires_at = expires_at
+    semaphore.updated_at = now
+    semaphore.save(using=alias, update_fields=["value", "limit", "expires_at", "updated_at"])
+
+    _bulk_create_ready_executions_locked(
+      alias,
+      [
+        _ready_execution_row(
+          blocked.job,
+          backend_alias=backend_alias,
+          queue_name=blocked.queue_name,
+          priority=blocked.priority,
+          ready_at=now,
+        )
+        for blocked in blocked_rows
+      ],
+      backend_alias=backend_alias,
+      check_conflicts=True,
+    )
+
+  for job in promoted_jobs:
+    log_event(
+      "job.unblocked",
+      backend_alias=backend_alias,
+      job_id=str(job.id),
+      concurrency_key=key,
+    )
+  if promoted_jobs:
+    notify_ready_queues_on_commit(
+      tuple(dict.fromkeys(job.queue_name for job in promoted_jobs)),
+      backend_alias=backend_alias,
+    )
+  return promoted_jobs
 
 
 def _consume_released_semaphore_slot(alias, key, *, limit, duration_seconds, now):

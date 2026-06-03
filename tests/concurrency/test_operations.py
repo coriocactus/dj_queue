@@ -692,6 +692,30 @@ def test_reduced_concurrency_limit_after_claim_keeps_waiter_blocked(monkeypatch)
 
 
 @pytest.mark.django_db
+def test_recovered_concurrency_release_falls_back_for_conflicting_settings(monkeypatch):
+  monkeypatch.setattr(limited.func, "concurrency_limit", 1)
+  monkeypatch.setattr(limited_discard.func, "concurrency_limit", 2)
+  jobs = [
+    make_job(
+      task=limited,
+      args=[1],
+      kwargs={"value": "first"},
+      concurrency_key="account:conflict",
+    ),
+    make_job(
+      task=limited_discard,
+      args=[1],
+      kwargs={"value": "second"},
+      concurrency_key="account:conflict",
+    ),
+  ]
+
+  fallback_jobs = concurrency_operations.release_recovered_concurrency_slots(jobs)
+
+  assert fallback_jobs == jobs
+
+
+@pytest.mark.django_db
 def test_dispatcher_promotes_expired_blocked_jobs():
   job = make_job(task=limited, args=[1], kwargs={"value": "later"}, concurrency_key="account:1")
   BlockedExecution.objects.create(
