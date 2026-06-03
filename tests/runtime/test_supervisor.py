@@ -22,6 +22,7 @@ from dj_queue.models import (
   ReadyExecution,
   Semaphore,
 )
+import dj_queue.operations.jobs as job_operations
 from dj_queue.runtime.supervisor import AsyncSupervisor, ForkSupervisor, Supervisor
 from tests.tasks import limited
 
@@ -432,6 +433,74 @@ def test_prune_stale_process_rows_recovered_release_leaves_available_capacity(mo
   assert Semaphore.objects.get(key="account:capacity").value == 3
 
 
+def test_prune_stale_process_rows_recovered_release_promotes_at_most_released_count(
+  monkeypatch,
+):
+  monkeypatch.setattr(limited.func, "concurrency_limit", 5)
+  stale_process = make_process(
+    name="stale-worker",
+    last_heartbeat_at=timezone.now() - timedelta(minutes=10),
+  )
+  _claimed_jobs, blocked_jobs = make_recovered_concurrency_group(
+    process=stale_process,
+    key="account:positive-capacity",
+    limit=5,
+    claimed_count=1,
+    blocked_count=3,
+  )
+  Semaphore.objects.filter(key="account:positive-capacity").update(value=2)
+  supervisor = make_supervisor()
+  supervisor.start()
+
+  try:
+    supervisor.prune_stale_process_rows(now=timezone.now())
+  finally:
+    supervisor.stop()
+
+  assert ReadyExecution.objects.filter(job__in=blocked_jobs).count() == 1
+  assert BlockedExecution.objects.filter(job__in=blocked_jobs).count() == 2
+  assert Semaphore.objects.get(key="account:positive-capacity").value == 2
+
+
+def test_prune_stale_process_rows_recovered_release_stays_backend_scoped(monkeypatch):
+  monkeypatch.setattr(limited.func, "concurrency_limit", 1)
+  stale_process = make_process(
+    name="stale-worker",
+    last_heartbeat_at=timezone.now() - timedelta(minutes=10),
+  )
+  claimed_job = make_job(
+    task_path="tests.tasks.limited",
+    args=[1],
+    concurrency_key="account:shared-key",
+  )
+  blocked_job = make_job(
+    backend_alias="secondary",
+    task_path="tests.tasks.limited",
+    args=[1],
+    concurrency_key="account:shared-key",
+  )
+  make_claimed_execution(job=claimed_job, process=stale_process)
+  make_blocked_execution(job=blocked_job)
+  Semaphore.objects.create(
+    key="account:shared-key",
+    value=0,
+    limit=1,
+    expires_at=timezone.now() + timedelta(minutes=1),
+  )
+  supervisor = make_supervisor()
+  supervisor.start()
+
+  try:
+    supervisor.prune_stale_process_rows(now=timezone.now())
+  finally:
+    supervisor.stop()
+
+  assert FailedExecution.objects.filter(job=claimed_job).exists() is True
+  assert BlockedExecution.objects.filter(job=blocked_job).exists() is True
+  assert ReadyExecution.objects.filter(job=blocked_job).exists() is False
+  assert Semaphore.objects.get(key="account:shared-key").value == 1
+
+
 def test_prune_stale_process_rows_recovered_release_uses_semaphore_fallback():
   stale_process = make_process(
     name="stale-worker",
@@ -461,6 +530,29 @@ def test_prune_stale_process_rows_recovered_release_uses_semaphore_fallback():
   assert FailedExecution.objects.filter(job=claimed_job).exists() is True
   assert ReadyExecution.objects.filter(job=blocked_job).exists() is True
   assert Semaphore.objects.get(key="account:missing-recovery-task").value == 0
+
+
+def test_fail_claimed_jobs_rolls_back_terminalization_when_recovered_release_fails(
+  monkeypatch,
+):
+  process = make_process(name="recovery-release-failure-worker")
+  job = make_job(task_path="tests.tasks.limited", args=[1], concurrency_key="account:rollback")
+  make_claimed_execution(job=job, process=process)
+
+  def fail_release(*args, **kwargs):
+    raise RuntimeError("release failed")
+
+  monkeypatch.setattr(job_operations, "release_recovered_concurrency_slots", fail_release)
+
+  with pytest.raises(RuntimeError, match="release failed"):
+    job_operations.fail_claimed_jobs_for_process(
+      process,
+      ProcessPrunedError("process heartbeat expired"),
+      traceback_text="process heartbeat expired",
+    )
+
+  assert ClaimedExecution.objects.filter(job=job, process=process).exists() is True
+  assert FailedExecution.objects.filter(job=job).exists() is False
 
 
 def test_prune_stale_process_rows_query_budget_stays_process_sized():

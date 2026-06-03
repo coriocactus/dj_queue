@@ -256,13 +256,8 @@ def _release_recovered_concurrency_group(
   config = load_backend_config(backend_alias)
 
   with _operation_atomic(alias):
-    semaphore = Semaphore.objects.using(alias).select_for_update().filter(key=key).first()
-    if semaphore is None:
-      return []
-
-    available = min(limit, max(0, semaphore.value + limit - semaphore.limit + release_count))
     blocked_rows = []
-    if available > 0:
+    if release_count > 0:
       queryset = (
         BlockedExecution.objects.using(alias)
         .select_related("job")
@@ -270,13 +265,22 @@ def _release_recovered_concurrency_group(
         .order_by("-priority", "id")
       )
       blocked_rows = list(
-        locked_queryset(queryset, use_skip_locked=config.use_skip_locked)[:available]
+        locked_queryset(queryset, use_skip_locked=config.use_skip_locked)[:release_count]
       )
       if blocked_rows:
         _ensure_state_rows_belong_to_backend(blocked_rows, backend_alias)
-        blocked_rows = _consume_selected_rows(alias, BlockedExecution, blocked_rows)
 
-    promoted_jobs = [blocked.job for blocked in blocked_rows]
+    semaphore = Semaphore.objects.using(alias).select_for_update().filter(key=key).first()
+    if semaphore is None:
+      return []
+
+    available = min(limit, max(0, semaphore.value + limit - semaphore.limit + release_count))
+    promote_count = min(release_count, available, len(blocked_rows))
+    promoted_rows = blocked_rows[:promote_count]
+    if promoted_rows:
+      promoted_rows = _consume_selected_rows(alias, BlockedExecution, promoted_rows)
+
+    promoted_jobs = [blocked.job for blocked in promoted_rows]
     semaphore.value = available - len(promoted_jobs)
     semaphore.limit = limit
     semaphore.expires_at = expires_at
@@ -293,7 +297,7 @@ def _release_recovered_concurrency_group(
           priority=blocked.priority,
           ready_at=now,
         )
-        for blocked in blocked_rows
+        for blocked in promoted_rows
       ],
       backend_alias=backend_alias,
       check_conflicts=True,

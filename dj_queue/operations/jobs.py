@@ -1596,8 +1596,8 @@ def _fail_claimed_jobs(jobs, error, *, traceback_text, backend_alias):
       ]
     )
 
-  for job in release_recovered_concurrency_slots(jobs, backend_alias=backend_alias):
-    _release_concurrency_slot(job)
+    for job in release_recovered_concurrency_slots(jobs, backend_alias=backend_alias):
+      _release_concurrency_slot(job)
 
   if event_logging_enabled(backend_alias=backend_alias):
     for job in jobs:
