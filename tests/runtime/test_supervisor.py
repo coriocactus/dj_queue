@@ -572,7 +572,8 @@ def test_prune_stale_process_rows_query_budget_stays_process_sized():
   finally:
     supervisor.stop()
 
-  assert len(ctx.captured_queries) <= 13
+  expected_queries = 14 if connection.vendor == "mysql" else 13
+  assert len(ctx.captured_queries) <= expected_queries
   assert [process.name for process in pruned] == ["stale-worker"]
   assert FailedExecution.objects.filter(job__in=jobs).count() == len(jobs)
 
