@@ -2,6 +2,7 @@ import asyncio
 import copy
 from datetime import timedelta
 import math
+from types import SimpleNamespace
 import uuid
 
 import pytest
@@ -42,6 +43,7 @@ from dj_queue.operations.jobs import (
   retry_failed_job,
   retry_failed_jobs,
 )
+import dj_queue.operations._helpers as operation_helpers
 from tests.tasks import add, async_echo, echo, limited, limited_discard
 
 
@@ -1193,6 +1195,25 @@ def test_enqueue_rejects_non_json_round_trippable_payload():
     echo.enqueue(object())
 
   assert Job.objects.count() == job_count
+
+
+@pytest.mark.django_db
+def test_enqueue_json_payload_primitives_use_fast_validation(monkeypatch):
+  def dumps(*args, **kwargs):
+    raise AssertionError("json round trip used")
+
+  monkeypatch.setattr(
+    operation_helpers,
+    "json",
+    SimpleNamespace(dumps=dumps, loads=operation_helpers.json.loads),
+  )
+
+  result = echo.enqueue({"items": [1, "two", None, True]})
+
+  assert Job.objects.get(pk=result.id).payload == {
+    "args": [{"items": [1, "two", None, True]}],
+    "kwargs": {},
+  }
 
 
 @pytest.mark.django_db

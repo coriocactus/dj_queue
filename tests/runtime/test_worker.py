@@ -2,6 +2,7 @@ import threading
 import time
 from concurrent.futures import Future
 from contextlib import contextmanager
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -16,6 +17,7 @@ from dj_queue.operations.jobs import (
   complete_claimed_job,
   execute_claimed_job,
 )
+import dj_queue.operations._helpers as operation_helpers
 from dj_queue.runtime.worker import Worker
 from tests.tasks import echo, fail, nan_result, non_json_result, with_context
 
@@ -455,6 +457,25 @@ def test_worker_fails_non_standard_json_number_result_instead_of_persisting_nan(
   assert ClaimedExecution.objects.filter(job=job).exists() is False
   assert Job.objects.get(pk=job.pk).finished_at is None
   worker.stop()
+
+
+def test_complete_claimed_job_json_result_primitives_use_fast_validation(monkeypatch):
+  job = make_ready_job(args=["json"])
+  claimed_job = claim_ready_jobs(limit=1)[0]
+
+  def dumps(*args, **kwargs):
+    raise AssertionError("json round trip used")
+
+  monkeypatch.setattr(
+    operation_helpers,
+    "json",
+    SimpleNamespace(dumps=dumps, loads=operation_helpers.json.loads),
+  )
+
+  complete_claimed_job(claimed_job, {"items": [1, "two", None, True]})
+
+  job.refresh_from_db()
+  assert job.return_value == {"items": [1, "two", None, True]}
 
 
 def test_worker_provides_task_context():

@@ -1,4 +1,5 @@
 import json
+import math
 
 from django.db import connections
 from django.db.models import Q
@@ -39,9 +40,37 @@ def _normalize_payload(args, kwargs):
 
 def _normalize_json_round_trip(value, *, exception_class, message):
   try:
+    return _normalize_json_value(value)
+  except ValueError as exc:
+    raise exception_class(message) from exc
+  except TypeError:
+    pass
+
+  try:
     return json.loads(json.dumps(value, allow_nan=False))
   except (TypeError, ValueError) as exc:
     raise exception_class(message) from exc
+
+
+def _normalize_json_value(value):
+  if value is None or isinstance(value, (bool, str)):
+    return value
+  if type(value) is int:
+    return value
+  if type(value) is float:
+    if not math.isfinite(value):
+      raise ValueError
+    return value
+  if isinstance(value, (list, tuple)):
+    return [_normalize_json_value(item) for item in value]
+  if isinstance(value, dict):
+    normalized = {}
+    for key, item in value.items():
+      if not isinstance(key, str):
+        raise TypeError
+      normalized[key] = _normalize_json_value(item)
+    return normalized
+  raise TypeError
 
 
 def _ensure_no_other_execution_state(alias, job, *, ignored_models=()):
