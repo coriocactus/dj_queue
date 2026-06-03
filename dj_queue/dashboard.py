@@ -743,6 +743,18 @@ def _recurring_overview_page(*, backend_alias, now, page_size, page_number, sort
 
 def _semaphore_overview_page(*, backend_alias, page_size, page_number, sort):
   alias = get_database_alias(backend_alias)
+  if _semaphore_sort_requires_python(sort):
+    rows = [
+      _semaphore_row_with_jobs_url(row, backend_alias=backend_alias)
+      for row in observability.semaphore_rows_for_backend(backend_alias=backend_alias)
+    ]
+    rows = _sort_overview_rows(
+      rows=rows,
+      section="semaphores",
+      sort=_sort_with_tie_breaker(sort, "key"),
+    )
+    return _paginate_standard_rows(rows=rows, page_size=page_size, page_number=page_number)
+
   queryset = (
     Semaphore.objects.using(alias)
     .annotate(blocked_waiters=observability.semaphore_blocked_waiter_count_expression(alias))
@@ -770,6 +782,17 @@ def _semaphore_overview_page(*, backend_alias, page_size, page_number, sort):
 
 def _recurring_sort_requires_python(sort):
   return any(part.removeprefix("-") == "next_run" for part in _parse_sort_fields(sort))
+
+
+def _semaphore_sort_requires_python(sort):
+  return any(part.removeprefix("-") == "blocked_waiters" for part in _parse_sort_fields(sort))
+
+
+def _sort_with_tie_breaker(sort, tie_breaker):
+  field_names = {part.removeprefix("-") for part in _parse_sort_fields(sort)}
+  if tie_breaker in field_names:
+    return sort
+  return f"{sort}.{tie_breaker}"
 
 
 def _recurring_task_rows(tasks, *, backend_alias, now):
@@ -802,21 +825,30 @@ def _recurring_row_with_jobs_url(row, *, backend_alias):
 
 def _semaphore_rows(semaphores, *, backend_alias, alias):
   return [
-    {
-      "scope": "queue_database",
-      "queue_database_alias": alias,
-      "key": semaphore.key,
-      "available_slots": semaphore.value,
-      "limit": semaphore.limit,
-      "blocked_waiters": semaphore.blocked_waiters,
-      "expires_at": semaphore.expires_at,
-      "jobs_url": _job_changelist_url(
-        backend_alias=backend_alias,
-        concurrency_key=semaphore.key,
-      ),
-    }
+    _semaphore_row_with_jobs_url(
+      {
+        "scope": "queue_database",
+        "queue_database_alias": alias,
+        "key": semaphore.key,
+        "available_slots": semaphore.value,
+        "limit": semaphore.limit,
+        "blocked_waiters": semaphore.blocked_waiters,
+        "expires_at": semaphore.expires_at,
+      },
+      backend_alias=backend_alias,
+    )
     for semaphore in semaphores
   ]
+
+
+def _semaphore_row_with_jobs_url(row, *, backend_alias):
+  return {
+    **row,
+    "jobs_url": _job_changelist_url(
+      backend_alias=backend_alias,
+      concurrency_key=row["key"],
+    ),
+  }
 
 
 def _overview_queryset_ordering(*, section, sort, field_map=None, tie_breaker=None):

@@ -655,6 +655,47 @@ def test_dashboard_pages_control_sections_without_full_snapshot_rows(monkeypatch
   assert context["summary_cards"][-1]["value"] == 4
 
 
+def test_dashboard_semaphore_blocked_waiter_sort_uses_grouped_rows(monkeypatch):
+  now = timezone.now()
+  high = Semaphore.objects.create(
+    key="acct:high",
+    value=1,
+    limit=2,
+    expires_at=now + timedelta(minutes=5),
+  )
+  low = Semaphore.objects.create(
+    key="acct:low",
+    value=1,
+    limit=2,
+    expires_at=now + timedelta(minutes=5),
+  )
+  for index in range(2):
+    make_blocked_job(
+      concurrency_key=high.key,
+      task_path=f"tests.tasks.high_{index}",
+    )
+  make_blocked_job(concurrency_key=low.key, task_path="tests.tasks.low")
+
+  def fail_correlated_waiter_count(*args, **kwargs):
+    raise AssertionError("blocked-waiter sort should use grouped waiter counts")
+
+  monkeypatch.setattr(
+    dashboard.observability,
+    "semaphore_blocked_waiter_count_expression",
+    fail_correlated_waiter_count,
+  )
+
+  context = dashboard.dashboard_context(
+    backend_alias="default",
+    query_params={"semaphores_sort": "-blocked_waiters"},
+  )
+
+  rows = context["semaphore_section"]["rows"]
+  assert [row["key"] for row in rows[:2]] == [high.key, low.key]
+  assert [row["blocked_waiters"] for row in rows[:2]] == [2, 1]
+  assert rows[0]["jobs_url"].endswith("concurrency_key=acct%3Ahigh")
+
+
 def test_dashboard_queue_pause_resume_and_clear_actions(admin_client, settings):
   settings.TASKS = {
     "default": {
