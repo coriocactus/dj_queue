@@ -44,6 +44,7 @@ from dj_queue.operations.jobs import (
 import dj_queue.operations.jobs as job_operations
 from dj_queue.api import QueueInfo
 from dj_queue.sql import mysql as mysql_sql
+from dj_queue.sql import postgres as postgres_sql
 from tests.tasks import echo, limited, limited_discard, other_queue
 
 
@@ -126,10 +127,12 @@ def test_claim_ready_jobs_retries_transient_database_deadlock(monkeypatch):
   )
   calls = 0
   if connection.vendor == "postgresql":
-    target = "_postgres_consume_ready_and_create_claimed_executions"
+    consume_owner = postgres_sql
+    target = "consume_ready_and_create_claimed_executions"
   else:
+    consume_owner = job_operations
     target = "_consume_selected_rows"
-  original_consume = getattr(job_operations, target)
+  original_consume = getattr(consume_owner, target)
 
   def consume_with_deadlock_once(*args, **kwargs):
     nonlocal calls
@@ -140,7 +143,7 @@ def test_claim_ready_jobs_retries_transient_database_deadlock(monkeypatch):
       )
     return original_consume(*args, **kwargs)
 
-  monkeypatch.setattr(job_operations, target, consume_with_deadlock_once)
+  monkeypatch.setattr(consume_owner, target, consume_with_deadlock_once)
 
   claimed_jobs = claim_ready_jobs(limit=1)
 
