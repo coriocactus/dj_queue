@@ -8,6 +8,7 @@ from dj_queue.db import get_database_alias, supports_listen_notify
 from dj_queue.log import log_event
 from dj_queue.queue_selectors import any_queue_matches_selectors
 from dj_queue.runtime.errors import handle_thread_error
+from dj_queue.sql import postgres as postgres_sql
 
 READY_CHANNEL = "dj_queue_ready"
 READY_PAYLOAD = "ready"
@@ -126,8 +127,7 @@ class NotifyWakeupBackend:
     wrapper = connections[alias]
     connection = wrapper.Database.connect(**wrapper.get_connection_params())
     connection.autocommit = True
-    with connection.cursor() as cursor:
-      cursor.execute(f"LISTEN {READY_CHANNEL}")
+    postgres_sql.listen_channel(connection, READY_CHANNEL)
     return connection
 
   def _close_connection(self):
@@ -165,8 +165,8 @@ def build_wakeup_backend(*, backend_alias="default", queues=(), wake_up=None):
 
 def _notify(channel, payload, *, backend_alias):
   try:
-    with connections[get_database_alias(backend_alias)].cursor() as cursor:
-      cursor.execute("SELECT pg_notify(%s, %s)", [channel, payload])
+    alias = get_database_alias(backend_alias)
+    postgres_sql.notify_channel(connections[alias], channel, payload)
   except Exception as error:
     handle_thread_error(error, context="producer.notify", backend_alias=backend_alias)
     return None

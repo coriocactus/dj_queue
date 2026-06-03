@@ -1,6 +1,5 @@
 import os
 from datetime import timedelta
-from types import SimpleNamespace
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
@@ -16,6 +15,7 @@ from dj_queue.db import (
 )
 from dj_queue.models import RecurringExecution
 from dj_queue.operations._insert import create_ignore_conflicts
+from dj_queue.sql import mysql as mysql_sql
 
 
 @pytest.mark.postgres
@@ -118,8 +118,8 @@ def test_mysql_create_ignore_conflicts_uses_duplicate_key_noop(monkeypatch):
 
   monkeypatch.setattr("dj_queue.operations._insert.connections", {"default": FakeConnection()})
   monkeypatch.setattr(
-    "dj_queue.operations._insert.database_capabilities",
-    lambda using: SimpleNamespace(backend_family="mysql"),
+    "dj_queue.operations._insert.backend_sql",
+    lambda using: mysql_sql,
   )
 
   created = create_ignore_conflicts(

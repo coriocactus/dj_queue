@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
 
-from django.db import connections
 from django.db.models import Case, Count, IntegerField, Min, Q, Value, When
 from django.db.models.functions import Coalesce
 
@@ -19,6 +18,7 @@ from dj_queue.models.jobs import (
   invalid_execution_state_query,
   job_status_query_filter,
 )
+from dj_queue.sql import common as sql_common
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,13 +112,6 @@ QUEUE_STATE_BY_NAME = {definition.name: definition for definition in QUEUE_STATE
 QUEUE_STATES = tuple((definition.name, definition.label) for definition in QUEUE_STATE_DEFINITIONS)
 QUEUE_STATE_LABELS = {definition.name: definition.label for definition in QUEUE_STATE_DEFINITIONS}
 QUEUE_STATE_COUNT_KEYS = tuple(definition.count_key for definition in QUEUE_STATE_DEFINITIONS)
-EXECUTION_STATE_MODELS = (
-  ReadyExecution,
-  ScheduledExecution,
-  ClaimedExecution,
-  BlockedExecution,
-  FailedExecution,
-)
 
 
 def queue_state_definition(state):
@@ -303,62 +296,10 @@ def _merge_finished_summary(rows, *, alias, backend_alias, queue_name):
 
 
 def _invalid_execution_state_exists(alias, backend_alias, *, queue_name=None):
-  sql, params = _invalid_execution_state_membership_sql(
+  return sql_common.invalid_execution_state_exists(
     alias,
     backend_alias=backend_alias,
     queue_name=queue_name,
-  )
-  with connections[alias].cursor() as cursor:
-    cursor.execute(sql, params)
-    return cursor.fetchone() is not None
-
-
-def _invalid_execution_state_membership_sql(alias, *, backend_alias, queue_name):
-  connection = connections[alias]
-  quote = connection.ops.quote_name
-  job_table = quote(Job._meta.db_table)
-  job_id_column = quote(Job._meta.pk.column)
-  job_backend_column = quote(Job._meta.get_field("backend_alias").column)
-  job_queue_column = quote(Job._meta.get_field("queue_name").column)
-  job_finished_column = quote(Job._meta.get_field("finished_at").column)
-  where_sql = f"job.{job_backend_column} = %s"
-  state_params = [backend_alias]
-  if queue_name is not None:
-    where_sql = f"{where_sql} AND job.{job_queue_column} = %s"
-    state_params.append(queue_name)
-
-  selectors = []
-  params = []
-  for model in EXECUTION_STATE_MODELS:
-    state_table = quote(model._meta.db_table)
-    state_job_column = quote(model._meta.get_field("job").column)
-    selectors.append(
-      f"""
-      SELECT state.{state_job_column} AS job_id
-      FROM {state_table} state
-      INNER JOIN {job_table} job ON state.{state_job_column} = job.{job_id_column}
-      WHERE {where_sql}
-      """
-    )
-    params.extend(state_params)
-
-  selectors.append(
-    f"""
-    SELECT job.{job_id_column} AS job_id
-    FROM {job_table} job
-    WHERE {where_sql} AND job.{job_finished_column} IS NOT NULL
-    """
-  )
-  params.extend(state_params)
-  return (
-    f"""
-    SELECT 1
-    FROM ({" UNION ALL ".join(selectors)}) state_memberships
-    GROUP BY job_id
-    HAVING COUNT(*) > 1
-    LIMIT 1
-    """,
-    params,
   )
 
 

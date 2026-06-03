@@ -43,6 +43,7 @@ from dj_queue.operations.jobs import (
 )
 import dj_queue.operations.jobs as job_operations
 from dj_queue.api import QueueInfo
+from dj_queue.sql import mysql as mysql_sql
 from tests.tasks import echo, limited, limited_discard, other_queue
 
 
@@ -1368,7 +1369,7 @@ def test_mysql_family_semaphore_acquire_avoids_deprecated_values_function(monkey
   now = timezone.now()
 
   assert (
-    concurrency_operations._mysql_family_semaphore_acquire(
+    mysql_sql.semaphore_acquire(
       "default",
       "account:mysql-syntax",
       limit=3,

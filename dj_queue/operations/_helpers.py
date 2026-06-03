@@ -8,22 +8,14 @@ from dj_queue.db import database_capabilities
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import (
   BlockedExecution,
-  ClaimedExecution,
-  FailedExecution,
   Job,
   Pause,
   ReadyExecution,
   ScheduledExecution,
 )
 from dj_queue.models.jobs import job_status_relation_names
+from dj_queue.sql.state import EXECUTION_STATE_MODELS
 
-EXECUTION_STATE_MODELS = (
-  ReadyExecution,
-  ScheduledExecution,
-  ClaimedExecution,
-  BlockedExecution,
-  FailedExecution,
-)
 STATE_RELATIONS = {
   model: relation_name
   for model, relation_name in zip(EXECUTION_STATE_MODELS, job_status_relation_names())
@@ -115,28 +107,6 @@ def _ensure_state_rows_belong_to_backend(rows, backend_alias):
   for row in rows:
     if row.job.backend_alias != backend_alias:
       raise EnqueueError(f"job {row.job_id} belongs to backend {row.job.backend_alias!r}")
-
-
-def _state_models_except(*ignored_models):
-  ignored = set(ignored_models)
-  return tuple(model for model in EXECUTION_STATE_MODELS if model not in ignored)
-
-
-def _state_absence_checks_sql(models, *, quote, job_id_expression):
-  return " AND ".join(
-    _state_absence_sql(model, quote=quote, job_id_expression=job_id_expression) for model in models
-  )
-
-
-def _state_absence_sql(model, *, quote, job_id_expression):
-  state_table = quote(model._meta.db_table)
-  state_job_id_column = quote(model._meta.get_field("job").column)
-  return (
-    f"NOT EXISTS ("
-    f"SELECT 1 FROM {state_table} "
-    f"WHERE {state_table}.{state_job_id_column} = {job_id_expression}"
-    f")"
-  )
 
 
 def _task_option(task, name, default=None):

@@ -15,7 +15,6 @@ from dj_queue.log import log_event
 from dj_queue.models import (
   BlockedExecution,
   ClaimedExecution,
-  Job,
   ReadyExecution,
   Semaphore,
 )
@@ -26,11 +25,11 @@ from dj_queue.operations._helpers import (
   _ensure_no_other_execution_state,
   _ensure_state_rows_belong_to_backend,
   _lock_active_pauses,
-  _state_absence_checks_sql,
-  _state_models_except,
   _task_option,
 )
 from dj_queue.operations._insert import create_ignore_conflicts
+from dj_queue.sql import backend_sql
+from dj_queue.sql import common as sql_common
 from dj_queue.wakeup import notify_ready_queues_on_commit
 
 
@@ -71,16 +70,8 @@ def semaphore_acquire(
   expires_at = now + timedelta(seconds=duration_seconds)
   backend_family = database_capabilities(alias).backend_family
 
-  if backend_family in {"mysql", "mariadb"}:
-    return _mysql_family_semaphore_acquire(
-      alias,
-      key,
-      limit=limit,
-      expires_at=expires_at,
-      now=now,
-    )
-  if backend_family == "postgresql":
-    return _postgresql_semaphore_acquire(
+  if backend_family in {"postgresql", "mysql", "mariadb"}:
+    return backend_sql(alias).semaphore_acquire(
       alias,
       key,
       limit=limit,
@@ -162,141 +153,6 @@ def semaphore_acquire_many(
     semaphore.updated_at = now
     semaphore.save(using=alias, update_fields=["value", "limit", "expires_at", "updated_at"])
     return acquired
-
-
-def _postgresql_semaphore_acquire(alias, key, *, limit, expires_at, now):
-  connection = connections[alias]
-  quote = connection.ops.quote_name
-  table = quote(Semaphore._meta.db_table)
-  key_column = quote("key")
-  value_column = quote("value")
-  limit_column = quote("limit")
-  expires_at_column = quote("expires_at")
-  created_at_column = quote("created_at")
-  updated_at_column = quote("updated_at")
-  conflicted_available = (
-    f"LEAST(EXCLUDED.{limit_column}, "
-    f"GREATEST(0, {table}.{value_column} + EXCLUDED.{limit_column} - {table}.{limit_column}))"
-  )
-  current_available = f"LEAST(%s, GREATEST(0, {value_column} + %s - {limit_column}))"
-
-  with connection.cursor() as cursor:
-    cursor.execute(
-      f"""
-      WITH acquired AS (
-        INSERT INTO {table} (
-          {key_column},
-          {value_column},
-          {limit_column},
-          {expires_at_column},
-          {created_at_column},
-          {updated_at_column}
-        )
-        VALUES (%s, %s, %s, %s, %s, %s)
-        ON CONFLICT ({key_column}) DO UPDATE
-        SET
-          {value_column} = {conflicted_available} - 1,
-          {limit_column} = EXCLUDED.{limit_column},
-          {expires_at_column} = EXCLUDED.{expires_at_column},
-          {updated_at_column} = EXCLUDED.{updated_at_column}
-        WHERE {table}.{value_column} > {table}.{limit_column} - EXCLUDED.{limit_column}
-        RETURNING TRUE AS acquired
-      ), reconciled AS (
-        UPDATE {table}
-        SET
-          {value_column} = {current_available},
-          {limit_column} = %s,
-          {updated_at_column} = %s
-        WHERE {key_column} = %s
-          AND NOT EXISTS (SELECT 1 FROM acquired)
-        RETURNING FALSE AS acquired
-      )
-      SELECT acquired FROM acquired
-      UNION ALL
-      SELECT acquired FROM reconciled
-      """,
-      [
-        key,
-        limit - 1,
-        limit,
-        expires_at,
-        now,
-        now,
-        limit,
-        limit,
-        limit,
-        now,
-        key,
-      ],
-    )
-    row = cursor.fetchone()
-
-  return bool(row and row[0])
-
-
-def _mysql_family_semaphore_acquire(alias, key, *, limit, expires_at, now):
-  connection = connections[alias]
-  table = connection.ops.quote_name(Semaphore._meta.db_table)
-  pk_column = connection.ops.quote_name(Semaphore._meta.pk.column)
-  key_column = connection.ops.quote_name("key")
-  value_column = connection.ops.quote_name("value")
-  limit_column = connection.ops.quote_name("limit")
-  expires_at_column = connection.ops.quote_name("expires_at")
-  created_at_column = connection.ops.quote_name("created_at")
-  updated_at_column = connection.ops.quote_name("updated_at")
-  reconciled_available = f"LEAST(%s, GREATEST(0, {value_column} + %s - {limit_column}))"
-  reconciled_available_params = (limit, limit)
-
-  # one upsert avoids mysql-family deadlocks from mixing ignored inserts and follow-up updates
-  with connection.cursor() as cursor:
-    cursor.execute(
-      f"""
-      INSERT INTO {table} (
-        {key_column},
-        {value_column},
-        {limit_column},
-        {expires_at_column},
-        {created_at_column},
-        {updated_at_column}
-      )
-      VALUES (%s, %s, %s, %s, %s, %s)
-      ON DUPLICATE KEY UPDATE
-        {expires_at_column} = IF(
-          {reconciled_available} > 0,
-          %s,
-          {expires_at_column}
-        ),
-        {updated_at_column} = %s,
-        {pk_column} = IF(
-          {reconciled_available} > 0,
-          LAST_INSERT_ID({pk_column}),
-          LAST_INSERT_ID(0) + {pk_column}
-        ),
-        {value_column} = IF(
-          {reconciled_available} > 0,
-          {reconciled_available} - 1,
-          {reconciled_available}
-        ),
-        {limit_column} = %s
-      """,
-      [
-        key,
-        limit - 1,
-        limit,
-        expires_at,
-        now,
-        now,
-        *reconciled_available_params,
-        expires_at,
-        now,
-        *reconciled_available_params,
-        *reconciled_available_params,
-        *reconciled_available_params,
-        *reconciled_available_params,
-        limit,
-      ],
-    )
-    return cursor.lastrowid != 0
 
 
 def semaphore_release(key, *, limit=None, duration_seconds, backend_alias="default"):
@@ -418,7 +274,7 @@ def unblock_next_blocked_job(
       and capabilities.backend_family == "postgresql"
     )
     if postgres_release_slot:
-      blocked = _postgres_consume_next_blocked_job_with_released_slot(
+      blocked = backend_sql(alias).consume_next_blocked_job_with_released_slot(
         alias,
         backend_alias=backend_alias,
         key=key,
@@ -531,7 +387,7 @@ def claim_next_blocked_job(
     capabilities = database_capabilities(alias)
     postgres_release_slot = capabilities.backend_family == "postgresql"
     if postgres_release_slot:
-      blocked = _postgres_consume_next_blocked_job_with_released_slot(
+      blocked = backend_sql(alias).consume_next_blocked_job_with_released_slot(
         alias,
         backend_alias=backend_alias,
         key=key,
@@ -621,126 +477,10 @@ def claim_next_blocked_job(
   return claimed_ref
 
 
-def _postgres_consume_next_blocked_job_with_released_slot(
-  alias,
-  *,
-  backend_alias,
-  key,
-  limit,
-  duration_seconds,
-  now,
-  use_skip_locked,
-):
-  connection = connections[alias]
-  quote = connection.ops.quote_name
-  blocked_table = quote(BlockedExecution._meta.db_table)
-  blocked_pk_column = quote(BlockedExecution._meta.pk.column)
-  blocked_job_id_column = quote(BlockedExecution._meta.get_field("job").column)
-  blocked_backend_alias_column = quote(BlockedExecution._meta.get_field("backend_alias").column)
-  blocked_queue_name_column = quote(BlockedExecution._meta.get_field("queue_name").column)
-  blocked_priority_column = quote(BlockedExecution._meta.get_field("priority").column)
-  blocked_concurrency_key_column = quote(
-    BlockedExecution._meta.get_field("concurrency_key").column
-  )
-  blocked_expires_at_column = quote(BlockedExecution._meta.get_field("expires_at").column)
-  jobs_table = quote(Job._meta.db_table)
-  jobs_id_column = quote(Job._meta.get_field("id").column)
-  jobs_backend_alias_column = quote(Job._meta.get_field("backend_alias").column)
-  semaphore_table = quote(Semaphore._meta.db_table)
-  semaphore_key_column = quote(Semaphore._meta.get_field("key").column)
-  semaphore_value_column = quote(Semaphore._meta.get_field("value").column)
-  semaphore_limit_column = quote(Semaphore._meta.get_field("limit").column)
-  semaphore_expires_at_column = quote(Semaphore._meta.get_field("expires_at").column)
-  semaphore_updated_at_column = quote(Semaphore._meta.get_field("updated_at").column)
-  skip_locked_sql = " SKIP LOCKED" if use_skip_locked else ""
-  expires_at = now + timedelta(seconds=duration_seconds)
-  released_available = (
-    f"LEAST(%s, GREATEST(0, "
-    f"{semaphore_table}.{semaphore_value_column} + %s - "
-    f"{semaphore_table}.{semaphore_limit_column} + 1))"
-  )
-
-  with connection.cursor() as cursor:
-    cursor.execute(
-      f"""
-      WITH selected AS (
-        SELECT
-          {blocked_table}.{blocked_pk_column},
-          {blocked_table}.{blocked_job_id_column},
-          {blocked_table}.{blocked_queue_name_column},
-          {blocked_table}.{blocked_priority_column},
-          {blocked_table}.{blocked_concurrency_key_column},
-          {blocked_table}.{blocked_expires_at_column},
-          {jobs_table}.{jobs_backend_alias_column} AS job_backend_alias
-        FROM {blocked_table}
-        JOIN {jobs_table}
-          ON {jobs_table}.{jobs_id_column} = {blocked_table}.{blocked_job_id_column}
-        WHERE {blocked_table}.{blocked_backend_alias_column} = %s
-          AND {blocked_table}.{blocked_concurrency_key_column} = %s
-        ORDER BY {blocked_table}.{blocked_priority_column} DESC, {blocked_table}.{blocked_pk_column} ASC
-        LIMIT 1
-        FOR UPDATE OF {blocked_table}{skip_locked_sql}
-      ), slot AS (
-        UPDATE {semaphore_table}
-        SET
-          {semaphore_value_column} = {released_available} - 1,
-          {semaphore_limit_column} = %s,
-          {semaphore_expires_at_column} = %s,
-          {semaphore_updated_at_column} = %s
-        WHERE {semaphore_table}.{semaphore_key_column} = %s
-          AND EXISTS (SELECT 1 FROM selected)
-          AND {semaphore_table}.{semaphore_value_column} > {semaphore_table}.{semaphore_limit_column} - %s - 1
-        RETURNING TRUE AS acquired
-      ), deleted AS (
-        DELETE FROM {blocked_table}
-        USING selected, slot
-        WHERE {blocked_table}.{blocked_pk_column} = selected.{blocked_pk_column}
-        RETURNING {blocked_table}.{blocked_pk_column}
-      )
-      SELECT
-        selected.{blocked_job_id_column},
-        selected.{blocked_queue_name_column},
-        selected.{blocked_priority_column},
-        selected.{blocked_concurrency_key_column},
-        selected.{blocked_expires_at_column},
-        selected.job_backend_alias,
-        EXISTS (SELECT 1 FROM slot) AS slot_acquired,
-        EXISTS (SELECT 1 FROM deleted) AS deleted
-      FROM selected
-      """,
-      [
-        backend_alias,
-        key,
-        limit,
-        limit,
-        limit,
-        expires_at,
-        now,
-        key,
-        limit,
-      ],
-    )
-    row = cursor.fetchone()
-
-  if row is None:
-    return None
-  if row[6] and not row[7]:
-    raise EnqueueError("could not consume selected blocked job")
-  return {
-    "job_id": row[0],
-    "queue_name": row[1],
-    "priority": row[2],
-    "concurrency_key": row[3],
-    "expires_at": row[4],
-    "job_backend_alias": row[5],
-    "slot_acquired": row[6],
-  }
-
-
 def _consume_next_blocked_job(alias, *, backend_alias, key, use_skip_locked):
   capabilities = database_capabilities(alias)
   if capabilities.backend_family == "postgresql":
-    return _postgres_consume_next_blocked_job(
+    return backend_sql(alias).consume_next_blocked_job(
       alias,
       backend_alias=backend_alias,
       key=key,
@@ -764,67 +504,6 @@ def _consume_next_blocked_job(alias, *, backend_alias, key, use_skip_locked):
   return _blocked_execution_values(blocked)
 
 
-def _postgres_consume_next_blocked_job(alias, *, backend_alias, key, use_skip_locked):
-  connection = connections[alias]
-  quote = connection.ops.quote_name
-  table = quote(BlockedExecution._meta.db_table)
-  pk_column = quote(BlockedExecution._meta.pk.column)
-  job_id_column = quote(BlockedExecution._meta.get_field("job").column)
-  backend_alias_column = quote(BlockedExecution._meta.get_field("backend_alias").column)
-  queue_name_column = quote(BlockedExecution._meta.get_field("queue_name").column)
-  priority_column = quote(BlockedExecution._meta.get_field("priority").column)
-  concurrency_key_column = quote(BlockedExecution._meta.get_field("concurrency_key").column)
-  expires_at_column = quote(BlockedExecution._meta.get_field("expires_at").column)
-  jobs_table = quote(Job._meta.db_table)
-  jobs_id_column = quote(Job._meta.get_field("id").column)
-  jobs_backend_alias_column = quote(Job._meta.get_field("backend_alias").column)
-  skip_locked_sql = " SKIP LOCKED" if use_skip_locked else ""
-
-  with connection.cursor() as cursor:
-    cursor.execute(
-      f"""
-      WITH selected AS (
-        SELECT
-          {table}.{pk_column},
-          {jobs_table}.{jobs_backend_alias_column} AS job_backend_alias
-        FROM {table}
-        JOIN {jobs_table}
-          ON {jobs_table}.{jobs_id_column} = {table}.{job_id_column}
-        WHERE {table}.{backend_alias_column} = %s
-          AND {table}.{concurrency_key_column} = %s
-        ORDER BY {table}.{priority_column} DESC, {table}.{pk_column} ASC
-        LIMIT 1
-        FOR UPDATE OF {table}{skip_locked_sql}
-      ), deleted AS (
-        DELETE FROM {table}
-        USING selected
-        WHERE {table}.{pk_column} = selected.{pk_column}
-        RETURNING
-          {table}.{job_id_column},
-          {table}.{queue_name_column},
-          {table}.{priority_column},
-          {table}.{concurrency_key_column},
-          {table}.{expires_at_column},
-          selected.job_backend_alias
-      )
-      SELECT * FROM deleted
-      """,
-      [backend_alias, key],
-    )
-    row = cursor.fetchone()
-
-  if row is None:
-    return None
-  return {
-    "job_id": row[0],
-    "queue_name": row[1],
-    "priority": row[2],
-    "concurrency_key": row[3],
-    "expires_at": row[4],
-    "job_backend_alias": row[5],
-  }
-
-
 def _blocked_execution_values(blocked):
   return {
     "job_id": blocked.job_id,
@@ -846,53 +525,14 @@ def _create_ready_execution_after_blocked_consume(
   ready_at,
 ):
   _lock_active_pauses(alias, backend_alias, {queue_name})
-  connection = connections[alias]
-  quote = connection.ops.quote_name
-  ready_table = quote(ReadyExecution._meta.db_table)
-  job_id_column = quote(ReadyExecution._meta.get_field("job").column)
-  backend_alias_column = quote(ReadyExecution._meta.get_field("backend_alias").column)
-  queue_name_column = quote(ReadyExecution._meta.get_field("queue_name").column)
-  priority_column = quote(ReadyExecution._meta.get_field("priority").column)
-  created_at_column = quote(ReadyExecution._meta.get_field("created_at").column)
-  latency_started_at_column = quote(ReadyExecution._meta.get_field("latency_started_at").column)
-  job_id = Job._meta.get_field("id").get_db_prep_value(
-    job.pk,
-    connection=connection,
-    prepared=False,
+  created = sql_common.create_ready_execution_after_blocked_consume(
+    alias,
+    job=job,
+    backend_alias=backend_alias,
+    queue_name=queue_name,
+    priority=priority,
+    ready_at=ready_at,
   )
-  state_models = _state_models_except(BlockedExecution)
-  state_checks = _state_absence_checks_sql(
-    state_models,
-    quote=quote,
-    job_id_expression="%s",
-  )
-
-  with connection.cursor() as cursor:
-    cursor.execute(
-      f"""
-      INSERT INTO {ready_table} (
-        {job_id_column},
-        {backend_alias_column},
-        {queue_name_column},
-        {priority_column},
-        {created_at_column},
-        {latency_started_at_column}
-      )
-      SELECT %s, %s, %s, %s, %s, %s
-      WHERE {state_checks}
-      """,
-      [
-        job_id,
-        backend_alias,
-        queue_name,
-        priority,
-        ready_at,
-        ready_at,
-        *([job_id] * len(state_models)),
-      ],
-    )
-    created = cursor.rowcount
-
   if created != 1:
     raise EnqueueError(f"job {job.id} already has an execution-state row")
 

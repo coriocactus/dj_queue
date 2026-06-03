@@ -1,6 +1,6 @@
 from django.db import connections
 
-from dj_queue.db import database_capabilities
+from dj_queue.sql import backend_sql
 
 
 def create_ignore_conflicts(model, /, *, using, **fields):
@@ -19,24 +19,13 @@ def create_ignore_conflicts(model, /, *, using, **fields):
     for field in insert_fields
   ]
 
-  table = quote(model._meta.db_table)
-  backend_family = database_capabilities(using).backend_family
-  if backend_family in {"mysql", "mariadb"}:
-    pk_column = quote(model._meta.pk.column)
-    sql = (
-      f"INSERT INTO {table} ({columns}) VALUES ({placeholders}) "
-      f"ON DUPLICATE KEY UPDATE {pk_column} = {pk_column} + LAST_INSERT_ID(0)"
-    )
-  else:
-    sql = f"INSERT INTO {table} ({columns}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
-
-  with connection.cursor() as cursor:
-    cursor.execute(sql, params)
-    if backend_family in {"mysql", "mariadb"}:
-      return cursor.lastrowid != 0
-    rowcount = cursor.rowcount
-
-  return rowcount > 0
+  return backend_sql(using).create_ignore_conflicts(
+    connection,
+    model,
+    columns=columns,
+    placeholders=placeholders,
+    params=params,
+  )
 
 
 def _is_auto_field(field):

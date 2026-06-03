@@ -5,6 +5,7 @@ from django.db import connections
 
 from dj_queue.db import database_capabilities
 from dj_queue.log import log_event
+from dj_queue.sql import backend_sql
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,13 +41,7 @@ def postgres_connection_capacity(alias):
   if database_capabilities(alias).backend_family != "postgresql":
     return None
 
-  connection = connections[alias]
-  with connection.cursor() as cursor:
-    cursor.execute(
-      "select current_setting('max_connections')::int, "
-      "current_setting('superuser_reserved_connections')::int"
-    )
-    max_connections, reserved_connections = cursor.fetchone()
+  max_connections, reserved_connections = backend_sql(alias).connection_capacity(alias)
   return PostgresConnectionCapacity(
     max_connections=max_connections,
     reserved_connections=reserved_connections,
