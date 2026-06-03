@@ -1142,9 +1142,7 @@ def test_enqueue_on_commit_helper_rollback_drops_work():
 @pytest.mark.django_db(transaction=True)
 def test_async_backend_variants_match_sync_behavior():
   result = asyncio.run(async_echo.aenqueue("async"))
-  bulk_results = asyncio.run(
-    async_echo.get_backend().aenqueue_all([(async_echo, ["bulk"], {})])
-  )
+  bulk_results = asyncio.run(async_echo.get_backend().aenqueue_all([(async_echo, ["bulk"], {})]))
 
   async_fetched = asyncio.run(async_echo.aget_result(result.id))
   sync_fetched = async_echo.get_result(result.id)

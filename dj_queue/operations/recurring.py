@@ -373,7 +373,11 @@ def _attach_reserved_recurring_job(reservation, job, *, using, backend_alias):
   )
   if updated != 1:
     raise EnqueueError("recurring execution reservation could not be assigned a job")
-  return RecurringExecution.objects.using(using).select_related("job").get(pk=reservation["execution_id"])
+  return (
+    RecurringExecution.objects.using(using)
+    .select_related("job")
+    .get(pk=reservation["execution_id"])
+  )
 
 
 def _delete_unbackfilled_reservation(reservation, *, using, backend_alias):
