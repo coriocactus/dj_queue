@@ -33,6 +33,7 @@ from dj_queue.operations.cleanup import (
   clear_recurring_executions,
 )
 from dj_queue.operations.jobs import (
+  claim_ready_jobs,
   DispatchOutcome,
   dispatch_scheduled_job_now,
   discard_failed_job,
@@ -103,7 +104,7 @@ def snapshot_jobs():
       tuple(sorted(job.payload["kwargs"].items())),
       job.concurrency_key,
     )
-    for job in Job.objects.order_by("created_at")
+    for job in Job.objects.order_by("created_at", "id")
   ]
 
 
@@ -261,6 +262,28 @@ def test_enqueue_bulk_immediate_matches_single_enqueue_semantics():
   assert [result.status for result in results] == [TaskResultStatus.READY, TaskResultStatus.READY]
   assert snapshot_jobs() == single_snapshot
   assert ReadyExecution.objects.count() == 2
+
+
+@pytest.mark.django_db
+def test_enqueue_bulk_preserves_claim_order_without_timestamp_sequence():
+  backend = echo.get_backend()
+
+  results = backend.enqueue_all(
+    [
+      (echo, ("one",), {}),
+      (echo, ("two",), {}),
+      (echo, ("three",), {}),
+    ]
+  )
+
+  jobs = list(Job.objects.order_by("id"))
+  assert all(job.created_at is not None and job.updated_at is not None for job in jobs)
+
+  claimed_jobs = claim_ready_jobs(limit=3)
+
+  assert [str(claimed_job.job.id) for claimed_job in claimed_jobs] == [
+    result.id for result in results
+  ]
 
 
 @pytest.mark.django_db

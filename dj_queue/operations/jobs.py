@@ -169,13 +169,12 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
   now = timezone.now()
   prepared = []
 
-  for index, (task, args, kwargs) in enumerate(task_calls):
+  for task, args, kwargs in task_calls:
     if validate:
       validate_queue_allowed(task.queue_name, backend_alias=backend_alias)
       validate_priority(task.priority)
     payload = _normalize_payload(args, kwargs)
     concurrency_key = _resolve_concurrency_key(task, args, kwargs)
-    created_at = now + timedelta(microseconds=index)
     prepared.append(
       {
         "task": task,
@@ -187,8 +186,8 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
           backend_alias=backend_alias,
           scheduled_at=task.run_after,
           concurrency_key=concurrency_key,
-          created_at=created_at,
-          updated_at=created_at,
+          created_at=now,
+          updated_at=now,
         ),
       }
     )
