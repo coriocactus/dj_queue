@@ -82,9 +82,6 @@ def _install_dj_queue_admin_site(site):
   site._dj_queue_dashboard_installed = True
 
 
-_install_dj_queue_admin_site(admin.site)
-
-
 def _format_admin_datetime(value):
   if value is None:
     return None
