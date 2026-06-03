@@ -282,6 +282,31 @@ def test_enqueue_bulk_mixed_states():
 
 
 @pytest.mark.django_db
+def test_enqueue_bulk_caches_formatted_concurrency_key_signature(monkeypatch):
+  backend = limited.get_backend()
+  calls = []
+  job_operations = __import__("dj_queue.operations.jobs", fromlist=["inspect"])
+  job_operations._task_call_signature.cache_clear()
+  original_signature = job_operations.inspect.signature
+
+  def counted_signature(func):
+    calls.append(func)
+    return original_signature(func)
+
+  monkeypatch.setattr("dj_queue.operations.jobs.inspect.signature", counted_signature)
+
+  backend.enqueue_all(
+    [
+      (limited, (1,), {"value": "first"}),
+      (limited, (1,), {"value": "second"}),
+      (limited, (1,), {"value": "third"}),
+    ]
+  )
+
+  assert calls == [limited.func]
+
+
+@pytest.mark.django_db
 def test_get_result_ready():
   result = echo.enqueue("ready")
 

@@ -4,6 +4,7 @@ import traceback
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import StrEnum
+from functools import lru_cache
 
 from django.db import connections, transaction
 from django.db.models import Case, IntegerField, Value, When
@@ -1142,14 +1143,19 @@ def _resolve_concurrency_key(task, args, kwargs):
 
 
 def _bound_arguments(task, args, kwargs):
-  signature = inspect.signature(task.func)
-  parameters = tuple(signature.parameters.values())
-  if task.takes_context and parameters:
-    signature = signature.replace(parameters=parameters[1:])
-
+  signature = _task_call_signature(task.func, task.takes_context)
   bound = signature.bind(*args, **kwargs)
   bound.apply_defaults()
   return bound.arguments
+
+
+@lru_cache(maxsize=1024)
+def _task_call_signature(func, takes_context):
+  signature = inspect.signature(func)
+  parameters = tuple(signature.parameters.values())
+  if takes_context and parameters:
+    signature = signature.replace(parameters=parameters[1:])
+  return signature
 
 
 def _filter_queue_selectors(queryset, queues):
