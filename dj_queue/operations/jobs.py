@@ -1504,17 +1504,52 @@ def _finish_job_if_no_execution_state(
 
 
 def _fail_claimed_jobs(jobs, error, *, traceback_text, backend_alias):
-  failed_jobs = []
+  jobs = list(jobs)
+  if not jobs:
+    return []
   for job in jobs:
-    failed_jobs.append(
-      fail_claimed_job(
-        job,
-        error,
-        traceback_text=traceback_text,
-        backend_alias=backend_alias,
-      )
+    if job.backend_alias != backend_alias:
+      raise ClaimedExecution.DoesNotExist
+
+  alias = get_database_alias(backend_alias)
+  job_ids = [job.id for job in jobs]
+  exception_class = _exception_path(error)
+  message = str(error)
+
+  with transaction.atomic(using=alias):
+    deleted, _ = ClaimedExecution.objects.using(alias).filter(job_id__in=job_ids).delete()
+    if deleted != len(job_ids):
+      raise ClaimedExecution.DoesNotExist
+    _ensure_job_ids_have_no_other_execution_state(
+      alias,
+      job_ids,
+      ignored_models=(ClaimedExecution,),
     )
-  return failed_jobs
+    FailedExecution.objects.using(alias).bulk_create(
+      [
+        FailedExecution(
+          job_id=job.id,
+          exception_class=exception_class,
+          message=message,
+          traceback=traceback_text,
+        )
+        for job in jobs
+      ]
+    )
+
+  for job in jobs:
+    _release_concurrency_slot(job)
+
+  if event_logging_enabled(backend_alias=backend_alias):
+    for job in jobs:
+      log_event(
+        "job.failed",
+        backend_alias=backend_alias,
+        job_id=str(job.id),
+        exception_class=exception_class,
+        message=message,
+      )
+  return jobs
 
 
 def _exception_path(error):

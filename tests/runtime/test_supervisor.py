@@ -266,6 +266,27 @@ def test_prune_stale_process_rows_fails_their_claimed_jobs():
   supervisor.stop()
 
 
+def test_prune_stale_process_rows_fails_multiple_claimed_jobs_for_process():
+  stale_process = make_process(
+    name="stale-worker",
+    last_heartbeat_at=timezone.now() - timedelta(minutes=10),
+  )
+  jobs = [make_job(task_path="tests.tasks.echo") for _index in range(3)]
+  for job in jobs:
+    make_claimed_execution(job=job, process=stale_process)
+  supervisor = make_supervisor()
+  supervisor.start()
+
+  try:
+    pruned = supervisor.prune_stale_process_rows(now=timezone.now())
+  finally:
+    supervisor.stop()
+
+  assert [process.name for process in pruned] == ["stale-worker"]
+  assert FailedExecution.objects.filter(job__in=jobs).count() == len(jobs)
+  assert ClaimedExecution.objects.filter(job__in=jobs).exists() is False
+
+
 def test_prune_stale_process_rows_skips_process_that_heartbeats_before_delete(monkeypatch):
   stale_process = make_process(
     name="stale-worker",
