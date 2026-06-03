@@ -439,6 +439,67 @@ def test_successful_completion_unblocks_next_waiter():
 
 
 @pytest.mark.django_db
+def test_worker_completion_directly_claims_limit_one_waiter():
+  process = Process.objects.create(
+    backend_alias="default",
+    kind="Worker",
+    pid=12345,
+    hostname="localhost",
+    name="worker-handoff",
+    metadata={},
+    last_heartbeat_at=timezone.now(),
+  )
+  first = limited.enqueue(1, value="first")
+  second = limited.enqueue(1, value="second")
+  claimed_job = claim_ready_jobs(limit=1, process=process)[0]
+
+  outcome = job_operations._complete_claimed_job(
+    claimed_job,
+    "done",
+    backend_alias="default",
+    task=limited,
+  )
+
+  assert str(outcome.job.id) == first.id
+  assert str(outcome.next_claimed_job.job.id) == second.id
+  assert outcome.next_claimed_job.process_id == process.id
+  assert ClaimedExecution.objects.filter(job_id=second.id, process=process).exists() is True
+  assert ReadyExecution.objects.filter(job_id=second.id).exists() is False
+  assert BlockedExecution.objects.filter(job_id=second.id).exists() is False
+  assert Semaphore.objects.get(key="account:1").value == 0
+
+
+@pytest.mark.django_db
+def test_direct_handoff_respects_paused_queue():
+  process = Process.objects.create(
+    backend_alias="default",
+    kind="Worker",
+    pid=12345,
+    hostname="localhost",
+    name="worker-paused-handoff",
+    metadata={},
+    last_heartbeat_at=timezone.now(),
+  )
+  first = limited.enqueue(1, value="first")
+  second = limited.enqueue(1, value="second")
+  claimed_job = claim_ready_jobs(limit=1, process=process)[0]
+  QueueInfo("default").pause()
+
+  outcome = job_operations._complete_claimed_job(
+    claimed_job,
+    "done",
+    backend_alias="default",
+    task=limited,
+  )
+
+  assert str(outcome.job.id) == first.id
+  assert outcome.next_claimed_job is None
+  assert ReadyExecution.objects.filter(job_id=second.id).exists() is True
+  assert ClaimedExecution.objects.filter(job_id=second.id).exists() is False
+  assert BlockedExecution.objects.filter(job_id=second.id).exists() is False
+
+
+@pytest.mark.django_db
 def test_execute_claimed_job_reuses_loaded_task_for_concurrency_release(monkeypatch):
   limited.func.concurrency_limit = 1
   limited.enqueue(1, value="first")

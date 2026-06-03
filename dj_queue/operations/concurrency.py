@@ -23,6 +23,7 @@ from dj_queue.operations._helpers import (
   _consume_selected_rows,
   _create_blocked_execution,
   _create_ready_execution_locked,
+  _ensure_no_other_execution_state,
   _ensure_state_rows_belong_to_backend,
   _lock_active_pauses,
   _state_absence_checks_sql,
@@ -50,6 +51,12 @@ class BlockedJobRef:
   @property
   def pk(self):
     return self.id
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimedHandoffRef:
+  job_id: object
+  claimed_at: object
 
 
 def semaphore_acquire(
@@ -503,6 +510,117 @@ def unblock_next_blocked_job(
   return job_ref
 
 
+def claim_next_blocked_job(
+  key,
+  *,
+  limit,
+  duration_seconds,
+  process_id,
+  backend_alias="default",
+  use_skip_locked=True,
+):
+  if process_id is None or limit != 1:
+    return None
+
+  alias = get_database_alias(backend_alias)
+  now = timezone.now()
+  promoted_job_ref = None
+  claimed_ref = None
+
+  with _operation_atomic(alias):
+    capabilities = database_capabilities(alias)
+    postgres_release_slot = capabilities.backend_family == "postgresql"
+    if postgres_release_slot:
+      blocked = _postgres_consume_next_blocked_job_with_released_slot(
+        alias,
+        backend_alias=backend_alias,
+        key=key,
+        limit=limit,
+        duration_seconds=duration_seconds,
+        now=now,
+        use_skip_locked=use_skip_locked and capabilities.supports_skip_locked,
+      )
+      slot_acquired = bool(blocked and blocked.pop("slot_acquired"))
+    else:
+      blocked = _consume_next_blocked_job(
+        alias,
+        backend_alias=backend_alias,
+        key=key,
+        use_skip_locked=use_skip_locked,
+      )
+      slot_acquired = False
+    if blocked is None:
+      return None
+    if blocked["job_backend_alias"] != backend_alias:
+      raise EnqueueError(
+        f"job {blocked['job_id']} belongs to backend {blocked['job_backend_alias']!r}"
+      )
+
+    if not postgres_release_slot:
+      slot_acquired = _handoff_released_claimed_slot(
+        alias,
+        key,
+        limit=limit,
+        duration_seconds=duration_seconds,
+        now=now,
+      )
+    if not slot_acquired:
+      if not postgres_release_slot:
+        _create_blocked_execution(
+          alias,
+          BlockedJobRef(
+            id=blocked["job_id"],
+            backend_alias=backend_alias,
+            queue_name=blocked["queue_name"],
+            priority=blocked["priority"],
+            concurrency_key=blocked["concurrency_key"],
+          ),
+          backend_alias=backend_alias,
+          queue_name=blocked["queue_name"],
+          priority=blocked["priority"],
+          concurrency_key=blocked["concurrency_key"],
+          expires_at=blocked["expires_at"],
+          check_conflicts=True,
+        )
+      return None
+
+    job_ref = BlockedJobRef(
+      id=blocked["job_id"],
+      queue_name=blocked["queue_name"],
+      priority=blocked["priority"],
+      concurrency_key=blocked["concurrency_key"],
+      backend_alias=backend_alias,
+    )
+    if _lock_active_pauses(alias, backend_alias, {blocked["queue_name"]}):
+      _create_ready_execution_after_blocked_consume(
+        alias,
+        job=job_ref,
+        backend_alias=backend_alias,
+        queue_name=blocked["queue_name"],
+        priority=blocked["priority"],
+        ready_at=now,
+      )
+      promoted_job_ref = job_ref
+    else:
+      _create_claimed_execution_after_blocked_consume(
+        alias,
+        job=job_ref,
+        process_id=process_id,
+        claimed_at=now,
+      )
+      claimed_ref = ClaimedHandoffRef(job_id=blocked["job_id"], claimed_at=now)
+
+  if promoted_job_ref is not None:
+    log_event(
+      "job.unblocked",
+      backend_alias=backend_alias,
+      job_id=str(promoted_job_ref.id),
+      concurrency_key=key,
+    )
+    notify_ready_queues_on_commit((promoted_job_ref.queue_name,), backend_alias=backend_alias)
+  return claimed_ref
+
+
 def _postgres_consume_next_blocked_job_with_released_slot(
   alias,
   *,
@@ -777,6 +895,15 @@ def _create_ready_execution_after_blocked_consume(
 
   if created != 1:
     raise EnqueueError(f"job {job.id} already has an execution-state row")
+
+
+def _create_claimed_execution_after_blocked_consume(alias, *, job, process_id, claimed_at):
+  _ensure_no_other_execution_state(alias, job, ignored_models=(BlockedExecution,))
+  ClaimedExecution.objects.using(alias).create(
+    job_id=job.id,
+    process_id=process_id,
+    created_at=claimed_at,
+  )
 
 
 def cleanup_expired_semaphores(*, backend_alias="default"):

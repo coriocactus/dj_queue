@@ -184,7 +184,7 @@ def test_full_lifecycle_mixed_queues_scheduled_blocked_and_recurring(monkeypatch
     first_limited_job = Job.objects.get(pk=first_limited.id)
     blocked_job.refresh_from_db()
     assert first_limited_job.return_value == "first"
-    assert blocked_job.ready is True
+    assert blocked_job.return_value == "blocked-second"
 
     promoted_at = future_at + timedelta(seconds=1)
     with monkeypatch.context() as mp:

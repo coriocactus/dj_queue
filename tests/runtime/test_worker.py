@@ -10,7 +10,14 @@ from django.utils import timezone
 
 from dj_queue.config import WorkerConfig
 from dj_queue.exceptions import ProcessExitError
-from dj_queue.models import ClaimedExecution, FailedExecution, Job, Process, ReadyExecution
+from dj_queue.models import (
+  BlockedExecution,
+  ClaimedExecution,
+  FailedExecution,
+  Job,
+  Process,
+  ReadyExecution,
+)
 from dj_queue.operations.jobs import (
   ClaimedJob,
   claim_ready_jobs,
@@ -19,7 +26,7 @@ from dj_queue.operations.jobs import (
 )
 import dj_queue.operations._helpers as operation_helpers
 from dj_queue.runtime.worker import Worker
-from tests.tasks import echo, fail, nan_result, non_json_result, with_context
+from tests.tasks import echo, fail, limited, nan_result, non_json_result, with_context
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -274,6 +281,31 @@ def test_worker_prefetch_limit_accounts_for_in_flight_work():
 
   assert [claimed_job.job.id for claimed_job in claimed_jobs] == [jobs[0].id]
   assert ReadyExecution.objects.filter(job__in=jobs[1:]).count() == 2
+  worker.stop()
+
+
+def test_worker_direct_handoff_executes_next_blocked_job_without_repoll():
+  first = limited.enqueue(1, value="first")
+  second = limited.enqueue(1, value="second")
+  worker = make_worker(
+    config=WorkerConfig(
+      queues=("*",),
+      threads=1,
+      processes=1,
+      polling_interval=0.1,
+      prefetch_multiplier=1,
+    )
+  )
+  worker.start()
+
+  submitted_jobs = worker.poll_once()
+
+  assert [str(claimed_job.job.id) for claimed_job in submitted_jobs] == [first.id]
+  assert Job.objects.get(pk=first.id).return_value == "first"
+  assert Job.objects.get(pk=second.id).return_value == "second"
+  assert ReadyExecution.objects.filter(job_id__in=[first.id, second.id]).exists() is False
+  assert BlockedExecution.objects.filter(job_id__in=[first.id, second.id]).exists() is False
+  assert ClaimedExecution.objects.filter(job_id__in=[first.id, second.id]).exists() is False
   worker.stop()
 
 
