@@ -265,6 +265,18 @@ def test_enqueue_bulk_immediate_matches_single_enqueue_semantics():
 
 
 @pytest.mark.django_db
+def test_enqueue_bulk_immediate_query_budget_stays_batch_sized():
+  backend = echo.get_backend()
+
+  with CaptureQueriesContext(connection) as ctx:
+    results = backend.enqueue_all([(echo, (index,), {}) for index in range(100)])
+
+  assert len(ctx.captured_queries) <= 6
+  assert len(results) == 100
+  assert ReadyExecution.objects.count() == 100
+
+
+@pytest.mark.django_db
 def test_enqueue_bulk_preserves_claim_order_without_timestamp_sequence():
   backend = echo.get_backend()
 
@@ -445,6 +457,21 @@ def test_enqueue_bulk_groups_concurrency_slot_acquisition(monkeypatch):
   ]
   assert ReadyExecution.objects.count() == 1
   assert Job.objects.blocked().count() == 2
+
+
+@pytest.mark.django_db
+def test_enqueue_bulk_concurrency_query_budget_stays_group_sized():
+  backend = limited.get_backend()
+
+  with CaptureQueriesContext(connection) as ctx:
+    results = backend.enqueue_all(
+      [(limited, (1,), {"value": f"job-{index}"}) for index in range(10)]
+    )
+
+  assert len(ctx.captured_queries) <= 12
+  assert len(results) == 10
+  assert ReadyExecution.objects.count() == 1
+  assert Job.objects.blocked().count() == 9
 
 
 @pytest.mark.django_db

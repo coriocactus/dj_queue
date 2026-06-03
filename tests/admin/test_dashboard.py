@@ -2,7 +2,9 @@ from datetime import timedelta
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.http import Http404
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
@@ -143,6 +145,37 @@ def test_dashboard_admin_renders(admin_client):
   assert "worker-1" in content
   assert "nightly" in content
   assert "account:1" in content
+
+
+def test_dashboard_overview_query_budget_stays_section_sized(admin_client):
+  now = timezone.now()
+  for index in range(10):
+    make_ready_job(queue_name=f"queue-{index}")
+  Process.objects.create(
+    backend_alias="default",
+    kind="Worker",
+    pid=101,
+    hostname="localhost",
+    name="worker-1",
+    metadata={"queues": ["*"]},
+    last_heartbeat_at=now,
+  )
+  RecurringTask.objects.create(
+    backend_alias="default",
+    key="nightly",
+    task_path="tests.tasks.echo",
+    payload={"args": ["nightly"], "kwargs": {}},
+    schedule="0 0 * * *",
+    queue_name="queue-0",
+    priority=0,
+    static=False,
+  )
+
+  with CaptureQueriesContext(connection) as ctx:
+    response = admin_client.get(reverse("admin:dj_queue_dashboard_changelist"))
+
+  assert response.status_code == 200
+  assert len(ctx.captured_queries) <= 55
 
 
 def test_dashboard_backend_facts_show_effective_database_capabilities(settings):

@@ -253,6 +253,27 @@ def test_execute_claimed_job_with_waiter_avoids_nested_unblock_savepoint():
   assert len(ctx.captured_queries) == expected_queries
 
 
+@pytest.mark.django_db
+def test_execute_claimed_job_direct_handoff_query_budget_stays_bounded():
+  limited.enqueue(1, value="first")
+  limited.enqueue(1, value="second")
+  process = Process.objects.create(
+    backend_alias="default",
+    kind="Worker",
+    pid=12345,
+    hostname="localhost",
+    name="worker-handoff-budget",
+    metadata={},
+    last_heartbeat_at=timezone.now(),
+  )
+  claimed_job = claim_ready_jobs(limit=1, process=process)[0]
+
+  with CaptureQueriesContext(connection) as ctx:
+    execute_claimed_job(claimed_job)
+
+  assert len(ctx.captured_queries) <= 20
+
+
 @pytest.mark.skipif(
   os.environ.get("DB_BACKEND", "sqlite") != "postgres",
   reason="requires DB_BACKEND=postgres",
@@ -1114,6 +1135,23 @@ def test_queue_selector_exact_group_drains_first_selector_before_next():
     alpha_2.id,
   ]
   assert ReadyExecution.objects.filter(job_id=beta.id).exists() is True
+
+
+@pytest.mark.django_db
+def test_queue_selector_exact_group_query_budget_stays_claim_sized():
+  for queue_name in ("alpha", "alpha", "beta", "beta"):
+    echo.using(queue_name=queue_name).enqueue(queue_name)
+
+  with CaptureQueriesContext(connection) as ctx:
+    claimed_jobs = claim_ready_jobs(limit=4, queues=("alpha", "beta"))
+
+  assert len(ctx.captured_queries) <= 10
+  assert [claimed_job.job.queue_name for claimed_job in claimed_jobs] == [
+    "alpha",
+    "alpha",
+    "beta",
+    "beta",
+  ]
 
 
 @pytest.mark.django_db
