@@ -69,6 +69,7 @@ from dj_queue.wakeup import notify_ready_queues_on_commit
 
 
 CLAIM_READY_JOBS_RETRY_ATTEMPTS = 3
+CLAIM_READY_JOBS_RETRY_SLEEP_BASE = 0.01
 TRANSIENT_CLAIM_ERROR_SQLSTATES = {
   "40001",  # serialization failure
   "40P01",  # deadlock detected
@@ -418,7 +419,7 @@ def claim_ready_jobs(
     except OperationalError as error:
       if attempt == CLAIM_READY_JOBS_RETRY_ATTEMPTS - 1 or not _is_transient_claim_error(error):
         raise
-      time.sleep(0.01 * (attempt + 1))
+      time.sleep(CLAIM_READY_JOBS_RETRY_SLEEP_BASE * (attempt + 1))
 
   if event_logging_enabled(backend_alias=backend_alias):
     for claimed_job in claimed_jobs:
