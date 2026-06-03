@@ -52,6 +52,8 @@ DEFAULT_OPTIONS = {
   "use_skip_locked": True,
   "listen_notify": True,
   "silence_polling": True,
+  "async_thread_sensitive": False,
+  "async_close_connections": False,
   "on_thread_error": None,
 }
 
@@ -125,6 +127,8 @@ class BackendConfig(ConfigValue):
   use_skip_locked: bool = True
   listen_notify: bool = True
   silence_polling: bool = True
+  async_thread_sensitive: bool = False
+  async_close_connections: bool = False
   on_thread_error: str | None = None
   skip_recurring: bool = False
   only_work: bool = False
@@ -272,6 +276,12 @@ def _load_backend_config_uncached(
     use_skip_locked=_bool_option(resolved_options["use_skip_locked"], "use_skip_locked"),
     listen_notify=_bool_option(resolved_options["listen_notify"], "listen_notify"),
     silence_polling=_bool_option(resolved_options["silence_polling"], "silence_polling"),
+    async_thread_sensitive=_bool_option(
+      resolved_options["async_thread_sensitive"], "async_thread_sensitive"
+    ),
+    async_close_connections=_bool_option(
+      resolved_options["async_close_connections"], "async_close_connections"
+    ),
     on_thread_error=on_thread_error,
     skip_recurring=skip_recurring,
     only_work=only_work,

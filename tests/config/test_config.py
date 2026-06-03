@@ -20,6 +20,8 @@ def test_config_defaults_resolve(settings):
   assert config.database_alias == "default"
   assert config.use_skip_locked is True
   assert config.listen_notify is True
+  assert config.async_thread_sensitive is False
+  assert config.async_close_connections is False
   assert config.clear_failed_jobs_after is None
   assert config.clear_recurring_executions_after is None
   assert json.dumps(config.as_dict())

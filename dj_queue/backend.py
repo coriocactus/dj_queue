@@ -3,6 +3,7 @@ from django.db import close_old_connections, connections
 from django.tasks.backends.base import BaseTaskBackend
 from django.tasks.exceptions import TaskResultDoesNotExist
 
+from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias
 from dj_queue.models import Job
 from dj_queue.operations.jobs import (
@@ -47,8 +48,13 @@ class DjQueueBackend(BaseTaskBackend):
     )
 
   async def aenqueue(self, task, args, kwargs):
-    return await sync_to_async(_async_backend_call, thread_sensitive=True)(
+    config = load_backend_config(self.alias)
+    return await sync_to_async(
+      _async_backend_call,
+      thread_sensitive=config.async_thread_sensitive,
+    )(
       self.enqueue,
+      close_connections=config.async_close_connections,
       task=task,
       args=args,
       kwargs=kwargs,
@@ -70,6 +76,17 @@ class DjQueueBackend(BaseTaskBackend):
       for job, task, dispatch_outcome in created_jobs
     ]
 
+  async def aenqueue_all(self, task_calls):
+    config = load_backend_config(self.alias)
+    return await sync_to_async(
+      _async_backend_call,
+      thread_sensitive=config.async_thread_sensitive,
+    )(
+      self.enqueue_all,
+      close_connections=config.async_close_connections,
+      task_calls=task_calls,
+    )
+
   def get_result(self, result_id):
     alias = get_database_alias(self.alias)
     try:
@@ -90,15 +107,23 @@ class DjQueueBackend(BaseTaskBackend):
     return task_result_from_job(job)
 
   async def aget_result(self, result_id):
-    return await sync_to_async(_async_backend_call, thread_sensitive=True)(
+    config = load_backend_config(self.alias)
+    return await sync_to_async(
+      _async_backend_call,
+      thread_sensitive=config.async_thread_sensitive,
+    )(
       self.get_result,
+      close_connections=config.async_close_connections,
       result_id=result_id,
     )
 
 
-def _async_backend_call(method, /, **kwargs):
+def _async_backend_call(method, /, *, close_connections=False, **kwargs):
   close_old_connections()
   try:
     return method(**kwargs)
   finally:
-    connections.close_all()
+    if close_connections:
+      connections.close_all()
+    else:
+      close_old_connections()

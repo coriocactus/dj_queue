@@ -979,6 +979,9 @@ def test_enqueue_on_commit_helper_rollback_drops_work():
 @pytest.mark.django_db(transaction=True)
 def test_async_backend_variants_match_sync_behavior():
   result = asyncio.run(async_echo.aenqueue("async"))
+  bulk_results = asyncio.run(
+    async_echo.get_backend().aenqueue_all([(async_echo, ["bulk"], {})])
+  )
 
   async_fetched = asyncio.run(async_echo.aget_result(result.id))
   sync_fetched = async_echo.get_result(result.id)
@@ -987,9 +990,11 @@ def test_async_backend_variants_match_sync_behavior():
   assert async_fetched.status == sync_fetched.status
   assert async_fetched.args == sync_fetched.args == ["async"]
   assert async_fetched.kwargs == sync_fetched.kwargs == {}
+  assert len(bulk_results) == 1
+  assert bulk_results[0].args == ["bulk"]
 
 
-def test_async_backend_call_closes_thread_owned_connections(monkeypatch):
+def test_async_backend_call_uses_obsolete_connection_cleanup_by_default(monkeypatch):
   events = []
 
   monkeypatch.setattr("dj_queue.backend.close_old_connections", lambda: events.append("old"))
@@ -999,6 +1004,21 @@ def test_async_backend_call_closes_thread_owned_connections(monkeypatch):
   )
 
   result = _async_backend_call(lambda value: value, value="ok")
+
+  assert result == "ok"
+  assert events == ["old", "old"]
+
+
+def test_async_backend_call_can_close_all_thread_owned_connections(monkeypatch):
+  events = []
+
+  monkeypatch.setattr("dj_queue.backend.close_old_connections", lambda: events.append("old"))
+  monkeypatch.setattr(
+    "dj_queue.backend.connections",
+    type("DummyConnections", (), {"close_all": lambda self: events.append("all")})(),
+  )
+
+  result = _async_backend_call(lambda value: value, close_connections=True, value="ok")
 
   assert result == "ok"
   assert events == ["old", "all"]
