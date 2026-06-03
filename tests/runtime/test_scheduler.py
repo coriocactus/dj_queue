@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from django.db import transaction
 from django.db.models.query import QuerySet
 from django.utils import timezone
 
@@ -321,6 +322,68 @@ def test_scheduler_persists_next_run_after_fire():
 
   task = RecurringTask.objects.get(backend_alias="default", key="static-task")
   assert task.next_run_at == now.replace(minute=1, second=0, microsecond=0)
+  scheduler.stop()
+
+
+def test_scheduler_enqueues_recurring_job_after_reservation_transaction(monkeypatch):
+  now = fixed_now()
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      recurring={
+        "static-task": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "* * * * *",
+        }
+      }
+    )
+  )
+  scheduler.sync_static_tasks()
+  from dj_queue.operations import recurring
+
+  in_atomic_blocks = []
+  original_enqueue_job = recurring.enqueue_job
+
+  def enqueue_job(*args, **kwargs):
+    in_atomic_blocks.append(transaction.get_connection().in_atomic_block)
+    return original_enqueue_job(*args, **kwargs)
+
+  monkeypatch.setattr(recurring, "enqueue_job", enqueue_job)
+
+  fired_jobs = scheduler.poll_once(now=now)
+
+  assert len(fired_jobs) == 1
+  assert in_atomic_blocks == [False]
+  scheduler.stop()
+
+
+def test_scheduler_recurring_reservation_uses_configured_skip_locked(monkeypatch):
+  now = fixed_now()
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      recurring={
+        "static-task": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "* * * * *",
+        }
+      }
+    )
+  )
+  scheduler.sync_static_tasks()
+  from dj_queue.operations import recurring
+
+  calls = []
+  original_locked_queryset = recurring.locked_queryset
+
+  def locked_queryset(queryset, *, use_skip_locked):
+    if queryset.model is RecurringTask:
+      calls.append(use_skip_locked)
+    return original_locked_queryset(queryset, use_skip_locked=use_skip_locked)
+
+  monkeypatch.setattr(recurring, "locked_queryset", locked_queryset)
+
+  scheduler.poll_once(now=now)
+
+  assert calls == [True]
   scheduler.stop()
 
 

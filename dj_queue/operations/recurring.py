@@ -6,7 +6,7 @@ from django.utils.module_loading import import_string
 
 from dj_queue.cron import is_valid_cron, latest_cron_run, next_cron_run
 from dj_queue.config import load_backend_config
-from dj_queue.db import get_database_alias
+from dj_queue.db import get_database_alias, locked_queryset
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import RecurringExecution, RecurringTask
 from dj_queue.operations._helpers import _normalize_payload
@@ -286,14 +286,26 @@ def fire_due_recurring_tasks(
 
 def fire_recurring_task(recurring_task, run_at, *, backend_alias="default"):
   alias = get_database_alias(backend_alias)
+  reservation = _reserve_recurring_task(recurring_task, run_at, backend_alias=backend_alias)
+  if reservation is None:
+    return None
 
+  try:
+    job = _enqueue_reserved_recurring_task(reservation, backend_alias=backend_alias)
+  except Exception:
+    _delete_unbackfilled_reservation(reservation, using=alias, backend_alias=backend_alias)
+    raise
+  return _attach_reserved_recurring_job(reservation, job, using=alias, backend_alias=backend_alias)
+
+
+def _reserve_recurring_task(recurring_task, run_at, *, backend_alias):
+  alias = get_database_alias(backend_alias)
+  config = load_backend_config(backend_alias)
   with transaction.atomic(using=alias):
-    recurring_task = (
-      RecurringTask.objects.using(alias)
-      .select_for_update()
-      .filter(pk=recurring_task.pk, backend_alias=backend_alias)
-      .first()
-    )
+    recurring_task = locked_queryset(
+      RecurringTask.objects.using(alias).filter(pk=recurring_task.pk, backend_alias=backend_alias),
+      use_skip_locked=config.use_skip_locked,
+    ).first()
     if recurring_task is None:
       return None
     if recurring_task.next_run_at is not None and recurring_task.next_run_at > run_at:
@@ -320,23 +332,67 @@ def fire_recurring_task(recurring_task, run_at, *, backend_alias="default"):
       task_key=recurring_task.key,
       run_at=run_at,
     )
-
-    task = import_string(recurring_task.task_path).using(
-      queue_name=recurring_task.queue_name,
-      priority=recurring_task.priority,
-      backend=backend_alias,
-    )
-    payload = recurring_task.payload or {}
-    job = enqueue_job(
-      task,
-      payload.get("args", []),
-      payload.get("kwargs", {}),
-      backend_alias=backend_alias,
-    )
-    execution.job = job
-    execution.save(using=alias, update_fields=["job"])
     _advance_next_run_at(recurring_task, next_run_at, using=alias)
-    return execution
+    return {
+      "execution_id": execution.id,
+      "recurring_task_id": recurring_task.id,
+      "task_key": recurring_task.key,
+      "run_at": run_at,
+      "next_run_at": next_run_at,
+      "task_path": recurring_task.task_path,
+      "payload": recurring_task.payload or {},
+      "queue_name": recurring_task.queue_name,
+      "priority": recurring_task.priority,
+    }
+
+
+def _enqueue_reserved_recurring_task(reservation, *, backend_alias):
+  task = import_string(reservation["task_path"]).using(
+    queue_name=reservation["queue_name"],
+    priority=reservation["priority"],
+    backend=backend_alias,
+  )
+  payload = reservation["payload"]
+  return enqueue_job(
+    task,
+    payload.get("args", []),
+    payload.get("kwargs", {}),
+    backend_alias=backend_alias,
+  )
+
+
+def _attach_reserved_recurring_job(reservation, job, *, using, backend_alias):
+  updated = (
+    RecurringExecution.objects.using(using)
+    .filter(
+      pk=reservation["execution_id"],
+      backend_alias=backend_alias,
+      job__isnull=True,
+    )
+    .update(job=job)
+  )
+  if updated != 1:
+    raise EnqueueError("recurring execution reservation could not be assigned a job")
+  return RecurringExecution.objects.using(using).select_related("job").get(pk=reservation["execution_id"])
+
+
+def _delete_unbackfilled_reservation(reservation, *, using, backend_alias):
+  with transaction.atomic(using=using):
+    deleted, _ = (
+      RecurringExecution.objects.using(using)
+      .filter(
+        pk=reservation["execution_id"],
+        backend_alias=backend_alias,
+        job__isnull=True,
+      )
+      .delete()
+    )
+    if deleted:
+      RecurringTask.objects.using(using).filter(
+        pk=reservation["recurring_task_id"],
+        backend_alias=backend_alias,
+        next_run_at=reservation["next_run_at"],
+      ).update(next_run_at=reservation["run_at"])
 
 
 def _next_run_after(schedule, run_at):
