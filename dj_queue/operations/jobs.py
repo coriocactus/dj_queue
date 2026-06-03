@@ -196,17 +196,10 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
     if ready_queue_names:
       notify_ready_queues_on_commit(ready_queue_names, backend_alias=backend_alias)
 
-    if event_logging_enabled(backend_alias=backend_alias):
-      for entry in prepared:
-        job = entry["job"]
-        log_event(
-          "job.enqueued",
-          backend_alias=backend_alias,
-          job_id=str(job.id),
-          task_path=job.task_path,
-          queue_name=job.queue_name,
-          priority=job.priority,
-        )
+    _log_bulk_enqueued(
+      (DispatchOutcome.READY for _entry in prepared),
+      backend_alias=backend_alias,
+    )
 
     return [(entry["job"], entry["task"], DispatchOutcome.READY) for entry in prepared]
 
@@ -266,19 +259,31 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
       backend_alias=backend_alias,
     )
 
-  if event_logging_enabled(backend_alias=backend_alias):
-    for entry in prepared:
-      job = entry["job"]
-      log_event(
-        "job.enqueued",
-        backend_alias=backend_alias,
-        job_id=str(job.id),
-        task_path=job.task_path,
-        queue_name=job.queue_name,
-        priority=job.priority,
-      )
+  _log_bulk_enqueued(
+    (entry["dispatch_outcome"] for entry in prepared),
+    backend_alias=backend_alias,
+  )
 
   return [(entry["job"], entry["task"], entry["dispatch_outcome"]) for entry in prepared]
+
+
+def _log_bulk_enqueued(outcomes, *, backend_alias):
+  if not event_logging_enabled(backend_alias=backend_alias):
+    return
+  counts = {outcome: 0 for outcome in DispatchOutcome}
+  job_count = 0
+  for outcome in outcomes:
+    counts[outcome] += 1
+    job_count += 1
+  log_event(
+    "jobs.enqueued",
+    backend_alias=backend_alias,
+    job_count=job_count,
+    ready_count=counts[DispatchOutcome.READY],
+    scheduled_count=counts[DispatchOutcome.SCHEDULED],
+    blocked_count=counts[DispatchOutcome.BLOCKED],
+    discarded_count=counts[DispatchOutcome.DISCARDED],
+  )
 
 
 def claim_ready_jobs(

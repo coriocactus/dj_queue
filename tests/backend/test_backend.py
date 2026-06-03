@@ -262,6 +262,39 @@ def test_enqueue_bulk_immediate_matches_single_enqueue_semantics():
 
 
 @pytest.mark.django_db
+def test_enqueue_bulk_immediate_logs_one_aggregate_event(monkeypatch):
+  backend = echo.get_backend()
+  calls = []
+
+  monkeypatch.setattr("dj_queue.operations.jobs.event_logging_enabled", lambda **kwargs: True)
+  monkeypatch.setattr(
+    "dj_queue.operations.jobs.log_event",
+    lambda event, **fields: calls.append((event, fields)),
+  )
+
+  backend.enqueue_all(
+    [
+      (echo, ("one",), {}),
+      (add, (1, 2), {}),
+    ]
+  )
+
+  assert calls == [
+    (
+      "jobs.enqueued",
+      {
+        "backend_alias": "default",
+        "job_count": 2,
+        "ready_count": 2,
+        "scheduled_count": 0,
+        "blocked_count": 0,
+        "discarded_count": 0,
+      },
+    )
+  ]
+
+
+@pytest.mark.django_db
 def test_enqueue_bulk_mixed_states():
   backend = echo.get_backend()
   future = timezone.now() + timedelta(minutes=5)
@@ -279,6 +312,42 @@ def test_enqueue_bulk_mixed_states():
   assert ReadyExecution.objects.count() == 2
   assert ScheduledExecution.objects.count() == 1
   assert Job.objects.blocked().count() == 1
+
+
+@pytest.mark.django_db
+def test_enqueue_bulk_mixed_logs_outcome_counts(monkeypatch):
+  backend = echo.get_backend()
+  future = timezone.now() + timedelta(minutes=5)
+  calls = []
+
+  monkeypatch.setattr("dj_queue.operations.jobs.event_logging_enabled", lambda **kwargs: True)
+  monkeypatch.setattr(
+    "dj_queue.operations.jobs.log_event",
+    lambda event, **fields: calls.append((event, fields)),
+  )
+
+  backend.enqueue_all(
+    [
+      (echo, ("immediate",), {}),
+      (echo.using(run_after=future), ("later",), {}),
+      (limited, (1,), {"value": "first"}),
+      (limited, (1,), {"value": "second"}),
+    ]
+  )
+
+  assert calls == [
+    (
+      "jobs.enqueued",
+      {
+        "backend_alias": "default",
+        "job_count": 4,
+        "ready_count": 2,
+        "scheduled_count": 1,
+        "blocked_count": 1,
+        "discarded_count": 0,
+      },
+    )
+  ]
 
 
 @pytest.mark.django_db
