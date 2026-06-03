@@ -146,6 +146,32 @@ def test_claim_ready_jobs_retries_transient_database_deadlock(monkeypatch):
   assert calls == 2
 
 
+@pytest.mark.parametrize(
+  "error",
+  (
+    type("PostgresError", (), {"pgcode": "40P01", "args": ()})(),
+    type("SqlstateError", (), {"sqlstate": "40001", "args": ()})(),
+    type("MysqlError", (), {"args": (1213, "deadlock")})(),
+    type("SqliteError", (), {"sqlite_errorcode": 5, "args": ()})(),
+    OperationalError("database is locked"),
+  ),
+)
+def test_transient_claim_error_classification_uses_codes_before_message(error):
+  assert job_operations._is_transient_claim_error(error) is True
+
+
+def test_transient_claim_error_classification_checks_driver_cause():
+  cause = type("PostgresError", (Exception,), {"pgcode": "55P03"})()
+  error = OperationalError("driver wrapped error")
+  error.__cause__ = cause
+
+  assert job_operations._is_transient_claim_error(error) is True
+
+
+def test_non_transient_claim_error_classification_rejects_unknown_errors():
+  assert job_operations._is_transient_claim_error(OperationalError("table missing")) is False
+
+
 @pytest.mark.django_db
 def test_semaphore_signal_caps_at_limit():
   semaphore_acquire("account:1", limit=2, duration_seconds=60)

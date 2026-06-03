@@ -67,6 +67,22 @@ from dj_queue.wakeup import notify_ready_queues_on_commit
 
 
 CLAIM_READY_JOBS_RETRY_ATTEMPTS = 3
+TRANSIENT_CLAIM_ERROR_SQLSTATES = {
+  "40001",  # serialization failure
+  "40P01",  # deadlock detected
+  "55P03",  # lock not available
+}
+TRANSIENT_CLAIM_ERROR_ERRNOS = {
+  1205,  # mysql lock wait timeout
+  1213,  # mysql deadlock
+}
+TRANSIENT_CLAIM_SQLITE_CODES = {
+  5,  # SQLITE_BUSY
+  6,  # SQLITE_LOCKED
+  261,  # SQLITE_BUSY_RECOVERY
+  262,  # SQLITE_LOCKED_SHAREDCACHE
+  517,  # SQLITE_BUSY_SNAPSHOT
+}
 TRANSIENT_CLAIM_ERROR_MESSAGES = (
   "deadlock",
   "lock wait timeout",
@@ -1297,8 +1313,39 @@ def _ordered_selector_rows_queryset(queryset, selectors):
 
 
 def _is_transient_claim_error(error):
+  for candidate in _exception_chain(error):
+    if _transient_sqlstate(candidate) or _transient_errno(candidate):
+      return True
   message = str(error).lower()
   return any(marker in message for marker in TRANSIENT_CLAIM_ERROR_MESSAGES)
+
+
+def _exception_chain(error):
+  seen = set()
+  while error is not None and id(error) not in seen:
+    seen.add(id(error))
+    yield error
+    error = error.__cause__ or error.__context__
+
+
+def _transient_sqlstate(error):
+  for name in ("pgcode", "sqlstate"):
+    value = getattr(error, name, None)
+    if value in TRANSIENT_CLAIM_ERROR_SQLSTATES:
+      return True
+  return False
+
+
+def _transient_errno(error):
+  sqlite_code = getattr(error, "sqlite_errorcode", None)
+  if sqlite_code in TRANSIENT_CLAIM_SQLITE_CODES:
+    return True
+  errno = getattr(error, "errno", None)
+  if errno in TRANSIENT_CLAIM_ERROR_ERRNOS:
+    return True
+  if error.args and error.args[0] in TRANSIENT_CLAIM_ERROR_ERRNOS:
+    return True
+  return False
 
 
 def _normalize_return_value(return_value):
