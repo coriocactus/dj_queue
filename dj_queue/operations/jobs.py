@@ -550,25 +550,23 @@ def _execute_claimed_job_once(job, *, backend_alias="default"):
     task = import_string(job.task_path)
     args = list(job.payload.get("args", []))
     kwargs = dict(job.payload.get("kwargs", {}))
-    if task.takes_context:
-      if claimed_job is None:
-        claimed_job = _load_claimed_job(job.id, backend_alias=job.backend_alias)
-      if not isinstance(claimed_job, ClaimedJob):
-        raise RuntimeError("ClaimedJob is required for task context execution")
-      context = TaskContext(task_result=task_result_for_claimed_job(task, claimed_job))
-      return_value = task.call(context, *args, **kwargs)
-    else:
-      return_value = task.call(*args, **kwargs)
-    return_value = _normalize_return_value(return_value)
   except Exception as exc:
-    failed_job = _fail_claimed_job(
+    return _execution_failure_outcome(job, exc, task=task, failure_kind="task_import")
+
+  try:
+    return_value = _call_task(task, claimed_job, job, args, kwargs)
+  except Exception as exc:
+    return _execution_failure_outcome(job, exc, task=task, failure_kind="task_execution")
+
+  try:
+    return_value = _normalize_return_value(return_value)
+  except ValueError as exc:
+    return _execution_failure_outcome(
       job,
       exc,
-      traceback_text=traceback.format_exc(),
-      backend_alias=job.backend_alias,
       task=task,
+      failure_kind="result_serialization",
     )
-    return ExecutionOutcome(job=failed_job)
 
   completion_job = (
     claimed_job if claimed_job is not None and claimed_job.process_id is not None else job
@@ -579,6 +577,29 @@ def _execute_claimed_job_once(job, *, backend_alias="default"):
     backend_alias=job.backend_alias,
     task=task,
   )
+
+
+def _call_task(task, claimed_job, job, args, kwargs):
+  if task.takes_context:
+    if claimed_job is None:
+      claimed_job = _load_claimed_job(job.id, backend_alias=job.backend_alias)
+    if not isinstance(claimed_job, ClaimedJob):
+      raise RuntimeError("ClaimedJob is required for task context execution")
+    context = TaskContext(task_result=task_result_for_claimed_job(task, claimed_job))
+    return task.call(context, *args, **kwargs)
+  return task.call(*args, **kwargs)
+
+
+def _execution_failure_outcome(job, error, *, task, failure_kind):
+  failed_job = _fail_claimed_job(
+    job,
+    error,
+    traceback_text=traceback.format_exc(),
+    backend_alias=job.backend_alias,
+    task=task,
+    failure_kind=failure_kind,
+  )
+  return ExecutionOutcome(job=failed_job)
 
 
 def complete_claimed_job(job, return_value, *, backend_alias="default"):
@@ -639,7 +660,15 @@ def fail_claimed_job(job, error, *, traceback_text="", backend_alias="default"):
   )
 
 
-def _fail_claimed_job(job, error, *, traceback_text="", backend_alias="default", task=None):
+def _fail_claimed_job(
+  job,
+  error,
+  *,
+  traceback_text="",
+  backend_alias="default",
+  task=None,
+  failure_kind="runtime",
+):
   alias = get_database_alias(backend_alias)
   if isinstance(job, ClaimedJob):
     job = job.job
@@ -661,6 +690,7 @@ def _fail_claimed_job(job, error, *, traceback_text="", backend_alias="default",
       "job.failed",
       backend_alias=backend_alias,
       job_id=str(job.id),
+      failure_kind=failure_kind,
       exception_class=_exception_path(error),
       message=str(error),
     )

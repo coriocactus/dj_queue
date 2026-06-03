@@ -477,6 +477,38 @@ def test_worker_fails_non_json_result_instead_of_stranding_claim():
   worker.stop()
 
 
+def test_execute_claimed_job_logs_task_failure_kind(monkeypatch):
+  events = []
+  make_ready_job(task=fail, args=["boom"])
+  claimed_job = claim_ready_jobs(limit=1)[0]
+  monkeypatch.setattr("dj_queue.operations.jobs.event_logging_enabled", lambda **kwargs: True)
+  monkeypatch.setattr(
+    "dj_queue.operations.jobs.log_event",
+    lambda event, **fields: events.append((event, fields)),
+  )
+
+  execute_claimed_job(claimed_job)
+
+  failed_event = next(fields for event, fields in events if event == "job.failed")
+  assert failed_event["failure_kind"] == "task_execution"
+
+
+def test_execute_claimed_job_logs_result_serialization_failure_kind(monkeypatch):
+  events = []
+  make_ready_job(task=non_json_result)
+  claimed_job = claim_ready_jobs(limit=1)[0]
+  monkeypatch.setattr("dj_queue.operations.jobs.event_logging_enabled", lambda **kwargs: True)
+  monkeypatch.setattr(
+    "dj_queue.operations.jobs.log_event",
+    lambda event, **fields: events.append((event, fields)),
+  )
+
+  execute_claimed_job(claimed_job)
+
+  failed_event = next(fields for event, fields in events if event == "job.failed")
+  assert failed_event["failure_kind"] == "result_serialization"
+
+
 def test_worker_fails_non_standard_json_number_result_instead_of_persisting_nan():
   job = make_ready_job(task=nan_result)
   worker = make_worker()
