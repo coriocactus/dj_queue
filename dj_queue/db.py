@@ -32,17 +32,26 @@ def locked_queryset(qs, use_skip_locked: bool = True):
   return qs.select_for_update(**select_for_update_kwargs)
 
 
+_CAPABILITIES_CACHE: dict[str, DatabaseCapabilities] = {}
+
+
 def database_capabilities(alias: str) -> DatabaseCapabilities:
+  cached = _CAPABILITIES_CACHE.get(alias)
+  if cached is not None:
+    return cached
+
   connection = connections[alias]
   backend_family = _backend_family(connection)
   supports_skip_locked_flag = bool(connection.features.has_select_for_update_skip_locked)
 
-  return DatabaseCapabilities(
+  capabilities = DatabaseCapabilities(
     backend_family=backend_family,
     supports_skip_locked=supports_skip_locked_flag,
     supports_listen_notify=backend_family == "postgresql",
     uses_serialized_writes=backend_family == "sqlite",
   )
+  _CAPABILITIES_CACHE[alias] = capabilities
+  return capabilities
 
 
 def supports_skip_locked(alias: str) -> bool:

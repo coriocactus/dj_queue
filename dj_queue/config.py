@@ -157,21 +157,26 @@ def load_backend_config(
 
   ensure_dj_queue_backend_alias(tasks_settings, backend_alias)
   backend_block = _backend_block(tasks_settings, backend_alias)
-  env_values = {key: env.get(key) for key in CONFIG_ENV_KEYS if env.get(key) is not None}
+  env_key = tuple(env.get(key) for key in CONFIG_ENV_KEYS)
   cache_key = (
     backend_alias,
-    _cache_key(cli_overrides),
-    _cache_key(env_values),
+    _EMPTY_CLI_CACHE_KEY if not cli_overrides else _cache_key(cli_overrides),
+    env_key,
     _cache_key(backend_block),
   )
-  if cache_key not in _BACKEND_CONFIG_CACHE:
-    _BACKEND_CONFIG_CACHE[cache_key] = _load_backend_config_uncached(
-      backend_alias,
-      cli_overrides,
-      env_values,
-      tasks_settings,
-    )
-  return _BACKEND_CONFIG_CACHE[cache_key]
+  cached = _BACKEND_CONFIG_CACHE.get(cache_key)
+  if cached is not None:
+    return cached
+
+  env_values = {key: value for key, value in zip(CONFIG_ENV_KEYS, env_key) if value is not None}
+  config = _load_backend_config_uncached(
+    backend_alias,
+    cli_overrides,
+    env_values,
+    tasks_settings,
+  )
+  _BACKEND_CONFIG_CACHE[cache_key] = config
+  return config
 
 
 def load_allowed_queues(
@@ -776,3 +781,6 @@ def _cache_key(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
   except (TypeError, ValueError) as exc:
     raise ImproperlyConfigured("dj_queue config values must be JSON-serializable") from exc
+
+
+_EMPTY_CLI_CACHE_KEY = _cache_key({})

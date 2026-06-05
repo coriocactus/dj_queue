@@ -3,7 +3,16 @@ import os
 import pytest
 from django.db import connections
 
+from dj_queue import db as dj_queue_db
+
 DB_BACKEND = os.environ.get("DB_BACKEND", "sqlite")
+
+
+@pytest.fixture(autouse=True)
+def _reset_capability_cache():
+  dj_queue_db._CAPABILITIES_CACHE.clear()
+  yield
+  dj_queue_db._CAPABILITIES_CACHE.clear()
 
 
 def pytest_collection_modifyitems(items):
@@ -14,6 +23,7 @@ def pytest_collection_modifyitems(items):
 
 
 def _reset_connections():
+  dj_queue_db._CAPABILITIES_CACHE.clear()
   aliases = list(connections)
   connections.close_all()
   for alias in aliases:
