@@ -121,6 +121,13 @@ class ExecutionOutcome:
   next_claimed_job: ClaimedJob | None = None
 
 
+@dataclass(slots=True)
+class _PreparedJob:
+  task: object
+  job: Job
+  dispatch_outcome: DispatchOutcome | None = None
+
+
 def enqueue_job(task, args, kwargs, *, backend_alias="default"):
   job, _ = enqueue_job_with_dispatch(task, args, kwargs, backend_alias=backend_alias)
   return job
@@ -178,9 +185,9 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
     payload = _normalize_payload(args, kwargs)
     concurrency_key = _resolve_concurrency_key(task, args, kwargs)
     prepared.append(
-      {
-        "task": task,
-        "job": Job(
+      _PreparedJob(
+        task=task,
+        job=Job(
           task_path=task.module_path,
           queue_name=task.queue_name,
           priority=task.priority,
@@ -191,17 +198,15 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
           created_at=now,
           updated_at=now,
         ),
-      }
+      )
     )
 
   if not prepared:
     return []
 
-  if all(
-    entry["job"].scheduled_at is None and not entry["job"].concurrency_key for entry in prepared
-  ):
+  if all(entry.job.scheduled_at is None and not entry.job.concurrency_key for entry in prepared):
     with transaction.atomic(using=alias):
-      jobs = [entry["job"] for entry in prepared]
+      jobs = [entry.job for entry in prepared]
       _bulk_create(alias, Job, jobs)
       _bulk_create_ready_executions_locked(
         alias,
@@ -227,7 +232,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
       backend_alias=backend_alias,
     )
 
-    return [(entry["job"], entry["task"], DispatchOutcome.READY) for entry in prepared]
+    return [(entry.job, entry.task, DispatchOutcome.READY) for entry in prepared]
 
   ready_rows = []
   scheduled_rows = []
@@ -237,11 +242,11 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
   ready_queue_names = []
 
   with transaction.atomic(using=alias):
-    jobs = [entry["job"] for entry in prepared]
+    jobs = [entry.job for entry in prepared]
     _bulk_create(alias, Job, jobs)
 
     for entry in prepared:
-      job = entry["job"]
+      job = entry.job
       if job.scheduled_at is not None and job.scheduled_at > now:
         scheduled_rows.append(
           _scheduled_execution_row(
@@ -251,7 +256,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
             created_at=job.created_at,
           )
         )
-        entry["dispatch_outcome"] = DispatchOutcome.SCHEDULED
+        entry.dispatch_outcome = DispatchOutcome.SCHEDULED
         continue
 
       if not job.concurrency_key:
@@ -264,7 +269,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
           )
         )
         ready_queue_names.append(job.queue_name)
-        entry["dispatch_outcome"] = DispatchOutcome.READY
+        entry.dispatch_outcome = DispatchOutcome.READY
         continue
 
       concurrency_entries.append(entry)
@@ -300,11 +305,11 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
     )
 
   _log_bulk_enqueued(
-    (entry["dispatch_outcome"] for entry in prepared),
+    (entry.dispatch_outcome for entry in prepared),
     backend_alias=backend_alias,
   )
 
-  return [(entry["job"], entry["task"], entry["dispatch_outcome"]) for entry in prepared]
+  return [(entry.job, entry.task, entry.dispatch_outcome) for entry in prepared]
 
 
 def _log_bulk_enqueued(outcomes, *, backend_alias):
@@ -338,9 +343,9 @@ def _dispatch_bulk_concurrency_entries(
 ):
   groups = {}
   for entry in entries:
-    job = entry["job"]
+    job = entry.job
     limit, duration_seconds, on_conflict = concurrency_settings(
-      entry["task"], backend_alias=backend_alias
+      entry.task, backend_alias=backend_alias
     )
     groups.setdefault(
       (job.concurrency_key, limit, duration_seconds, on_conflict),
@@ -356,7 +361,7 @@ def _dispatch_bulk_concurrency_entries(
       backend_alias=backend_alias,
     )
     for index, entry in enumerate(group):
-      job = entry["job"]
+      job = entry.job
       if index < acquired_count:
         ready_rows.append(
           _ready_execution_row(
@@ -367,7 +372,7 @@ def _dispatch_bulk_concurrency_entries(
           )
         )
         ready_queue_names.append(job.queue_name)
-        entry["dispatch_outcome"] = DispatchOutcome.READY
+        entry.dispatch_outcome = DispatchOutcome.READY
         continue
 
       if on_conflict == "discard":
@@ -375,7 +380,7 @@ def _dispatch_bulk_concurrency_entries(
         job.return_value = None
         job.updated_at = now
         discarded_jobs.append(job)
-        entry["dispatch_outcome"] = DispatchOutcome.DISCARDED
+        entry.dispatch_outcome = DispatchOutcome.DISCARDED
         continue
 
       blocked_rows.append(
@@ -388,7 +393,7 @@ def _dispatch_bulk_concurrency_entries(
           expires_at=now + timedelta(seconds=duration_seconds),
         )
       )
-      entry["dispatch_outcome"] = DispatchOutcome.BLOCKED
+      entry.dispatch_outcome = DispatchOutcome.BLOCKED
 
 
 def claim_ready_jobs(
