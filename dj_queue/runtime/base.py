@@ -2,6 +2,7 @@ from contextlib import contextmanager, nullcontext
 import math
 import threading
 import time
+import weakref
 
 from django.db import close_old_connections
 from django.db.utils import OperationalError
@@ -27,6 +28,17 @@ def app_executor():
 _sqlite_process_write_lock = threading.Lock()
 _safe_polling_interval = 1.0
 _liveness_check_min_interval = 1.0
+
+# runners with a live daemon heartbeat thread, so all heartbeats can be stopped
+# deterministically (graceful shutdown, and test teardown before the database
+# is dropped). a daemon thread keeps a strong reference to its runner, so live
+# runners stay reachable here until their heartbeat thread exits.
+_runners_with_heartbeat: "weakref.WeakSet[BaseRunner]" = weakref.WeakSet()
+
+
+def stop_all_heartbeat_threads():
+  for runner in list(_runners_with_heartbeat):
+    runner._stop_heartbeat_thread()
 
 
 def _process_write_context(alias):
@@ -283,6 +295,7 @@ class BaseRunner:
       name=f"dj_queue-heartbeat-{self.name}",
       daemon=True,
     )
+    _runners_with_heartbeat.add(self)
     self._heartbeat_thread.start()
 
   def _stop_heartbeat_thread(self):

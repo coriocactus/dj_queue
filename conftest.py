@@ -15,6 +15,18 @@ def _reset_capability_cache():
   dj_queue_db._CAPABILITIES_CACHE.clear()
 
 
+@pytest.fixture(autouse=True)
+def _stop_lingering_heartbeat_threads():
+  # safety net so a runner abandoned by a test cannot leave a daemon heartbeat
+  # thread alive; such threads otherwise hit the dropped test database and write
+  # to stderr during interpreter shutdown, crashing the run. tests/runtime keeps
+  # its own strict leak assertion, which finalizes before this broader cleanup.
+  yield
+  from dj_queue.runtime.base import stop_all_heartbeat_threads
+
+  stop_all_heartbeat_threads()
+
+
 def pytest_collection_modifyitems(items):
   for item in items:
     for marker in ("postgres", "mysql", "mariadb"):
