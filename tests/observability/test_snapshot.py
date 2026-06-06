@@ -1,4 +1,5 @@
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from django.utils import timezone
@@ -114,6 +115,77 @@ def test_all_backend_snapshots_reuses_shared_queue_database_semaphore_rows(setti
   assert calls == ["default"]
   assert [snapshot.backend_alias for snapshot in snapshots] == ["default", "critical"]
   assert snapshots[0].semaphore_rows == snapshots[1].semaphore_rows
+
+
+def test_stats_payload_can_include_postgres_diagnostics(monkeypatch):
+  now = timezone.now()
+
+  monkeypatch.setattr(
+    observability,
+    "database_capabilities",
+    lambda alias: SimpleNamespace(backend_family="postgresql"),
+  )
+  monkeypatch.setattr(
+    observability,
+    "postgres_queue_table_rows",
+    lambda *, backend_alias: ({"table_name": "dj_queue_jobs", "dead_tuples": 12},),
+  )
+  monkeypatch.setattr(
+    observability,
+    "postgres_xmin_activity_rows",
+    lambda *, backend_alias: ({"pid": 101, "state": "idle in transaction"},),
+  )
+  monkeypatch.setattr(
+    observability,
+    "postgres_replication_slot_rows",
+    lambda *, backend_alias: (),
+  )
+  monkeypatch.setattr(
+    observability,
+    "postgres_prepared_transaction_rows",
+    lambda *, backend_alias: (),
+  )
+
+  payload = observability.stats_payload(now=now)
+
+  diagnostics = payload["backends"][0]["postgres_diagnostics"]
+  assert diagnostics["queue_tables"] == ({"table_name": "dj_queue_jobs", "dead_tuples": 12},)
+  assert diagnostics["xmin_activity"] == ({"pid": 101, "state": "idle in transaction"},)
+  assert diagnostics["long_transaction_threshold_seconds"] == 300.0
+
+
+def test_postgres_health_problems_report_bloat_and_xmin_blockers(monkeypatch):
+  diagnostics = {
+    "queue_tables": (
+      {
+        "table_name": "dj_queue_ready_executions",
+        "dead_tuples": 20_000,
+        "dead_tuple_ratio": 0.5,
+      },
+    ),
+    "xmin_activity": (
+      {
+        "pid": 101,
+        "state": "idle in transaction",
+        "transaction_age_seconds": 30,
+      },
+    ),
+    "replication_slots": (),
+    "prepared_transactions": (),
+    "long_transaction_threshold_seconds": 300.0,
+  }
+  monkeypatch.setattr(
+    observability,
+    "postgres_diagnostics_for_backend",
+    lambda **_kwargs: diagnostics,
+  )
+
+  problems = observability.postgres_health_problems(backend_alias="default")
+
+  assert problems == (
+    "1 PostgreSQL queue tables have high dead tuples: dj_queue_ready_executions",
+    "1 PostgreSQL sessions or slots may be pinning xmin",
+  )
 
 
 def test_queue_rows_use_canonical_job_queue_names():
