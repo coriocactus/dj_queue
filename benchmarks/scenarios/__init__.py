@@ -1,6 +1,7 @@
 from benchmarks.scenarios.enqueue import bulk_enqueue, single_enqueue
 from benchmarks.scenarios.runtime import (
   concurrency_contention,
+  held_xmin_worker_drain,
   ordered_selector_claim,
   runtime_hot_key_contention,
   worker_drain,
@@ -13,6 +14,7 @@ SCENARIOS = {
   "scheduled-promotion": scheduled_promotion,
   "recurring-scale": recurring_scale,
   "worker-drain": worker_drain,
+  "held-xmin-worker-drain": held_xmin_worker_drain,
   "concurrency-contention": concurrency_contention,
   "runtime-hot-key-contention": runtime_hot_key_contention,
   "ordered-selector-claim": ordered_selector_claim,

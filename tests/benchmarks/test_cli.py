@@ -126,6 +126,7 @@ def test_sqlite_all_and_quick_skip_locking_scenarios():
   names = (
     "single-enqueue",
     "bulk-enqueue",
+    "held-xmin-worker-drain",
     "concurrency-contention",
     "runtime-hot-key-contention",
     "ordered-selector-claim",
@@ -152,4 +153,15 @@ def test_sqlite_rejects_unsupported_scenario():
       args,
       all_names=("single-enqueue", "concurrency-contention"),
       quick_names=("single-enqueue", "concurrency-contention"),
+    )
+
+
+def test_mysql_rejects_held_xmin_scenario():
+  args = benchmark_cli.parse_args(["scenario", "held-xmin-worker-drain", "--backend", "mysql"])
+
+  with pytest.raises(ValueError, match="not supported for backend 'mysql'"):
+    benchmark_cli.selected_scenarios(
+      args,
+      all_names=("single-enqueue", "held-xmin-worker-drain"),
+      quick_names=("single-enqueue",),
     )

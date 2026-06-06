@@ -344,6 +344,12 @@ def render_scenario_table(scenario, rows):
     "ready_count",
     "promoted_count",
     "fired_count",
+    "dead_tuples_before",
+    "dead_tuples_during",
+    "dead_tuples_after_release",
+    "relation_bytes_before",
+    "relation_bytes_during",
+    "relation_bytes_after_release",
   ]
   columns = [metric for metric in preferred if metric in metric_names]
   columns.extend(metric for metric in metric_names if metric not in columns)

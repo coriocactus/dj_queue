@@ -66,6 +66,25 @@ SCENARIO_CONTEXT = {
       "worker claim, execution, completion, and finished-job retention"
     ),
   },
+  "held-xmin-worker-drain": {
+    "description": "PostgreSQL worker drain under a held repeatable-read snapshot",
+    "key_metric": "jobs_per_second",
+    "key_metric_note": (
+      "end-to-end worker-drain throughput while a second connection pins xmin; higher is better"
+    ),
+    "healthy_local_baseline": (
+      "compare with `worker-drain` and watch dead tuples and relation bytes during the hold"
+    ),
+    "use_case": (
+      "PostgreSQL operations where long transactions, replication slots, or prepared "
+      "transactions can delay vacuum cleanup of queue churn"
+    ),
+    "mechanics": (
+      "opens a second PostgreSQL connection, begins a repeatable-read transaction to pin "
+      "xmin, drains ready jobs through `worker-drain`, then samples queue-table dead tuples "
+      "and relation bytes before, during, and after releasing the snapshot"
+    ),
+  },
   "concurrency-contention": {
     "description": "one hot concurrency key through enqueue, block, release, and unblock",
     "key_metric": "drain_jobs_per_second",
@@ -107,8 +126,15 @@ SCENARIO_DESCRIPTIONS = {
 
 EXCLUDED_SCENARIOS_BY_BACKEND = {
   "sqlite": frozenset(
-    {"concurrency-contention", "runtime-hot-key-contention", "ordered-selector-claim"}
+    {
+      "concurrency-contention",
+      "held-xmin-worker-drain",
+      "runtime-hot-key-contention",
+      "ordered-selector-claim",
+    }
   ),
+  "mysql": frozenset({"held-xmin-worker-drain"}),
+  "mariadb": frozenset({"held-xmin-worker-drain"}),
 }
 
 

@@ -6,6 +6,7 @@ from django.utils import timezone
 
 from benchmarks.harness import Timer, throughput
 from benchmarks.tasks import limited, noop
+from dj_queue import observability
 from dj_queue.config import load_backend_config
 from dj_queue.models import BlockedExecution, ClaimedExecution, Job, ReadyExecution
 from dj_queue.operations.jobs import claim_ready_jobs, execute_claimed_job
@@ -75,6 +76,29 @@ def worker_drain(size):
     "claimed_count": claimed_count,
     "runner_count": runner_count,
     "preserve_finished_jobs": preserve_finished_jobs,
+  }
+
+
+def held_xmin_worker_drain(size):
+  _ensure_postgres_benchmark()
+  before = _postgres_bloat_totals()
+  with _held_repeatable_read_snapshot():
+    metrics = worker_drain(size)
+    during = _postgres_bloat_totals()
+  after = _postgres_bloat_totals()
+
+  return {
+    **metrics,
+    "held_xmin": True,
+    "dead_tuples_before": before["dead_tuples"],
+    "dead_tuples_during": during["dead_tuples"],
+    "dead_tuples_after_release": after["dead_tuples"],
+    "live_tuples_before": before["live_tuples"],
+    "live_tuples_during": during["live_tuples"],
+    "live_tuples_after_release": after["live_tuples"],
+    "relation_bytes_before": before["relation_bytes"],
+    "relation_bytes_during": during["relation_bytes"],
+    "relation_bytes_after_release": after["relation_bytes"],
   }
 
 
@@ -263,6 +287,38 @@ def _wait_for_drain(size, *, preserve_finished_jobs, timeout):
       return
     time.sleep(0.02)
   raise AssertionError("timed out waiting for worker drain")
+
+
+def _ensure_postgres_benchmark():
+  if connection.vendor != "postgresql":
+    raise RuntimeError("held-xmin benchmark requires PostgreSQL")
+
+
+@contextmanager
+def _held_repeatable_read_snapshot():
+  wrapper = connection
+  conn = wrapper.Database.connect(**wrapper.get_connection_params())
+  table_name = wrapper.ops.quote_name(Job._meta.db_table)
+  try:
+    conn.autocommit = False
+    with conn.cursor() as cursor:
+      cursor.execute("BEGIN ISOLATION LEVEL REPEATABLE READ")
+      cursor.execute(f"SELECT count(*) FROM {table_name}")
+    yield
+  finally:
+    try:
+      conn.rollback()
+    finally:
+      conn.close()
+
+
+def _postgres_bloat_totals():
+  rows = observability.postgres_queue_table_rows(backend_alias="default")
+  return {
+    "dead_tuples": sum(row["dead_tuples"] for row in rows),
+    "live_tuples": sum(row["live_tuples"] for row in rows),
+    "relation_bytes": sum(row["total_relation_bytes"] for row in rows),
+  }
 
 
 @contextmanager

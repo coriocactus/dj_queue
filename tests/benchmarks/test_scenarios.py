@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+
 import pytest
 
 from benchmarks.scenarios import enqueue, runtime, scheduling
@@ -50,6 +52,60 @@ def test_worker_drain_seeds_backend_scoped_rows(monkeypatch):
 
   assert metrics["completed_count"] == 2
   assert metrics["ready_count"] == 0
+
+
+def test_held_xmin_worker_drain_samples_postgres_table_health(monkeypatch):
+  events = []
+  samples = iter(
+    [
+      {"dead_tuples": 1, "live_tuples": 2, "relation_bytes": 3},
+      {"dead_tuples": 4, "live_tuples": 5, "relation_bytes": 6},
+      {"dead_tuples": 7, "live_tuples": 8, "relation_bytes": 9},
+    ]
+  )
+
+  @contextmanager
+  def fake_held_snapshot():
+    events.append("hold")
+    try:
+      yield
+    finally:
+      events.append("release")
+
+  monkeypatch.setattr(runtime, "_ensure_postgres_benchmark", lambda: events.append("postgres"))
+  monkeypatch.setattr(runtime, "_postgres_bloat_totals", lambda: next(samples))
+  monkeypatch.setattr(runtime, "_held_repeatable_read_snapshot", fake_held_snapshot)
+  monkeypatch.setattr(
+    runtime,
+    "worker_drain",
+    lambda size: {"duration_seconds": 1, "jobs_per_second": size, "completed_count": size},
+  )
+
+  metrics = runtime.held_xmin_worker_drain(2)
+
+  assert events == ["postgres", "hold", "release"]
+  assert metrics == {
+    "duration_seconds": 1,
+    "jobs_per_second": 2,
+    "completed_count": 2,
+    "held_xmin": True,
+    "dead_tuples_before": 1,
+    "dead_tuples_during": 4,
+    "dead_tuples_after_release": 7,
+    "live_tuples_before": 2,
+    "live_tuples_during": 5,
+    "live_tuples_after_release": 8,
+    "relation_bytes_before": 3,
+    "relation_bytes_during": 6,
+    "relation_bytes_after_release": 9,
+  }
+
+
+def test_held_xmin_worker_drain_rejects_non_postgres(monkeypatch):
+  monkeypatch.setattr(runtime, "connection", type("Connection", (), {"vendor": "sqlite"})())
+
+  with pytest.raises(RuntimeError, match="requires PostgreSQL"):
+    runtime.held_xmin_worker_drain(1)
 
 
 @pytest.mark.django_db
