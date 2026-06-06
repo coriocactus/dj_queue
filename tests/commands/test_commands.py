@@ -499,6 +499,29 @@ def test_dj_queue_health_reports_live_and_dead_states():
     call_command("dj_queue_health")
 
 
+def test_postgres_autovacuum_command_prints_reviewable_sql(monkeypatch):
+  monkeypatch.setattr(
+    "dj_queue.management.commands.dj_queue_postgres_autovacuum.database_capabilities",
+    lambda alias: SimpleNamespace(backend_family="postgresql"),
+  )
+
+  output = StringIO()
+  call_command("dj_queue_postgres_autovacuum", stdout=output)
+
+  text = output.getvalue()
+  assert "review before applying" in text
+  assert "ALTER TABLE \"dj_queue_jobs\" SET (" in text
+  assert "ALTER TABLE \"dj_queue_ready_executions\" SET (" in text
+  assert "autovacuum_vacuum_scale_factor = 0.01" in text
+  assert "autovacuum_vacuum_threshold = 50" in text
+  assert "dj_queue_processes" not in text
+
+
+def test_postgres_autovacuum_command_rejects_non_postgres():
+  with pytest.raises(CommandError, match="requires PostgreSQL"):
+    call_command("dj_queue_postgres_autovacuum")
+
+
 def test_health_command_max_age_override_changes_freshness_threshold():
   make_process(last_heartbeat_at=timezone.now() - timedelta(seconds=20))
 

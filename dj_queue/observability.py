@@ -62,6 +62,21 @@ POSTGRES_DIAGNOSTIC_TABLE_MODELS = (
   RecurringExecution,
   Pause,
 )
+POSTGRES_AUTOVACUUM_TABLE_MODELS = (
+  Job,
+  ReadyExecution,
+  ScheduledExecution,
+  ClaimedExecution,
+  BlockedExecution,
+  FailedExecution,
+  RecurringExecution,
+)
+POSTGRES_AUTOVACUUM_STORAGE_PARAMETERS = {
+  "autovacuum_vacuum_scale_factor": "0.01",
+  "autovacuum_vacuum_threshold": "50",
+  "autovacuum_analyze_scale_factor": "0.02",
+  "autovacuum_analyze_threshold": "50",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -593,6 +608,19 @@ def postgres_queue_table_rows(*, backend_alias):
       }
       for row in cursor.fetchall()
     )
+
+
+def postgres_autovacuum_sql(connection):
+  table_names = tuple(
+    dict.fromkeys(model._meta.db_table for model in POSTGRES_AUTOVACUUM_TABLE_MODELS)
+  )
+  settings = ", ".join(
+    f"{name} = {value}" for name, value in POSTGRES_AUTOVACUUM_STORAGE_PARAMETERS.items()
+  )
+  return tuple(
+    f"ALTER TABLE {connection.ops.quote_name(table_name)} SET ({settings});"
+    for table_name in table_names
+  )
 
 
 def postgres_xmin_activity_rows(*, backend_alias):

@@ -491,9 +491,10 @@ python manage.py dj_queue_prune --failed-older-than 604800
 python manage.py dj_queue_prune --recurring-older-than 2592000
 python manage.py dj_queue_prune --task-path myapp.tasks.cleanup
 python manage.py dj_queue_prune --task-key nightly_cleanup
+python manage.py dj_queue_postgres_autovacuum
 ```
 
-The health and prune commands both accept `--backend` to target a non-default backend alias.
+The health, prune, and PostgreSQL autovacuum commands accept `--backend` to target a non-default backend alias.
 
 For `dj_queue_prune`, `--task-path` filters finished and failed job cleanup by
 task import path, while `--task-key` filters recurring execution cleanup by
@@ -688,6 +689,9 @@ policy, and autovacuum tuning.
 - Tune autovacuum for `dj_queue_jobs` and the high-churn
   `dj_queue_*_executions` tables, often default OLTP settings are too
   conservative for queue workloads.
+- Use `python manage.py dj_queue_postgres_autovacuum` to print reviewable
+  `ALTER TABLE ... SET (...)` SQL for queue-table autovacuum storage
+  parameters. `dj_queue` does not apply these settings in migrations.
 - Keep transactions short across workers and the rest of your app. Long-lived
   transactions pin dead tuples and delay vacuum.
 - Monitor dead tuples, autovacuum frequency, and long-running queries before
