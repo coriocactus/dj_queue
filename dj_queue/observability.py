@@ -10,6 +10,7 @@ from django.db.models import (
   Count,
   F,
   IntegerField,
+  Min,
   Max,
   OuterRef,
   Q,
@@ -95,6 +96,7 @@ class BackendSnapshot:
   recurring_rows: tuple[dict, ...]
   semaphore_rows: tuple[dict, ...]
   runner_metrics: dict
+  failed_metrics: dict | None = None
   postgres_diagnostics: dict | None = None
 
   def stats_row(self):
@@ -106,6 +108,7 @@ class BackendSnapshot:
       "runner_metrics": self.runner_metrics,
       "recurring": self.recurring_rows,
       "semaphores": self.semaphore_rows,
+      "failed_jobs": self.failed_metrics,
     }
     if self.postgres_diagnostics is not None:
       row["postgres_diagnostics"] = self.postgres_diagnostics
@@ -157,6 +160,11 @@ def backend_snapshot(
       now=now,
       max_age=config.process_alive_threshold,
     )
+  failed_metrics = failed_job_metrics(
+    backend_alias=backend_alias,
+    now=now,
+    retention_seconds=config.clear_failed_jobs_after,
+  )
 
   return BackendSnapshot(
     backend_alias=backend_alias,
@@ -167,6 +175,7 @@ def backend_snapshot(
     recurring_rows=tuple(recurring_rows),
     semaphore_rows=tuple(semaphore_rows),
     runner_metrics=runner_metrics,
+    failed_metrics=failed_metrics,
     postgres_diagnostics=postgres_diagnostics,
   )
 
@@ -213,6 +222,43 @@ def queue_rows_for_backend(*, backend_alias, now=None):
 
 def queue_ready_count(*, backend_alias, queue_name):
   return queue_state_summary(backend_alias=backend_alias, queue_name=queue_name).count("ready")
+
+
+def failed_job_metrics(*, backend_alias, now=None, retention_seconds=None):
+  if now is None:
+    now = timezone.now()
+  alias = get_database_alias(backend_alias)
+  queryset = FailedExecution.objects.using(alias).filter(job__backend_alias=backend_alias)
+  metrics = _failed_job_aggregate(queryset, now=now)
+  metrics["retention_seconds"] = retention_seconds
+  metrics["over_retention_count"] = 0
+  metrics["oldest_over_retention_created_at"] = None
+  metrics["oldest_over_retention_age_seconds"] = None
+  if retention_seconds is None:
+    return metrics
+
+  cutoff = now - timedelta(seconds=retention_seconds)
+  over_retention = _failed_job_aggregate(queryset.filter(created_at__lt=cutoff), now=now)
+  metrics["over_retention_count"] = over_retention["count"]
+  metrics["oldest_over_retention_created_at"] = over_retention["oldest_created_at"]
+  metrics["oldest_over_retention_age_seconds"] = over_retention["oldest_age_seconds"]
+  return metrics
+
+
+def _failed_job_aggregate(queryset, *, now):
+  aggregate = queryset.aggregate(count=Count("id"), oldest_created_at=Min("created_at"))
+  oldest_created_at = aggregate["oldest_created_at"]
+  return {
+    "count": aggregate["count"],
+    "oldest_created_at": oldest_created_at,
+    "oldest_age_seconds": _age_seconds(now, oldest_created_at),
+  }
+
+
+def _age_seconds(now, timestamp):
+  if timestamp is None:
+    return None
+  return max((now - timestamp).total_seconds(), 0.0)
 
 
 def process_counts(process_rows):
@@ -496,6 +542,17 @@ def deep_health_problems(*, backend_alias, max_age=None, now=None):
   )
   if bad_semaphores:
     problems.append(f"{bad_semaphores} semaphores have impossible slot counts")
+
+  failed_metrics = failed_job_metrics(
+    backend_alias=backend_alias,
+    now=now,
+    retention_seconds=load_backend_config(backend_alias).clear_failed_jobs_after,
+  )
+  if failed_metrics["over_retention_count"]:
+    problems.append(
+      f"{failed_metrics['over_retention_count']} failed execution rows exceed "
+      f"configured retention of {failed_metrics['retention_seconds']} seconds"
+    )
 
   problems.extend(postgres_health_problems(backend_alias=backend_alias, max_age=max_age, now=now))
 

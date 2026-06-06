@@ -5,8 +5,15 @@ import pytest
 from django.utils import timezone
 
 from dj_queue import observability
-from dj_queue.models import Pause, Process, ReadyExecution, RecurringTask, Semaphore
-from tests.factories import enqueue_ready_job
+from dj_queue.models import (
+  FailedExecution,
+  Pause,
+  Process,
+  ReadyExecution,
+  RecurringTask,
+  Semaphore,
+)
+from tests.factories import enqueue_ready_job, make_failed_job
 
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -152,6 +159,51 @@ def test_stats_payload_can_include_postgres_diagnostics(monkeypatch):
   assert diagnostics["queue_tables"] == ({"table_name": "dj_queue_jobs", "dead_tuples": 12},)
   assert diagnostics["xmin_activity"] == ({"pid": 101, "state": "idle in transaction"},)
   assert diagnostics["long_transaction_threshold_seconds"] == 300.0
+
+
+def test_backend_snapshot_exposes_failed_retention_metrics(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {"clear_failed_jobs_after": 60},
+    }
+  }
+  now = timezone.now()
+  old_failed = make_failed_job(queue_name="alpha")
+  recent_failed = make_failed_job(queue_name="alpha")
+  FailedExecution.objects.filter(job=old_failed).update(created_at=now - timedelta(seconds=120))
+  FailedExecution.objects.filter(job=recent_failed).update(created_at=now - timedelta(seconds=30))
+
+  snapshot = observability.backend_snapshot(backend_alias="default", now=now)
+
+  assert snapshot.failed_metrics == {
+    "count": 2,
+    "oldest_created_at": now - timedelta(seconds=120),
+    "oldest_age_seconds": 120.0,
+    "retention_seconds": 60,
+    "over_retention_count": 1,
+    "oldest_over_retention_created_at": now - timedelta(seconds=120),
+    "oldest_over_retention_age_seconds": 120.0,
+  }
+  assert snapshot.stats_row()["failed_jobs"] == snapshot.failed_metrics
+
+
+def test_deep_health_reports_failed_jobs_past_configured_retention(settings):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {"clear_failed_jobs_after": 60},
+    }
+  }
+  now = timezone.now()
+  old_failed = make_failed_job(queue_name="alpha")
+  FailedExecution.objects.filter(job=old_failed).update(created_at=now - timedelta(seconds=120))
+
+  problems = observability.deep_health_problems(backend_alias="default", now=now)
+
+  assert "1 failed execution rows exceed configured retention of 60 seconds" in problems
 
 
 def test_postgres_health_problems_report_bloat_and_xmin_blockers(monkeypatch):

@@ -32,6 +32,10 @@ def metric_families(*, snapshots=None):
   recurring_tasks = []
   semaphores = []
   process_rows = []
+  failed_jobs = []
+  failed_oldest_age = []
+  failed_retention = []
+  failed_over_retention = []
   seen_queue_databases = set()
 
   for snapshot in snapshots:
@@ -95,6 +99,33 @@ def metric_families(*, snapshots=None):
         value=len(snapshot.process_rows),
       )
     )
+    if snapshot.failed_metrics is not None:
+      failed_jobs.append(
+        MetricSample(
+          labels=(backend_alias,),
+          value=snapshot.failed_metrics["count"],
+        )
+      )
+      if snapshot.failed_metrics["oldest_age_seconds"] is not None:
+        failed_oldest_age.append(
+          MetricSample(
+            labels=(backend_alias,),
+            value=snapshot.failed_metrics["oldest_age_seconds"],
+          )
+        )
+      if snapshot.failed_metrics["retention_seconds"] is not None:
+        failed_retention.append(
+          MetricSample(
+            labels=(backend_alias,),
+            value=snapshot.failed_metrics["retention_seconds"],
+          )
+        )
+        failed_over_retention.append(
+          MetricSample(
+            labels=(backend_alias,),
+            value=snapshot.failed_metrics["over_retention_count"],
+          )
+        )
 
     if queue_database_alias in seen_queue_databases:
       continue
@@ -169,5 +200,33 @@ def metric_families(*, snapshots=None):
       metric_type="gauge",
       labels=("backend",),
       samples=tuple(process_rows),
+    ),
+    MetricFamily(
+      name="dj_queue_failed_jobs",
+      help_text="Current failed job count by backend",
+      metric_type="gauge",
+      labels=("backend",),
+      samples=tuple(failed_jobs),
+    ),
+    MetricFamily(
+      name="dj_queue_failed_job_oldest_age_seconds",
+      help_text="Age of the oldest failed job by backend",
+      metric_type="gauge",
+      labels=("backend",),
+      samples=tuple(failed_oldest_age),
+    ),
+    MetricFamily(
+      name="dj_queue_failed_job_retention_seconds",
+      help_text="Configured failed-job retention window by backend",
+      metric_type="gauge",
+      labels=("backend",),
+      samples=tuple(failed_retention),
+    ),
+    MetricFamily(
+      name="dj_queue_failed_jobs_over_retention",
+      help_text="Current failed job count older than configured retention by backend",
+      metric_type="gauge",
+      labels=("backend",),
+      samples=tuple(failed_over_retention),
     ),
   )

@@ -998,6 +998,10 @@ Exported metric families:
 - `dj_queue_recurring_tasks{backend}`
 - `dj_queue_semaphores{queue_database}`
 - `dj_queue_process_rows{backend}`
+- `dj_queue_failed_jobs{backend}`
+- `dj_queue_failed_job_oldest_age_seconds{backend}`
+- `dj_queue_failed_job_retention_seconds{backend}`
+- `dj_queue_failed_jobs_over_retention{backend}`
 
 Both endpoints support bearer token authentication. Set
 `DJ_QUEUE_OBSERVABILITY_TOKEN` in `settings.py` and include it as
