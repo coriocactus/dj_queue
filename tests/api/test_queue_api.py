@@ -7,6 +7,7 @@ from dj_queue.api import (
   QueueInfo,
   discard_failed_jobs,
   retry_failed_jobs,
+  schedule_failed_job_retry,
 )
 from dj_queue.models import (
   FailedExecution,
@@ -280,6 +281,17 @@ def test_failed_execution_retry_all():
   assert retried == 2
   assert FailedExecution.objects.count() == 0
   assert ReadyExecution.objects.filter(job_id__in=[job.id for job in failed_jobs]).count() == 2
+
+
+def test_failed_execution_can_schedule_retry_at():
+  retry_at = timezone.now() + timedelta(minutes=5)
+  job = make_failed_job()
+
+  scheduled = schedule_failed_job_retry(job.id, retry_at=retry_at)
+
+  assert scheduled.id == job.id
+  assert FailedExecution.objects.get(job=job).retry_at == retry_at
+  assert ReadyExecution.objects.filter(job=job).exists() is False
 
 
 def test_failed_execution_discard_all_in_batches():

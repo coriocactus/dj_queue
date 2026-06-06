@@ -518,9 +518,11 @@ from dj_queue.api import (
   discard_scheduled_jobs,
   retry_failed_job,
   retry_failed_jobs,
+  schedule_failed_job_retry,
 )
 
 retry_failed_job(job_id)
+schedule_failed_job_retry(job_id, retry_at=retry_at)
 discard_failed_job(job_id)
 retry_failed_jobs(job_ids=[job_id_a, job_id_b], batch_size=2)
 discard_ready_jobs(job_ids=[ready_job_id], batch_size=1)
@@ -529,7 +531,9 @@ discard_scheduled_jobs(job_ids=[scheduled_job_id], batch_size=1)
 discard_blocked_jobs(job_ids=[blocked_job_id], batch_size=1)
 ```
 
-Failures stay inspectable until you act on them.
+Failures stay inspectable until you act on them. Scheduled failed retries stay
+failed until a dispatcher promotes rows whose `retry_at` is due; `dj_queue` does
+not add an automatic retry policy or backoff engine.
 
 ## Errors When Enqueuing
 

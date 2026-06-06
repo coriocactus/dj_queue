@@ -946,6 +946,23 @@ def dispatch_scheduled_job_now(job_id, *, backend_alias="default"):
   return job, dispatch_outcome
 
 
+def schedule_failed_job_retry(job_id, *, retry_at, backend_alias="default"):
+  if retry_at is None:
+    raise EnqueueError("retry_at is required")
+  alias = get_database_alias(backend_alias)
+
+  with transaction.atomic(using=alias):
+    failed = (
+      FailedExecution.objects.using(alias)
+      .select_for_update()
+      .select_related("job")
+      .get(job_id=job_id, job__backend_alias=backend_alias)
+    )
+    failed.retry_at = retry_at
+    failed.save(using=alias, update_fields=["retry_at"])
+    return failed.job
+
+
 def retry_failed_job(job_id, *, backend_alias="default"):
   alias = get_database_alias(backend_alias)
 
@@ -959,23 +976,17 @@ def retry_failed_job(job_id, *, backend_alias="default"):
     failed_rows = _consume_selected_rows(alias, FailedExecution, [failed])
     if not failed_rows:
       raise EnqueueError("job is not failed")
-    job = failed.job
-    job.return_value = None
-    job.finished_at = None
-    job.save(using=alias, update_fields=["return_value", "finished_at", "updated_at"])
-    dispatch_outcome = _dispatch_existing_job(job)
-
-  if dispatch_outcome.should_notify:
-    notify_ready_queues_on_commit((job.queue_name,), backend_alias=backend_alias)
-
-  if event_logging_enabled(backend_alias=backend_alias):
-    log_event(
-      "job.retried",
+    jobs, ready_queue_names = _dispatch_consumed_failed_rows(
+      alias,
+      failed_rows,
       backend_alias=backend_alias,
-      job_id=str(job.id),
-      queue_name=job.queue_name,
-      priority=job.priority,
     )
+    job = jobs[0]
+
+  if ready_queue_names:
+    notify_ready_queues_on_commit(tuple(ready_queue_names), backend_alias=backend_alias)
+
+  _log_jobs_retried((job,), backend_alias=backend_alias)
   return job
 
 
@@ -1002,17 +1013,11 @@ def retry_failed_jobs(*, job_ids=None, batch_size=500, backend_alias="default"):
     if not failed_rows:
       return 0
 
-    jobs = []
-    ready_queue_names = []
-    for failed in failed_rows:
-      job = failed.job
-      job.return_value = None
-      job.finished_at = None
-      job.save(using=alias, update_fields=["return_value", "finished_at", "updated_at"])
-      dispatch_outcome = _dispatch_existing_job(job)
-      jobs.append(job)
-      if dispatch_outcome.should_notify:
-        ready_queue_names.append(job.queue_name)
+    jobs, ready_queue_names = _dispatch_consumed_failed_rows(
+      alias,
+      failed_rows,
+      backend_alias=backend_alias,
+    )
 
   if ready_queue_names:
     notify_ready_queues_on_commit(
@@ -1020,16 +1025,77 @@ def retry_failed_jobs(*, job_ids=None, batch_size=500, backend_alias="default"):
       backend_alias=backend_alias,
     )
 
-  if event_logging_enabled(backend_alias=backend_alias):
-    for job in jobs:
-      log_event(
-        "job.retried",
-        backend_alias=backend_alias,
-        job_id=str(job.id),
-        queue_name=job.queue_name,
-        priority=job.priority,
-      )
+  _log_jobs_retried(jobs, backend_alias=backend_alias)
   return len(jobs)
+
+
+def promote_failed_job_retries(*, batch_size, backend_alias="default", use_skip_locked=None):
+  alias = get_database_alias(backend_alias)
+  if use_skip_locked is None:
+    use_skip_locked = load_backend_config(backend_alias).use_skip_locked
+  now = timezone.now()
+
+  with transaction.atomic(using=alias):
+    queryset = (
+      FailedExecution.objects.using(alias)
+      .filter(job__backend_alias=backend_alias, retry_at__lte=now)
+      .order_by("retry_at", "id")
+    )
+    failed_rows = list(
+      locked_queryset(
+        queryset.select_related("job"),
+        use_skip_locked=use_skip_locked,
+      )[:batch_size]
+    )
+    if not failed_rows:
+      return []
+
+    failed_rows = _consume_selected_rows(alias, FailedExecution, failed_rows)
+    if not failed_rows:
+      return []
+
+    jobs, ready_queue_names = _dispatch_consumed_failed_rows(
+      alias,
+      failed_rows,
+      backend_alias=backend_alias,
+    )
+
+  if ready_queue_names:
+    notify_ready_queues_on_commit(
+      tuple(dict.fromkeys(ready_queue_names)),
+      backend_alias=backend_alias,
+    )
+
+  _log_jobs_retried(jobs, backend_alias=backend_alias)
+  return jobs
+
+
+def _dispatch_consumed_failed_rows(alias, failed_rows, *, backend_alias):
+  jobs = []
+  ready_queue_names = []
+  for failed in failed_rows:
+    job = failed.job
+    job.return_value = None
+    job.finished_at = None
+    job.save(using=alias, update_fields=["return_value", "finished_at", "updated_at"])
+    dispatch_outcome = _dispatch_existing_job(job)
+    jobs.append(job)
+    if dispatch_outcome.should_notify:
+      ready_queue_names.append(job.queue_name)
+  return jobs, ready_queue_names
+
+
+def _log_jobs_retried(jobs, *, backend_alias):
+  if not event_logging_enabled(backend_alias=backend_alias):
+    return
+  for job in jobs:
+    log_event(
+      "job.retried",
+      backend_alias=backend_alias,
+      job_id=str(job.id),
+      queue_name=job.queue_name,
+      priority=job.priority,
+    )
 
 
 _KEEP_RUN_AFTER = object()

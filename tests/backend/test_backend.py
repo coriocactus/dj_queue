@@ -40,9 +40,11 @@ from dj_queue.operations.jobs import (
   discard_ready_jobs,
   discard_scheduled_jobs,
   enqueue_job_with_dispatch,
+  promote_failed_job_retries,
   promote_scheduled_jobs,
   retry_failed_job,
   retry_failed_jobs,
+  schedule_failed_job_retry,
 )
 import dj_queue.operations._helpers as operation_helpers
 from tests.tasks import add, async_echo, echo, limited, limited_discard
@@ -618,6 +620,68 @@ def test_retry_failed_job_reuses_normal_dispatch_path():
 
   assert FailedExecution.objects.filter(job=job).exists() is False
   assert ReadyExecution.objects.filter(job=job).exists() is True
+
+
+@pytest.mark.django_db
+def test_schedule_failed_job_retry_sets_retry_at_without_dispatching():
+  retry_at = timezone.now() + timedelta(minutes=5)
+  job = make_job(args=["retry later"])
+  FailedExecution.objects.create(
+    job=job,
+    exception_class="builtins.ValueError",
+    message="boom",
+    traceback="traceback",
+  )
+
+  scheduled = schedule_failed_job_retry(job.id, retry_at=retry_at)
+
+  failed = FailedExecution.objects.get(job=job)
+  assert scheduled.id == job.id
+  assert failed.retry_at == retry_at
+  assert ReadyExecution.objects.filter(job=job).exists() is False
+  assert ScheduledExecution.objects.filter(job=job).exists() is False
+
+
+@pytest.mark.django_db
+def test_promote_failed_job_retries_dispatches_due_rows():
+  retry_at = timezone.now() - timedelta(seconds=1)
+  job = make_job(args=["retry due"], finished_at=timezone.now(), return_value="old")
+  FailedExecution.objects.create(
+    job=job,
+    exception_class="builtins.ValueError",
+    message="boom",
+    traceback="traceback",
+    retry_at=retry_at,
+  )
+
+  promoted = promote_failed_job_retries(batch_size=10)
+
+  job.refresh_from_db()
+  assert [promoted_job.id for promoted_job in promoted] == [job.id]
+  assert job.finished_at is None
+  assert job.return_value is None
+  assert FailedExecution.objects.filter(job=job).exists() is False
+  assert ReadyExecution.objects.filter(job=job).exists() is True
+
+
+@pytest.mark.django_db
+def test_promote_failed_job_retries_leaves_future_rows_failed():
+  retry_at = timezone.now() + timedelta(minutes=5)
+  job = make_job(args=["retry future"])
+  FailedExecution.objects.create(
+    job=job,
+    exception_class="builtins.ValueError",
+    message="boom",
+    traceback="traceback",
+    retry_at=retry_at,
+  )
+
+  promoted = promote_failed_job_retries(batch_size=10)
+
+  failed = FailedExecution.objects.get(job=job)
+  assert promoted == []
+  assert failed.retry_at == retry_at
+  assert ReadyExecution.objects.filter(job=job).exists() is False
 
 
 @pytest.mark.django_db

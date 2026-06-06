@@ -15,6 +15,7 @@ from dj_queue.operations.jobs import (
   execute_claimed_job,
   retry_failed_job,
   retry_failed_jobs,
+  schedule_failed_job_retry,
 )
 from dj_queue.operations.queues import pause_queue, resume_queue
 from dj_queue.operations.recurring import schedule_recurring_task, unschedule_recurring_task
@@ -32,6 +33,7 @@ __all__ = [
   "execute_claimed_job",
   "retry_failed_job",
   "retry_failed_jobs",
+  "schedule_failed_job_retry",
   "schedule_recurring_task",
   "unschedule_recurring_task",
 ]

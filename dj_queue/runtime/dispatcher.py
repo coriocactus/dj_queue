@@ -7,7 +7,7 @@ from dj_queue.operations.concurrency import (
   cleanup_expired_semaphores,
   promote_expired_blocked_jobs,
 )
-from dj_queue.operations.jobs import promote_scheduled_jobs
+from dj_queue.operations.jobs import promote_failed_job_retries, promote_scheduled_jobs
 from dj_queue.runtime.base import BaseRunner, app_executor
 
 
@@ -49,6 +49,12 @@ class Dispatcher(BaseRunner):
       promoted_jobs = promote_scheduled_jobs(
         batch_size=self.config.batch_size,
         backend_alias=self.backend_alias,
+      )
+      promoted_jobs.extend(
+        promote_failed_job_retries(
+          batch_size=self.config.batch_size,
+          backend_alias=self.backend_alias,
+        )
       )
       if self._maintenance_due():
         cleanup_expired_semaphores(backend_alias=self.backend_alias)

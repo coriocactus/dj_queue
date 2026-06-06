@@ -716,14 +716,14 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
 class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   backend_filter_field = "job__backend_alias"
   ignored_filter_params = ("job__backend_alias",)
-  list_display = ("job", "exception_class", "message", "display_created_at")
+  list_display = ("job", "exception_class", "message", "display_retry_at", "display_created_at")
   list_filter = (
     ("job__queue_name", admin.AllValuesFieldListFilter),
     "exception_class",
   )
   list_select_related = ("job",)
   actions = ("retry_jobs", "discard_jobs")
-  readonly_fields = ("job", "exception_class", "message", "traceback", "created_at")
+  readonly_fields = ("job", "exception_class", "message", "traceback", "retry_at", "created_at")
   search_fields = ("job__id", "job__task_path", "message", "exception_class")
 
   @admin.action(description="Retry selected failed jobs")
@@ -755,6 +755,10 @@ class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   @admin.display(description="created at", ordering="created_at")
   def display_created_at(self, obj):
     return _format_admin_datetime(obj.created_at)
+
+  @admin.display(description="retry at", ordering="retry_at")
+  def display_retry_at(self, obj):
+    return _format_admin_datetime(obj.retry_at)
 
   def get_change_actions(self, request, obj):
     if obj is None:

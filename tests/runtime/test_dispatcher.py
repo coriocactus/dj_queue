@@ -7,6 +7,7 @@ from django.utils import timezone
 from dj_queue.config import DispatcherConfig
 from dj_queue.models import (
   BlockedExecution,
+  FailedExecution,
   Job,
   Process,
   ReadyExecution,
@@ -132,6 +133,39 @@ def test_dispatcher_leaves_future_jobs_scheduled():
   assert promoted_jobs == []
   assert ScheduledExecution.objects.filter(job=future_job).exists() is True
   assert ReadyExecution.objects.filter(job=future_job).exists() is False
+  dispatcher.stop()
+
+
+def test_dispatcher_promotes_due_failed_retries():
+  job = Job.objects.create(
+    task_path=echo.module_path,
+    queue_name=echo.queue_name,
+    priority=echo.priority,
+    payload={"args": ["retry"], "kwargs": {}},
+    backend_alias=echo.backend,
+  )
+  FailedExecution.objects.create(
+    job=job,
+    exception_class="builtins.ValueError",
+    message="boom",
+    traceback="traceback",
+    retry_at=timezone.now() - timedelta(seconds=1),
+  )
+  dispatcher = make_dispatcher(
+    config=DispatcherConfig(
+      batch_size=10,
+      polling_interval=1,
+      concurrency_maintenance=False,
+      concurrency_maintenance_interval=600,
+    )
+  )
+  dispatcher.start()
+
+  promoted_jobs = dispatcher.poll_once()
+
+  assert [promoted_job.id for promoted_job in promoted_jobs] == [job.id]
+  assert FailedExecution.objects.filter(job=job).exists() is False
+  assert ReadyExecution.objects.filter(job=job).exists() is True
   dispatcher.stop()
 
 

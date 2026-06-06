@@ -281,8 +281,12 @@ class FailedExecution(models.Model):
   exception_class = models.CharField(max_length=255)
   message = models.TextField(default="")
   traceback = models.TextField(default="")
+  retry_at = models.DateTimeField(null=True, blank=True)
   created_at = models.DateTimeField(auto_now_add=True)
 
   class Meta:
     db_table = "dj_queue_failed_executions"
-    indexes = [models.Index(fields=["created_at", "job"])]
+    indexes = [
+      models.Index(fields=["created_at", "job"]),
+      models.Index(fields=["retry_at", "job"]),
+    ]
