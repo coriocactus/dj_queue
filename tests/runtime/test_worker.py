@@ -241,7 +241,7 @@ def test_worker_respects_ordered_queue_list():
   worker.stop()
 
 
-def test_worker_prefetches_up_to_multiplier():
+def test_worker_claims_no_more_than_idle_capacity():
   first = make_ready_job(args=["first"])
   second = make_ready_job(args=["second"])
   worker = make_worker(
@@ -257,8 +257,9 @@ def test_worker_prefetches_up_to_multiplier():
 
   claimed_jobs = worker.poll_once()
 
-  assert [claimed_job.job.id for claimed_job in claimed_jobs] == [first.id, second.id]
-  assert ReadyExecution.objects.filter(job__in=[first, second]).exists() is False
+  assert [claimed_job.job.id for claimed_job in claimed_jobs] == [first.id]
+  assert ReadyExecution.objects.filter(job=first).exists() is False
+  assert ReadyExecution.objects.filter(job=second).exists() is True
   worker.stop()
 
 
