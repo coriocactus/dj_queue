@@ -105,6 +105,34 @@ def test_semaphore_acquire_reconciles_reduced_limit_when_saturated():
 
 
 @pytest.mark.django_db
+def test_saturated_semaphore_acquire_without_reconcile_does_not_touch_row():
+  assert semaphore_acquire("account:saturated", limit=1, duration_seconds=60) is True
+  untouched_at = timezone.now() - timedelta(minutes=5)
+  Semaphore.objects.filter(key="account:saturated").update(updated_at=untouched_at)
+
+  assert semaphore_acquire("account:saturated", limit=1, duration_seconds=60) is False
+
+  semaphore = Semaphore.objects.get(key="account:saturated")
+  assert semaphore.updated_at == untouched_at
+
+
+@pytest.mark.django_db
+def test_saturated_bulk_semaphore_acquire_without_reconcile_does_not_touch_row():
+  assert (
+    semaphore_acquire_many("account:bulk-saturated", count=1, limit=1, duration_seconds=60) == 1
+  )
+  untouched_at = timezone.now() - timedelta(minutes=5)
+  Semaphore.objects.filter(key="account:bulk-saturated").update(updated_at=untouched_at)
+
+  assert (
+    semaphore_acquire_many("account:bulk-saturated", count=1, limit=1, duration_seconds=60) == 0
+  )
+
+  semaphore = Semaphore.objects.get(key="account:bulk-saturated")
+  assert semaphore.updated_at == untouched_at
+
+
+@pytest.mark.django_db
 def test_semaphore_release_reconciles_reduced_limit():
   assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True
   assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True

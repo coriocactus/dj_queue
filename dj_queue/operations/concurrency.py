@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from django.db import connections, transaction
-from django.db.models import Case, F, IntegerField, Value, When
+from django.db.models import Case, F, IntegerField, Q, Value, When
 from django.db.models.functions import Greatest, Least
 from django.utils import timezone
 from django.utils.module_loading import import_string
@@ -108,7 +108,9 @@ def semaphore_acquire(
     if updated:
       return True
 
-    Semaphore.objects.using(alias).filter(key=key).update(
+    Semaphore.objects.using(alias).filter(key=key).filter(
+      Q(value__lt=reconciled_available) | Q(value__gt=reconciled_available) | ~Q(limit=limit)
+    ).update(
       value=reconciled_available,
       limit=limit,
       updated_at=now,
@@ -150,11 +152,18 @@ def semaphore_acquire_many(
 
     available = min(limit, max(0, semaphore.value + limit - semaphore.limit))
     acquired = min(count, available)
-    semaphore.value = available - acquired
-    semaphore.limit = limit
-    semaphore.expires_at = expires_at
-    semaphore.updated_at = now
-    semaphore.save(using=alias, update_fields=["value", "limit", "expires_at", "updated_at"])
+    value = available - acquired
+    if acquired:
+      semaphore.value = value
+      semaphore.limit = limit
+      semaphore.expires_at = expires_at
+      semaphore.updated_at = now
+      semaphore.save(using=alias, update_fields=["value", "limit", "expires_at", "updated_at"])
+    elif semaphore.value != value or semaphore.limit != limit:
+      semaphore.value = value
+      semaphore.limit = limit
+      semaphore.updated_at = now
+      semaphore.save(using=alias, update_fields=["value", "limit", "updated_at"])
     return acquired
 
 

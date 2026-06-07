@@ -62,6 +62,10 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
           {updated_at_column} = %s
         WHERE {key_column} = %s
           AND NOT EXISTS (SELECT 1 FROM acquired)
+          AND (
+            {value_column} <> {current_available}
+            OR {limit_column} <> %s
+          )
         RETURNING FALSE AS acquired
       )
       SELECT acquired FROM acquired
@@ -80,6 +84,9 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
         limit,
         now,
         key,
+        limit,
+        limit,
+        limit,
       ],
     )
     row = cursor.fetchone()

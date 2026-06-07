@@ -27,6 +27,11 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
   created_at_column = connection.ops.quote_name("created_at")
   updated_at_column = connection.ops.quote_name("updated_at")
   reconciled_available = f"LEAST(%s, GREATEST(0, {value_column} + %s - {limit_column}))"
+  should_touch = (
+    f"{reconciled_available} > 0 "
+    f"OR {value_column} <> {reconciled_available} "
+    f"OR {limit_column} <> %s"
+  )
   reconciled_available_params = (limit, limit)
 
   # one upsert avoids mysql-family deadlocks from mixing ignored inserts and follow-up updates
@@ -48,7 +53,11 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
           %s,
           {expires_at_column}
         ),
-        {updated_at_column} = %s,
+        {updated_at_column} = IF(
+          {should_touch},
+          %s,
+          {updated_at_column}
+        ),
         {pk_column} = IF(
           {reconciled_available} > 0,
           LAST_INSERT_ID({pk_column}),
@@ -70,6 +79,9 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
         now,
         *reconciled_available_params,
         expires_at,
+        *reconciled_available_params,
+        *reconciled_available_params,
+        limit,
         now,
         *reconciled_available_params,
         *reconciled_available_params,
