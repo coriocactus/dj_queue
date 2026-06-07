@@ -39,6 +39,7 @@ from dj_queue.operations.jobs import (
   EnqueueError,
   execute_claimed_job,
   fail_claimed_job,
+  promote_failed_job_retries,
   promote_scheduled_jobs,
 )
 import dj_queue.operations.jobs as job_operations
@@ -426,6 +427,47 @@ def test_concurrent_recurring_fire_creates_one_reservation_and_job():
     == 1
   )
   assert Job.objects.count() == 1
+
+
+@pytest.mark.skipif(
+  os.environ.get("DB_BACKEND", "sqlite") == "sqlite",
+  reason="requires a shared test database across threads",
+)
+@pytest.mark.django_db(transaction=True)
+def test_concurrent_failed_retry_promotion_consumes_each_due_row_once():
+  attempts = 2
+  barrier = threading.Barrier(attempts)
+  jobs = [make_job(args=[index]) for index in range(5)]
+  retry_at = timezone.now() - timedelta(seconds=1)
+  FailedExecution.objects.bulk_create(
+    [
+      FailedExecution(
+        job=job,
+        exception_class="builtins.ValueError",
+        message="boom",
+        traceback="traceback",
+        retry_at=retry_at,
+      )
+      for job in jobs
+    ]
+  )
+
+  def promote_once():
+    try:
+      barrier.wait()
+      return [job.id for job in promote_failed_job_retries(batch_size=len(jobs))]
+    finally:
+      connections.close_all()
+
+  with ThreadPoolExecutor(max_workers=attempts) as executor:
+    promoted_groups = list(executor.map(lambda _: promote_once(), range(attempts)))
+
+  promoted_ids = [job_id for group in promoted_groups for job_id in group]
+  expected_ids = {job.id for job in jobs}
+  assert len(promoted_ids) == len(expected_ids)
+  assert set(promoted_ids) == expected_ids
+  assert FailedExecution.objects.filter(job__in=jobs).exists() is False
+  assert ReadyExecution.objects.filter(job__in=jobs).count() == len(jobs)
 
 
 @pytest.mark.django_db
