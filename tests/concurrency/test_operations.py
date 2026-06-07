@@ -1494,6 +1494,23 @@ def test_cleanup_expired_semaphores():
   assert Semaphore.objects.filter(key="fresh").exists() is True
 
 
+@pytest.mark.django_db
+def test_cleanup_expired_semaphores_respects_batch_size():
+  now = timezone.now()
+  for index in range(3):
+    Semaphore.objects.create(
+      key=f"expired:{index}",
+      value=0,
+      limit=1,
+      expires_at=now - timedelta(seconds=3 - index),
+    )
+
+  deleted = cleanup_expired_semaphores(batch_size=2)
+
+  assert deleted == 2
+  assert Semaphore.objects.filter(expires_at__lte=now).count() == 1
+
+
 @pytest.mark.skipif(
   os.environ.get("DB_BACKEND", "sqlite") != "postgres",
   reason="requires DB_BACKEND=postgres",

@@ -681,8 +681,23 @@ def _create_claimed_execution_after_blocked_consume(alias, *, job, process_id, c
   )
 
 
-def cleanup_expired_semaphores(*, backend_alias="default"):
+def cleanup_expired_semaphores(*, batch_size=500, backend_alias="default"):
+  batch_size = _positive_int_option(batch_size, "batch_size")
   alias = get_database_alias(backend_alias)
+  now = timezone.now()
+  queryset = _expired_semaphore_cleanup_queryset(alias, now=now)
+  semaphore_ids = list(
+    queryset.order_by("expires_at", "key").values_list("pk", flat=True)[:batch_size]
+  )
+  if not semaphore_ids:
+    return 0
+  deleted, _ = (
+    _expired_semaphore_cleanup_queryset(alias, now=now).filter(pk__in=semaphore_ids).delete()
+  )
+  return deleted
+
+
+def _expired_semaphore_cleanup_queryset(alias, *, now):
   claimed_concurrency_keys = (
     ClaimedExecution.objects.using(alias)
     .exclude(job__concurrency_key__isnull=True)
@@ -695,14 +710,12 @@ def cleanup_expired_semaphores(*, backend_alias="default"):
     .exclude(job__concurrency_key="")
     .values_list("job__concurrency_key", flat=True)
   )
-  queryset = (
+  return (
     Semaphore.objects.using(alias)
-    .filter(expires_at__lte=timezone.now())
+    .filter(expires_at__lte=now)
     .exclude(key__in=claimed_concurrency_keys)
     .exclude(key__in=ready_concurrency_keys)
   )
-  deleted, _ = queryset.delete()
-  return deleted
 
 
 def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use_skip_locked=None):

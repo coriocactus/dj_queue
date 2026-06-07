@@ -231,6 +231,24 @@ def test_dispatcher_cleans_expired_semaphores():
   dispatcher.stop()
 
 
+def test_dispatcher_cleans_expired_semaphores_in_batches():
+  now = timezone.now()
+  for index in range(2):
+    Semaphore.objects.create(
+      key=f"expired:{index}",
+      value=0,
+      limit=1,
+      expires_at=now - timedelta(seconds=1),
+    )
+  dispatcher = make_dispatcher(config=DispatcherConfig(batch_size=1, polling_interval=1))
+  dispatcher.start()
+
+  dispatcher.poll_once()
+
+  assert Semaphore.objects.count() == 1
+  dispatcher.stop()
+
+
 def test_dispatcher_notifies_workers_when_rows_become_ready(monkeypatch):
   notified = []
   make_scheduled_job(args=["notify"])

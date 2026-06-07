@@ -57,7 +57,10 @@ class Dispatcher(BaseRunner):
         )
       )
       if self._maintenance_due():
-        cleanup_expired_semaphores(backend_alias=self.backend_alias)
+        cleanup_expired_semaphores(
+          batch_size=self.config.batch_size,
+          backend_alias=self.backend_alias,
+        )
         promote_expired_blocked_jobs(
           batch_size=self.config.batch_size,
           backend_alias=self.backend_alias,
