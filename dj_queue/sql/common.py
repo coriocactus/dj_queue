@@ -133,42 +133,59 @@ def invalid_execution_state_membership_sql(connection, *, backend_alias, queue_n
   job_backend_column = quote(Job._meta.get_field("backend_alias").column)
   job_queue_column = quote(Job._meta.get_field("queue_name").column)
   job_finished_column = quote(Job._meta.get_field("finished_at").column)
-  where_sql = f"job.{job_backend_column} = %s"
-  state_params = [backend_alias]
-  if queue_name is not None:
-    where_sql = f"{where_sql} AND job.{job_queue_column} = %s"
-    state_params.append(queue_name)
-
   selectors = []
   params = []
-  for model in EXECUTION_STATE_MODELS:
+  for index, model in enumerate(EXECUTION_STATE_MODELS):
+    state_alias = f"state_{index}"
     state_table = quote(model._meta.db_table)
     state_job_column = quote(model._meta.get_field("job").column)
+    other_state_exists = " OR ".join(
+      _other_state_exists_sql(
+        other_model,
+        quote=quote,
+        state_job_expression=f"{state_alias}.{state_job_column}",
+        alias=f"other_{other_index}",
+      )
+      for other_index, other_model in enumerate(EXECUTION_STATE_MODELS)
+      if other_model is not model
+    )
+    invalid_condition = f"job.{job_finished_column} IS NOT NULL"
+    if other_state_exists:
+      invalid_condition = f"{invalid_condition} OR {other_state_exists}"
+
+    where_sql = f"job.{job_backend_column} = %s"
+    state_params = [backend_alias]
+    if queue_name is not None:
+      where_sql = f"{where_sql} AND job.{job_queue_column} = %s"
+      state_params.append(queue_name)
+
     selectors.append(
       f"""
-      SELECT state.{state_job_column} AS job_id
-      FROM {state_table} state
-      INNER JOIN {job_table} job ON state.{state_job_column} = job.{job_id_column}
+      SELECT {state_alias}.{state_job_column} AS job_id
+      FROM {state_table} {state_alias}
+      INNER JOIN {job_table} job ON {state_alias}.{state_job_column} = job.{job_id_column}
       WHERE {where_sql}
+        AND ({invalid_condition})
       """
     )
     params.extend(state_params)
 
-  selectors.append(
-    f"""
-    SELECT job.{job_id_column} AS job_id
-    FROM {job_table} job
-    WHERE {where_sql} AND job.{job_finished_column} IS NOT NULL
-    """
-  )
-  params.extend(state_params)
   return (
     f"""
     SELECT 1
-    FROM ({" UNION ALL ".join(selectors)}) state_memberships
-    GROUP BY job_id
-    HAVING COUNT(*) > 1
+    FROM ({" UNION ".join(selectors)}) invalid_state_memberships
     LIMIT 1
     """,
     params,
+  )
+
+
+def _other_state_exists_sql(model, *, quote, state_job_expression, alias):
+  state_table = quote(model._meta.db_table)
+  state_job_column = quote(model._meta.get_field("job").column)
+  return (
+    f"EXISTS ("
+    f"SELECT 1 FROM {state_table} {alias} "
+    f"WHERE {alias}.{state_job_column} = {state_job_expression}"
+    f")"
   )

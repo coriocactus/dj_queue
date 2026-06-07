@@ -171,7 +171,9 @@ def queue_state_summary(*, backend_alias, queue_name):
 
 def queue_state_summaries_by_queue(*, backend_alias):
   alias = get_database_alias(backend_alias)
-  return _job_state_summaries_by_queue(alias, backend_alias=backend_alias)
+  if _invalid_execution_state_exists(alias, backend_alias):
+    return _job_state_summaries_by_queue(alias, backend_alias=backend_alias)
+  return _state_table_summaries_by_queue(alias, backend_alias=backend_alias)
 
 
 def _job_state_summary(alias, *, backend_alias, queue_name):
