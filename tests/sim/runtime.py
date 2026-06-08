@@ -20,7 +20,7 @@ from dj_queue.models import (
   ScheduledExecution,
   Semaphore,
 )
-from dj_queue.operations.jobs import retry_failed_job
+from dj_queue.operations.jobs import retry_failed_job, schedule_failed_job_retry
 from dj_queue.runtime.supervisor import AsyncSupervisor
 from tests.sim.config import fixed_now, simulation_tasks_settings
 from tests.tasks import echo, limited
@@ -158,6 +158,7 @@ class RuntimeSimulation:
       self.crash_random_runner,
       self.prune_random_runner,
       self.retry_random_failed_job,
+      self.schedule_random_failed_job_retry,
       self.advance_time,
       self.supervisor_tick,
     )
@@ -329,6 +330,20 @@ class RuntimeSimulation:
     job_id = self.rng.choice(failed_job_ids)
     logger.info("simulation seed=%s action=retry job_id=%s", self.seed, job_id)
     retry_failed_job(job_id)
+
+  def schedule_random_failed_job_retry(self):
+    failed_job_ids = list(FailedExecution.objects.values_list("job_id", flat=True))
+    if not failed_job_ids:
+      return
+    job_id = self.rng.choice(failed_job_ids)
+    retry_at = self.now + timedelta(minutes=self.rng.randint(1, 3))
+    logger.info(
+      "simulation seed=%s action=schedule_retry job_id=%s retry_at=%s",
+      self.seed,
+      job_id,
+      retry_at,
+    )
+    schedule_failed_job_retry(job_id, retry_at=retry_at)
 
   def supervisor_tick(self):
     self.supervisor.poll_once()

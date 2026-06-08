@@ -2,6 +2,7 @@ import pytest
 
 from dj_queue.models import FailedExecution, Job, Process, ReadyExecution, RecurringExecution
 from dj_queue.exceptions import ProcessExitError, ProcessMissingError, ProcessPrunedError
+from tests.factories import make_failed_job
 from tests.sim.config import simulation_seeds, simulation_steps
 from tests.sim.runtime import RuntimeSimulation
 
@@ -52,3 +53,31 @@ def test_seeded_recurring_retry_simulation_preserves_dedupe_and_recovery(seed, m
   assert set(FailedExecution.objects.values_list("exception_class", flat=True)).issubset(
     ALLOWED_FAILURE_CLASSES
   )
+
+
+def test_seeded_simulation_schedules_failed_retry_until_due(monkeypatch):
+  simulation = RuntimeSimulation(seed=1, monkeypatch=monkeypatch)
+
+  simulation.start()
+
+  try:
+    job = make_failed_job(queue_name="alpha")
+
+    simulation.run_actions(
+      [
+        simulation.schedule_random_failed_job_retry,
+        simulation.dispatcher_tick,
+      ]
+    )
+
+    failed = FailedExecution.objects.get(job=job)
+    assert failed.retry_at is not None
+    assert ReadyExecution.objects.filter(job=job).exists() is False
+
+    simulation.now = failed.retry_at
+    simulation.run_actions([simulation.dispatcher_tick])
+
+    assert FailedExecution.objects.filter(job=job).exists() is False
+    assert ReadyExecution.objects.filter(job=job).exists() is True
+  finally:
+    simulation.stop()
