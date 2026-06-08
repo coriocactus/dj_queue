@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.db import connections
 from django.utils import timezone
 
 from dj_queue.config import load_backend_config
@@ -509,15 +510,21 @@ def test_postgres_autovacuum_command_prints_reviewable_sql(monkeypatch):
   call_command("dj_queue_postgres_autovacuum", stdout=output)
 
   text = output.getvalue()
+  quote_name = connections[load_backend_config("default").database_alias].ops.quote_name
   assert "review before applying" in text
-  assert "ALTER TABLE \"dj_queue_jobs\" SET (" in text
-  assert "ALTER TABLE \"dj_queue_ready_executions\" SET (" in text
+  assert f"ALTER TABLE {quote_name('dj_queue_jobs')} SET (" in text
+  assert f"ALTER TABLE {quote_name('dj_queue_ready_executions')} SET (" in text
   assert "autovacuum_vacuum_scale_factor = 0.01" in text
   assert "autovacuum_vacuum_threshold = 50" in text
   assert "dj_queue_processes" not in text
 
 
-def test_postgres_autovacuum_command_rejects_non_postgres():
+def test_postgres_autovacuum_command_rejects_non_postgres(monkeypatch):
+  monkeypatch.setattr(
+    "dj_queue.management.commands.dj_queue_postgres_autovacuum.database_capabilities",
+    lambda alias: SimpleNamespace(backend_family="sqlite"),
+  )
+
   with pytest.raises(CommandError, match="requires PostgreSQL"):
     call_command("dj_queue_postgres_autovacuum")
 
