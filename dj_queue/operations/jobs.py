@@ -121,10 +121,20 @@ class ExecutionOutcome:
   next_claimed_job: ClaimedJob | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _DispatchDecision:
+  outcome: DispatchOutcome | None
+  concurrency_key: str | None = None
+  limit: int | None = None
+  duration_seconds: int | None = None
+  on_conflict: str | None = None
+
+
 @dataclass(slots=True)
 class _PreparedJob:
   task: object
   job: Job
+  dispatch_decision: _DispatchDecision | None = None
   dispatch_outcome: DispatchOutcome | None = None
 
 
@@ -204,7 +214,15 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
   if not prepared:
     return []
 
-  if all(entry.job.scheduled_at is None and not entry.job.concurrency_key for entry in prepared):
+  for entry in prepared:
+    entry.dispatch_decision = _dispatch_decision(
+      entry.job,
+      task=entry.task,
+      backend_alias=backend_alias,
+      now=now,
+    )
+
+  if all(entry.dispatch_decision.outcome is DispatchOutcome.READY for entry in prepared):
     with transaction.atomic(using=alias):
       jobs = [entry.job for entry in prepared]
       _bulk_create(alias, Job, jobs)
@@ -247,7 +265,8 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
 
     for entry in prepared:
       job = entry.job
-      if job.scheduled_at is not None and job.scheduled_at > now:
+      decision = entry.dispatch_decision
+      if decision.outcome is DispatchOutcome.SCHEDULED:
         scheduled_rows.append(
           _scheduled_execution_row(
             job=job,
@@ -259,7 +278,7 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
         entry.dispatch_outcome = DispatchOutcome.SCHEDULED
         continue
 
-      if not job.concurrency_key:
+      if decision.outcome is DispatchOutcome.READY:
         ready_rows.append(
           _ready_execution_row(
             job=job,
@@ -343,12 +362,9 @@ def _dispatch_bulk_concurrency_entries(
 ):
   groups = {}
   for entry in entries:
-    job = entry.job
-    limit, duration_seconds, on_conflict = concurrency_settings(
-      entry.task, backend_alias=backend_alias
-    )
+    decision = entry.dispatch_decision
     groups.setdefault(
-      (job.concurrency_key, limit, duration_seconds, on_conflict),
+      (decision.concurrency_key, decision.limit, decision.duration_seconds, decision.on_conflict),
       [],
     ).append(entry)
 
@@ -362,7 +378,11 @@ def _dispatch_bulk_concurrency_entries(
     )
     for index, entry in enumerate(group):
       job = entry.job
-      if index < acquired_count:
+      dispatch_outcome = _concurrency_dispatch_outcome(
+        entry.dispatch_decision,
+        acquired=index < acquired_count,
+      )
+      if dispatch_outcome is DispatchOutcome.READY:
         ready_rows.append(
           _ready_execution_row(
             job=job,
@@ -372,15 +392,15 @@ def _dispatch_bulk_concurrency_entries(
           )
         )
         ready_queue_names.append(job.queue_name)
-        entry.dispatch_outcome = DispatchOutcome.READY
+        entry.dispatch_outcome = dispatch_outcome
         continue
 
-      if on_conflict == "discard":
+      if dispatch_outcome is DispatchOutcome.DISCARDED:
         job.finished_at = now
         job.return_value = None
         job.updated_at = now
         discarded_jobs.append(job)
-        entry.dispatch_outcome = DispatchOutcome.DISCARDED
+        entry.dispatch_outcome = dispatch_outcome
         continue
 
       blocked_rows.append(
@@ -393,7 +413,7 @@ def _dispatch_bulk_concurrency_entries(
           expires_at=now + timedelta(seconds=duration_seconds),
         )
       )
-      entry.dispatch_outcome = DispatchOutcome.BLOCKED
+      entry.dispatch_outcome = dispatch_outcome
 
 
 def claim_ready_jobs(
@@ -1246,12 +1266,38 @@ def _dispatch_existing_job(job, *, check_conflicts=True):
   )
 
 
+def _dispatch_decision(job, *, task, backend_alias, now):
+  if job.scheduled_at is not None and job.scheduled_at > now:
+    return _DispatchDecision(DispatchOutcome.SCHEDULED)
+
+  if not job.concurrency_key:
+    return _DispatchDecision(DispatchOutcome.READY)
+
+  limit, duration_seconds, on_conflict = concurrency_settings(task, backend_alias=backend_alias)
+  return _DispatchDecision(
+    None,
+    concurrency_key=job.concurrency_key,
+    limit=limit,
+    duration_seconds=duration_seconds,
+    on_conflict=on_conflict,
+  )
+
+
+def _concurrency_dispatch_outcome(decision, *, acquired):
+  if acquired:
+    return DispatchOutcome.READY
+  if decision.on_conflict == "discard":
+    return DispatchOutcome.DISCARDED
+  return DispatchOutcome.BLOCKED
+
+
 def _dispatch_job(job, *, task, backend_alias, now=None, check_conflicts=True):
   alias = get_database_alias(backend_alias)
   if now is None:
     now = timezone.now()
+  decision = _dispatch_decision(job, task=task, backend_alias=backend_alias, now=now)
 
-  if job.scheduled_at is not None and job.scheduled_at > now:
+  if decision.outcome is DispatchOutcome.SCHEDULED:
     _create_scheduled_execution(
       alias,
       job=job,
@@ -1261,7 +1307,7 @@ def _dispatch_job(job, *, task, backend_alias, now=None, check_conflicts=True):
     )
     return DispatchOutcome.SCHEDULED
 
-  if not job.concurrency_key:
+  if decision.outcome is DispatchOutcome.READY:
     _create_ready_execution_locked(
       alias,
       job=job,
@@ -1272,13 +1318,16 @@ def _dispatch_job(job, *, task, backend_alias, now=None, check_conflicts=True):
     )
     return DispatchOutcome.READY
 
-  limit, duration_seconds, on_conflict = concurrency_settings(task, backend_alias=backend_alias)
-  if semaphore_acquire(
-    job.concurrency_key,
-    limit=limit,
-    duration_seconds=duration_seconds,
-    backend_alias=backend_alias,
-  ):
+  dispatch_outcome = _concurrency_dispatch_outcome(
+    decision,
+    acquired=semaphore_acquire(
+      decision.concurrency_key,
+      limit=decision.limit,
+      duration_seconds=decision.duration_seconds,
+      backend_alias=backend_alias,
+    ),
+  )
+  if dispatch_outcome is DispatchOutcome.READY:
     _create_ready_execution_locked(
       alias,
       job=job,
@@ -1287,26 +1336,26 @@ def _dispatch_job(job, *, task, backend_alias, now=None, check_conflicts=True):
       ready_at=now,
       check_conflicts=check_conflicts,
     )
-    return DispatchOutcome.READY
+    return dispatch_outcome
 
-  if on_conflict == "discard":
+  if dispatch_outcome is DispatchOutcome.DISCARDED:
     if check_conflicts:
       _finish_job_if_no_execution_state(alias, job, None, finished_at=now, include_claimed=True)
     else:
       job.finished_at = now
       job.return_value = None
       job.save(using=alias, update_fields=["finished_at", "return_value", "updated_at"])
-    return DispatchOutcome.DISCARDED
+    return dispatch_outcome
 
   _create_blocked_execution(
     alias,
     job=job,
     backend_alias=backend_alias,
-    concurrency_key=job.concurrency_key,
-    expires_at=now + timedelta(seconds=duration_seconds),
+    concurrency_key=decision.concurrency_key,
+    expires_at=now + timedelta(seconds=decision.duration_seconds),
     check_conflicts=check_conflicts,
   )
-  return DispatchOutcome.BLOCKED
+  return dispatch_outcome
 
 
 def _release_concurrency_slot(job, *, task=None, process_id=None, worker_ids=()):
