@@ -241,7 +241,7 @@ def test_worker_respects_ordered_queue_list():
   worker.stop()
 
 
-def test_worker_claims_no_more_than_idle_capacity():
+def test_worker_allows_bounded_queued_prefetch():
   first = make_ready_job(args=["first"])
   second = make_ready_job(args=["second"])
   worker = make_worker(
@@ -257,9 +257,30 @@ def test_worker_claims_no_more_than_idle_capacity():
 
   claimed_jobs = worker.poll_once()
 
-  assert [claimed_job.job.id for claimed_job in claimed_jobs] == [first.id]
+  assert [claimed_job.job.id for claimed_job in claimed_jobs] == [first.id, second.id]
   assert ReadyExecution.objects.filter(job=first).exists() is False
-  assert ReadyExecution.objects.filter(job=second).exists() is True
+  assert ReadyExecution.objects.filter(job=second).exists() is False
+  worker.stop()
+
+
+def test_worker_prefetch_stays_within_claimed_work_limit():
+  jobs = [make_ready_job(args=[index]) for index in range(5)]
+  worker = make_worker(
+    config=WorkerConfig(
+      queues=("*",),
+      threads=2,
+      processes=1,
+      polling_interval=0.1,
+      prefetch_multiplier=2,
+    )
+  )
+  worker.start()
+
+  claimed_jobs = worker.poll_once()
+
+  assert [claimed_job.job.id for claimed_job in claimed_jobs] == [job.id for job in jobs[:4]]
+  assert ReadyExecution.objects.filter(job__in=jobs[:4]).exists() is False
+  assert ReadyExecution.objects.filter(job=jobs[4]).exists() is True
   worker.stop()
 
 
@@ -282,6 +303,37 @@ def test_worker_prefetch_limit_accounts_for_in_flight_work():
 
   assert [claimed_job.job.id for claimed_job in claimed_jobs] == [jobs[0].id]
   assert ReadyExecution.objects.filter(job__in=jobs[1:]).count() == 2
+  worker.stop()
+
+
+def test_worker_does_not_claim_without_idle_capacity():
+  jobs = [make_ready_job(args=[index]) for index in range(2)]
+  worker = make_worker(
+    config=WorkerConfig(
+      queues=("*",),
+      threads=2,
+      processes=1,
+      polling_interval=0.1,
+      prefetch_multiplier=2,
+    )
+  )
+  worker.start()
+  worker.pool.idle_capacity = 0
+  worker.pool.in_flight = 2
+
+  assert worker.poll_once() == []
+  assert ReadyExecution.objects.filter(job__in=jobs).count() == 2
+  worker.stop()
+
+
+def test_worker_does_not_claim_after_stop_requested():
+  job = make_ready_job(args=["stopping"])
+  worker = make_worker()
+  worker.start()
+  worker.request_stop()
+
+  assert worker.poll_once() == []
+  assert ReadyExecution.objects.filter(job=job).exists() is True
   worker.stop()
 
 

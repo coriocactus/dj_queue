@@ -821,7 +821,7 @@ Worker entry options:
 | `threads` | `3` | worker threads per worker process |
 | `processes` | `1` | worker processes in `fork` mode; normalized to `1` in `async` mode |
 | `polling_interval` | `0.1` | seconds between worker polls |
-| `prefetch_multiplier` | `2` | upper bound on claimed work; each poll still claims no more jobs than currently idle worker threads |
+| `prefetch_multiplier` | `2` | upper bound on running plus queued claimed work; workers only poll when at least one thread is idle |
 
 Dispatcher entry options:
 

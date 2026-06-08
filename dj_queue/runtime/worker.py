@@ -62,6 +62,9 @@ class Worker(BaseRunner):
     return process
 
   def poll_once(self):
+    if self.stop_requested():
+      return []
+
     if self.process is None:
       self.start()
 
@@ -134,7 +137,7 @@ class Worker(BaseRunner):
       max_workers = getattr(self.pool, "max_workers", self.config.threads)
       in_flight = max(0, max_workers - idle_capacity)
     prefetch_limit = self.config.threads * self.config.prefetch_multiplier
-    return min(idle_capacity, max(0, prefetch_limit - in_flight))
+    return max(0, prefetch_limit - in_flight)
 
   def _mark_shutdown_draining(self, process, *, timeout):
     metadata = dict(process.metadata or {})
