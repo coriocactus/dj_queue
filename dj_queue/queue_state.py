@@ -223,49 +223,40 @@ def _summary_values(rows, queue_name):
 
 
 def _merge_ready_summary(rows, *, alias, backend_alias, queue_name):
-  queryset = ReadyExecution.objects.using(alias).filter(
-    backend_alias=backend_alias,
-    job__backend_alias=backend_alias,
-  )
+  queryset = ReadyExecution.objects.using(alias).filter(backend_alias=backend_alias)
   if queue_name is not None:
-    queryset = queryset.filter(job__queue_name=queue_name)
-  for row in queryset.values("job__queue_name").annotate(
+    queryset = queryset.filter(queue_name=queue_name)
+  for row in queryset.values("queue_name").annotate(
     count=Count("id"),
     oldest_ready_at=Min(Coalesce("latency_started_at", "created_at")),
   ):
-    values = _summary_values(rows, row["job__queue_name"])
+    values = _summary_values(rows, row["queue_name"])
     values["ready"] = row["count"]
     values["oldest_ready_at"] = row["oldest_ready_at"]
 
 
 def _merge_scheduled_summary(rows, *, alias, backend_alias, queue_name):
-  queryset = ScheduledExecution.objects.using(alias).filter(
-    backend_alias=backend_alias,
-    job__backend_alias=backend_alias,
-  )
+  queryset = ScheduledExecution.objects.using(alias).filter(backend_alias=backend_alias)
   if queue_name is not None:
-    queryset = queryset.filter(job__queue_name=queue_name)
-  for row in queryset.values("job__queue_name").annotate(
+    queryset = queryset.filter(queue_name=queue_name)
+  for row in queryset.values("queue_name").annotate(
     count=Count("id"),
     oldest_scheduled_at=Min("scheduled_at"),
   ):
-    values = _summary_values(rows, row["job__queue_name"])
+    values = _summary_values(rows, row["queue_name"])
     values["scheduled"] = row["count"]
     values["oldest_scheduled_at"] = row["oldest_scheduled_at"]
 
 
 def _merge_blocked_summary(rows, *, alias, backend_alias, queue_name):
-  queryset = BlockedExecution.objects.using(alias).filter(
-    backend_alias=backend_alias,
-    job__backend_alias=backend_alias,
-  )
+  queryset = BlockedExecution.objects.using(alias).filter(backend_alias=backend_alias)
   if queue_name is not None:
-    queryset = queryset.filter(job__queue_name=queue_name)
-  for row in queryset.values("job__queue_name").annotate(
+    queryset = queryset.filter(queue_name=queue_name)
+  for row in queryset.values("queue_name").annotate(
     count=Count("id"),
     oldest_blocked_at=Min("expires_at"),
   ):
-    values = _summary_values(rows, row["job__queue_name"])
+    values = _summary_values(rows, row["queue_name"])
     values["blocked"] = row["count"]
     values["oldest_blocked_at"] = row["oldest_blocked_at"]
 

@@ -123,6 +123,20 @@ def test_queue_state_summaries_by_queue_uses_state_table_reads_for_valid_counts(
   assert 1 < len(captured.captured_queries) <= 7
 
 
+def test_queue_state_summaries_use_state_row_queue_names_when_state_is_valid(monkeypatch):
+  ready = enqueue_ready_job(queue_name="canonical")
+  ReadyExecution.objects.filter(job=ready).update(queue_name="denormalized")
+  monkeypatch.setattr(
+    "dj_queue.queue_state._invalid_execution_state_exists",
+    lambda *_args, **_kwargs: False,
+  )
+
+  summaries = queue_state_summaries_by_queue(backend_alias="default")
+
+  assert sorted(summaries) == ["denormalized"]
+  assert summaries["denormalized"].count("ready") == 1
+
+
 def test_filter_queue_state_uses_the_canonical_state_definition():
   enqueue_ready_job()
   scheduled = make_scheduled_job(scheduled_at=timezone.now())

@@ -149,9 +149,19 @@ def invalid_execution_state_membership_sql(connection, *, backend_alias, queue_n
       for other_index, other_model in enumerate(EXECUTION_STATE_MODELS)
       if other_model is not model
     )
-    invalid_condition = f"job.{job_finished_column} IS NOT NULL"
+    invalid_conditions = [f"job.{job_finished_column} IS NOT NULL"]
     if other_state_exists:
-      invalid_condition = f"{invalid_condition} OR {other_state_exists}"
+      invalid_conditions.append(other_state_exists)
+    state_mismatch = _denormalized_state_mismatch_sql(
+      model,
+      quote=quote,
+      state_alias=state_alias,
+      job_backend_expression=f"job.{job_backend_column}",
+      job_queue_expression=f"job.{job_queue_column}",
+    )
+    if state_mismatch:
+      invalid_conditions.append(state_mismatch)
+    invalid_condition = " OR ".join(invalid_conditions)
 
     where_sql = f"job.{job_backend_column} = %s"
     state_params = [backend_alias]
@@ -189,3 +199,22 @@ def _other_state_exists_sql(model, *, quote, state_job_expression, alias):
     f"WHERE {alias}.{state_job_column} = {state_job_expression}"
     f")"
   )
+
+
+def _denormalized_state_mismatch_sql(
+  model,
+  *,
+  quote,
+  state_alias,
+  job_backend_expression,
+  job_queue_expression,
+):
+  field_names = {field.name for field in model._meta.fields}
+  conditions = []
+  if "backend_alias" in field_names:
+    backend_column = quote(model._meta.get_field("backend_alias").column)
+    conditions.append(f"{state_alias}.{backend_column} <> {job_backend_expression}")
+  if "queue_name" in field_names:
+    queue_column = quote(model._meta.get_field("queue_name").column)
+    conditions.append(f"{state_alias}.{queue_column} <> {job_queue_expression}")
+  return " OR ".join(conditions)
