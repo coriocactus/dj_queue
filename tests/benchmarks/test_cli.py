@@ -145,6 +145,18 @@ def test_sqlite_all_and_quick_skip_locking_scenarios():
   )
 
 
+def test_postgres_all_includes_held_xmin_scenario():
+  names = (
+    "single-enqueue",
+    "bulk-enqueue",
+    "held-xmin-worker-drain",
+    "worker-drain",
+  )
+  args = benchmark_cli.parse_args(["all", "--backend", "postgres"])
+
+  assert benchmark_cli.selected_scenarios(args, all_names=names, quick_names=names) == names
+
+
 def test_sqlite_rejects_unsupported_scenario():
   args = benchmark_cli.parse_args(["scenario", "concurrency-contention", "--backend", "sqlite"])
 
