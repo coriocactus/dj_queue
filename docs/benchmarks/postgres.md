@@ -2,7 +2,7 @@
 
 > Local development benchmark. Treat these numbers as reproducibility evidence, not a portable capacity guarantee.
 
-Generated: 2026-06-03T14:30:01.009190+00:00
+Generated: 2026-06-09T13:43:41.488993+00:00
 
 ## Environment
 
@@ -12,9 +12,9 @@ Generated: 2026-06-03T14:30:01.009190+00:00
 - Python: `3.14.5`
 - Django: `6.0.5`
 - dj_queue: `0.12.0`
-- platform: `macOS-26.5-arm64-arm-64bit-Mach-O`
+- platform: `macOS-26.5.1-arm64-arm-64bit-Mach-O`
 - machine: `arm64`
-- revision: `411646c33337`
+- revision: `cef37cdd23be`
 - benchmark worker count: `4`
 - benchmark worker threads: `8`
 - preserve finished jobs: `True`
@@ -31,12 +31,12 @@ Generated: 2026-06-03T14:30:01.009190+00:00
 
 | size | run | duration_seconds | jobs_per_second | query_count_sample | **latency_p95_ms** | ready_count | job_count | latency_mean_ms | latency_p50_ms | latency_p99_ms |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1000 | 0 | 3.380 | 295.896 | 5 | **6.923** | 1000 | 1000 | 3.378 | 2.939 | 8.899 |
-| 1000 | 1 | 5.106 | 195.848 | 5 | **8.000** | 1000 | 1000 | 5.103 | 4.413 | 10.789 |
-| 1000 | 2 | 6.588 | 151.793 | 5 | **10.059** | 1000 | 1000 | 6.584 | 6.590 | 12.405 |
-| 10000 | 0 | 53.780 | 185.943 | 5 | **8.545** | 10000 | 10000 | 5.375 | 4.900 | 11.929 |
-| 10000 | 1 | 53.735 | 186.097 | 5 | **8.515** | 10000 | 10000 | 5.370 | 4.891 | 11.403 |
-| 10000 | 2 | 50.802 | 196.843 | 5 | **7.932** | 10000 | 10000 | 5.077 | 4.581 | 10.895 |
+| 1000 | 0 | 1.914 | 522.469 | 5 | **2.237** | 1000 | 1000 | 1.913 | 1.771 | 3.464 |
+| 1000 | 1 | 1.916 | 521.912 | 5 | **2.372** | 1000 | 1000 | 1.915 | 1.757 | 3.124 |
+| 1000 | 2 | 1.658 | 603.309 | 5 | **2.062** | 1000 | 1000 | 1.657 | 1.583 | 2.935 |
+| 10000 | 0 | 45.731 | 218.669 | 5 | **7.971** | 10000 | 10000 | 4.571 | 4.280 | 10.960 |
+| 10000 | 1 | 29.600 | 337.842 | 5 | **6.982** | 10000 | 10000 | 2.959 | 2.021 | 8.963 |
+| 10000 | 2 | 22.716 | 440.210 | 5 | **3.500** | 10000 | 10000 | 2.271 | 2.058 | 4.593 |
 
 ### `bulk-enqueue`: bulk immediate enqueue throughput and SQL statement count
 
@@ -47,12 +47,12 @@ Generated: 2026-06-03T14:30:01.009190+00:00
 
 | size | run | duration_seconds | **jobs_per_second** | query_count | ready_count | job_count |
 |---|---|---|---|---|---|---|
-| 1000 | 0 | 0.088 | **11359.312** | 5 | 1000 | 1000 |
-| 1000 | 1 | 0.081 | **12301.214** | 5 | 1000 | 1000 |
-| 1000 | 2 | 0.078 | **12797.611** | 5 | 1000 | 1000 |
-| 10000 | 0 | 0.728 | **13734.120** | 5 | 10000 | 10000 |
-| 10000 | 1 | 0.767 | **13037.961** | 5 | 10000 | 10000 |
-| 10000 | 2 | 0.701 | **14268.014** | 5 | 10000 | 10000 |
+| 1000 | 0 | 0.075 | **13367.942** | 5 | 1000 | 1000 |
+| 1000 | 1 | 0.074 | **13458.588** | 5 | 1000 | 1000 |
+| 1000 | 2 | 0.073 | **13722.198** | 5 | 1000 | 1000 |
+| 10000 | 0 | 0.732 | **13670.405** | 5 | 10000 | 10000 |
+| 10000 | 1 | 0.728 | **13738.436** | 5 | 10000 | 10000 |
+| 10000 | 2 | 0.762 | **13118.899** | 5 | 10000 | 10000 |
 
 ### `scheduled-promotion`: due scheduled-row promotion from a mixed due/future backlog
 
@@ -63,12 +63,12 @@ Generated: 2026-06-03T14:30:01.009190+00:00
 
 | size | run | duration_seconds | **rows_per_second** | ready_count | promoted_count | future_scheduled_count |
 |---|---|---|---|---|---|---|
-| 1000 | 0 | 0.084 | **11944.220** | 1000 | 1000 | 1000 |
-| 1000 | 1 | 0.097 | **10355.353** | 1000 | 1000 | 1000 |
-| 1000 | 2 | 0.115 | **8712.544** | 1000 | 1000 | 1000 |
-| 10000 | 0 | 1.078 | **9274.718** | 10000 | 10000 | 10000 |
-| 10000 | 1 | 1.059 | **9442.012** | 10000 | 10000 | 10000 |
-| 10000 | 2 | 1.061 | **9423.885** | 10000 | 10000 | 10000 |
+| 1000 | 0 | 0.082 | **12226.602** | 1000 | 1000 | 1000 |
+| 1000 | 1 | 0.083 | **11982.733** | 1000 | 1000 | 1000 |
+| 1000 | 2 | 0.084 | **11865.663** | 1000 | 1000 | 1000 |
+| 10000 | 0 | 0.889 | **11248.012** | 10000 | 10000 | 10000 |
+| 10000 | 1 | 0.886 | **11291.586** | 10000 | 10000 | 10000 |
+| 10000 | 2 | 1.001 | **9990.260** | 10000 | 10000 | 10000 |
 
 ### `recurring-scale`: scheduler poll cost for persisted not-due recurring rows
 
@@ -77,14 +77,14 @@ Generated: 2026-06-03T14:30:01.009190+00:00
 - use case: large recurring-task catalogs where most scheduler ticks should be cheap no-ops
 - mechanics: seeds dynamic recurring definitions with future `next_run_at` values, then runs one `Scheduler.poll_once()` without firing jobs
 
-| size | run | **duration_seconds** | rows_per_second | fired_count | recurring_task_count |
-|---|---|---|---|---|---|
-| 1000 | 0 | **0.006** | 178576.753 | 0 | 1000 |
-| 1000 | 1 | **0.005** | 203591.683 | 0 | 1000 |
-| 1000 | 2 | **0.005** | 198130.951 | 0 | 1000 |
-| 10000 | 0 | **0.015** | 653733.636 | 0 | 10000 |
-| 10000 | 1 | **0.006** | 1681107.669 | 0 | 10000 |
-| 10000 | 2 | **0.007** | 1498267.633 | 0 | 10000 |
+| size | run | **duration_seconds** | rows_per_second | query_count | fired_count | recurring_task_count |
+|---|---|---|---|---|---|---|
+| 1000 | 0 | **0.001** | 1712575.181 | 1 | 0 | 1000 |
+| 1000 | 1 | **0.001** | 1518794.311 | 1 | 0 | 1000 |
+| 1000 | 2 | **0.001** | 1477104.930 | 1 | 0 | 1000 |
+| 10000 | 0 | **0.001** | 12459770.470 | 1 | 0 | 10000 |
+| 10000 | 1 | **0.001** | 14296784.010 | 1 | 0 | 10000 |
+| 10000 | 2 | **0.001** | 12585883.325 | 1 | 0 | 10000 |
 
 ### `worker-drain`: async supervisor drain throughput for no-op ready jobs
 
@@ -95,12 +95,28 @@ Generated: 2026-06-03T14:30:01.009190+00:00
 
 | size | run | duration_seconds | **jobs_per_second** | finished_count | ready_count | claimed_count | completed_count | job_count | preserve_finished_jobs | runner_count |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1000 | 0 | 1.353 | **739.073** | 1000 | 0 | 0 | 1000 | 1000 | True | 4 |
-| 1000 | 1 | 1.309 | **763.917** | 1000 | 0 | 0 | 1000 | 1000 | True | 4 |
-| 1000 | 2 | 1.294 | **772.712** | 1000 | 0 | 0 | 1000 | 1000 | True | 4 |
-| 10000 | 0 | 12.693 | **787.860** | 10000 | 0 | 0 | 10000 | 10000 | True | 4 |
-| 10000 | 1 | 12.798 | **781.395** | 10000 | 0 | 0 | 10000 | 10000 | True | 4 |
-| 10000 | 2 | 12.594 | **794.034** | 10000 | 0 | 0 | 10000 | 10000 | True | 4 |
+| 1000 | 0 | 1.475 | **677.814** | 1000 | 0 | 0 | 1000 | 1000 | True | 4 |
+| 1000 | 1 | 1.298 | **770.352** | 1000 | 0 | 0 | 1000 | 1000 | True | 4 |
+| 1000 | 2 | 1.297 | **771.291** | 1000 | 0 | 0 | 1000 | 1000 | True | 4 |
+| 10000 | 0 | 14.100 | **709.212** | 10000 | 0 | 0 | 10000 | 10000 | True | 4 |
+| 10000 | 1 | 13.391 | **746.798** | 10000 | 0 | 0 | 10000 | 10000 | True | 4 |
+| 10000 | 2 | 13.266 | **753.818** | 10000 | 0 | 0 | 10000 | 10000 | True | 4 |
+
+### `held-xmin-worker-drain`: PostgreSQL worker drain under a held repeatable-read snapshot
+
+- key metric: **`jobs_per_second`** - end-to-end worker-drain throughput while a second connection pins xmin; higher is better
+- healthy local baseline: compare with `worker-drain` and watch dead tuples and relation bytes during the hold
+- use case: PostgreSQL operations where long transactions, replication slots, or prepared transactions can delay vacuum cleanup of queue churn
+- mechanics: opens a second PostgreSQL connection, begins a repeatable-read transaction to pin xmin, drains ready jobs through `worker-drain`, then samples queue-table dead tuples and relation bytes before, during, and after releasing the snapshot
+
+| size | run | duration_seconds | **jobs_per_second** | finished_count | ready_count | dead_tuples_before | dead_tuples_during | dead_tuples_after_release | relation_bytes_before | relation_bytes_during | relation_bytes_after_release | claimed_count | completed_count | held_xmin | job_count | live_tuples_after_release | live_tuples_before | live_tuples_during | preserve_finished_jobs | runner_count |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1000 | 0 | 1.330 | **751.894** | 1000 | 0 | 55381 | 57206 | 57206 | 442368 | 2121728 | 2121728 | 0 | 1000 | True | 1000 | 32399 | 31219 | 32399 | True | 4 |
+| 1000 | 1 | 1.438 | **695.438** | 1000 | 0 | 57206 | 31015 | 31015 | 442368 | 2113536 | 2113536 | 0 | 1000 | True | 1000 | 33285 | 32399 | 33285 | True | 4 |
+| 1000 | 2 | 1.321 | **756.924** | 1000 | 0 | 31015 | 32841 | 32841 | 442368 | 2113536 | 2113536 | 0 | 1000 | True | 1000 | 34464 | 33285 | 34464 | True | 4 |
+| 10000 | 0 | 13.921 | **718.347** | 10000 | 0 | 62265 | 29584 | 29584 | 442368 | 13590528 | 13590528 | 0 | 10000 | True | 10000 | 20421 | 44422 | 20421 | True | 4 |
+| 10000 | 1 | 12.690 | **788.053** | 10000 | 0 | 29584 | 40167 | 40167 | 442368 | 13631488 | 13631488 | 0 | 10000 | True | 10000 | 20201 | 20421 | 20201 | True | 4 |
+| 10000 | 2 | 12.535 | **797.751** | 10000 | 0 | 40167 | 60243 | 60243 | 442368 | 13615104 | 13615104 | 0 | 10000 | True | 10000 | 30178 | 20201 | 30178 | True | 4 |
 
 ### `concurrency-contention`: one hot concurrency key through enqueue, block, release, and unblock
 
@@ -111,12 +127,12 @@ Generated: 2026-06-03T14:30:01.009190+00:00
 
 | size | run | enqueue_jobs_per_second | enqueue_query_count | **drain_jobs_per_second** | drain_query_count | claim_query_count | execute_query_count | finished_count | drain_duration_seconds | enqueue_duration_seconds |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1000 | 0 | 201.458 | 3001 | **70.858** | 7000 | 3000 | 4000 | 1000 | 14.113 | 4.964 |
-| 1000 | 1 | 186.278 | 3001 | **70.959** | 7000 | 3000 | 4000 | 1000 | 14.093 | 5.368 |
-| 1000 | 2 | 189.955 | 3001 | **70.242** | 7000 | 3000 | 4000 | 1000 | 14.237 | 5.264 |
-| 10000 | 0 | 200.645 | 30001 | **64.228** | 70000 | 30000 | 40000 | 10000 | 155.696 | 49.839 |
-| 10000 | 1 | 156.870 | 30001 | **60.138** | 70000 | 30000 | 40000 | 10000 | 166.284 | 63.747 |
-| 10000 | 2 | 189.236 | 30001 | **60.813** | 70000 | 30000 | 40000 | 10000 | 164.439 | 52.844 |
+| 1000 | 0 | 554.962 | 3001 | **123.640** | 7000 | 3000 | 4000 | 1000 | 8.088 | 1.802 |
+| 1000 | 1 | 293.132 | 3001 | **100.880** | 7000 | 3000 | 4000 | 1000 | 9.913 | 3.411 |
+| 1000 | 2 | 284.927 | 3001 | **71.149** | 7000 | 3000 | 4000 | 1000 | 14.055 | 3.510 |
+| 10000 | 0 | 166.180 | 30001 | **80.458** | 70000 | 30000 | 40000 | 10000 | 124.288 | 60.176 |
+| 10000 | 1 | 447.822 | 30001 | **104.538** | 70000 | 30000 | 40000 | 10000 | 95.659 | 22.330 |
+| 10000 | 2 | 414.924 | 30001 | **99.667** | 70000 | 30000 | 40000 | 10000 | 100.334 | 24.101 |
 
 ### `runtime-hot-key-contention`: async runtime drain throughput for one hot concurrency key
 
@@ -127,12 +143,12 @@ Generated: 2026-06-03T14:30:01.009190+00:00
 
 | size | run | enqueue_jobs_per_second | **drain_jobs_per_second** | finished_count | ready_count | blocked_count | claimed_count | completed_count | drain_duration_seconds | enqueue_duration_seconds | job_count | preserve_finished_jobs | runner_count |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1000 | 0 | 163.678 | **142.533** | 1000 | 0 | 0 | 0 | 1000 | 7.016 | 6.110 | 1000 | True | 4 |
-| 1000 | 1 | 193.600 | **138.059** | 1000 | 0 | 0 | 0 | 1000 | 7.243 | 5.165 | 1000 | True | 4 |
-| 1000 | 2 | 162.532 | **144.991** | 1000 | 0 | 0 | 0 | 1000 | 6.897 | 6.153 | 1000 | True | 4 |
-| 10000 | 0 | 179.006 | **152.026** | 10000 | 0 | 0 | 0 | 10000 | 65.778 | 55.864 | 10000 | True | 4 |
-| 10000 | 1 | 181.005 | **148.389** | 10000 | 0 | 0 | 0 | 10000 | 67.390 | 55.247 | 10000 | True | 4 |
-| 10000 | 2 | 163.310 | **143.020** | 10000 | 0 | 0 | 0 | 10000 | 69.920 | 61.233 | 10000 | True | 4 |
+| 1000 | 0 | 488.532 | **167.717** | 1000 | 0 | 0 | 0 | 1000 | 5.962 | 2.047 | 1000 | True | 4 |
+| 1000 | 1 | 549.730 | **157.914** | 1000 | 0 | 0 | 0 | 1000 | 6.333 | 1.819 | 1000 | True | 4 |
+| 1000 | 2 | 453.314 | **156.927** | 1000 | 0 | 0 | 0 | 1000 | 6.372 | 2.206 | 1000 | True | 4 |
+| 10000 | 0 | 482.430 | **156.096** | 10000 | 0 | 0 | 0 | 10000 | 64.063 | 20.728 | 10000 | True | 4 |
+| 10000 | 1 | 483.500 | **162.535** | 10000 | 0 | 0 | 0 | 10000 | 61.525 | 20.683 | 10000 | True | 4 |
+| 10000 | 2 | 322.774 | **160.238** | 10000 | 0 | 0 | 0 | 10000 | 62.407 | 30.981 | 10000 | True | 4 |
 
 ### `ordered-selector-claim`: ordered exact-queue claiming and drain throughput
 
@@ -143,17 +159,17 @@ Generated: 2026-06-03T14:30:01.009190+00:00
 
 | size | run | duration_seconds | **jobs_per_second** | claim_duration_seconds | claim_query_count | execute_duration_seconds | execute_query_count | finished_count |
 |---|---|---|---|---|---|---|---|---|
-| 1000 | 0 | 6.861 | **145.747** | 3.498 | 1337 | 3.345 | 1000 | 1000 |
-| 1000 | 1 | 7.265 | **137.647** | 3.652 | 1337 | 3.594 | 1000 | 1000 |
-| 1000 | 2 | 6.946 | **143.962** | 3.334 | 1337 | 3.593 | 1000 | 1000 |
-| 10000 | 0 | 64.061 | **156.102** | 30.552 | 13337 | 33.320 | 10000 | 10000 |
-| 10000 | 1 | 60.956 | **164.053** | 29.151 | 13337 | 31.621 | 10000 | 10000 |
-| 10000 | 2 | 62.081 | **161.080** | 29.619 | 13337 | 32.273 | 10000 | 10000 |
+| 1000 | 0 | 4.965 | **201.421** | 2.130 | 1002 | 2.821 | 1000 | 1000 |
+| 1000 | 1 | 5.111 | **195.637** | 2.184 | 1002 | 2.914 | 1000 | 1000 |
+| 1000 | 2 | 5.450 | **183.502** | 2.330 | 1002 | 3.105 | 1000 | 1000 |
+| 10000 | 0 | 52.763 | **189.526** | 25.590 | 10002 | 27.037 | 10000 | 10000 |
+| 10000 | 1 | 50.761 | **197.002** | 24.421 | 10002 | 26.213 | 10000 | 10000 |
+| 10000 | 2 | 53.797 | **185.884** | 24.835 | 10002 | 28.810 | 10000 | 10000 |
 
 ## Reproduce
 
 ```bash
 docker compose up postgres -d
-bin/benchmark.py all --backend postgres --sizes 1000,10000 --warmups 1 --runs 3 --output benchmark-results/postgres-20260603T135500Z.jsonl --conn-max-age 60
-bin/benchmark.py report benchmark-results/postgres-20260603T135500Z.jsonl --output docs/benchmarks/postgres.md
+bin/benchmark.py all --backend postgres --sizes 1000,10000 --warmups 1 --runs 3 --output benchmark-results/postgres-20260609T131721Z.jsonl --conn-max-age 60
+bin/benchmark.py report benchmark-results/postgres-20260609T131721Z.jsonl --output docs/benchmarks/postgres.md
 ```
