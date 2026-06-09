@@ -25,6 +25,14 @@ def test_scheduled_promotion_seeds_backend_scoped_rows():
 
 
 @pytest.mark.django_db
+def test_recurring_scale_reports_steady_poll_query_count():
+  metrics = scheduling.recurring_scale(2)
+
+  assert metrics["fired_count"] == 0
+  assert metrics["query_count"] > 0
+
+
+@pytest.mark.django_db
 def test_worker_drain_seeds_backend_scoped_rows(monkeypatch):
   class FakeSupervisor:
     runners = (object(),)

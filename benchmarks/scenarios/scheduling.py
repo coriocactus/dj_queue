@@ -1,6 +1,8 @@
 from datetime import timedelta
 from uuid import uuid4
 
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from benchmarks.harness import Timer, throughput
@@ -94,8 +96,10 @@ def recurring_scale(size):
   )
 
   try:
-    with Timer() as timer:
-      fired_jobs = scheduler.poll_once(now=now)
+    scheduler.start()
+    with CaptureQueriesContext(connection) as captured:
+      with Timer() as timer:
+        fired_jobs = scheduler.poll_once(now=now)
   finally:
     scheduler.stop()
 
@@ -105,6 +109,7 @@ def recurring_scale(size):
   return {
     "duration_seconds": timer.duration,
     "rows_per_second": throughput(size, timer.duration),
+    "query_count": len(captured),
     "recurring_task_count": RecurringTask.objects.count(),
     "fired_count": len(fired_jobs),
   }
