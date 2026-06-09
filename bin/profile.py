@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -67,6 +68,8 @@ SCENARIO_ORDER = (
   "scheduler-cleanup-not-due",
   "deep-health",
 )
+EXTRA_SCENARIOS = ("ordered-selector-claim",)
+SCENARIO_CHOICES = (*SCENARIO_ORDER, *EXTRA_SCENARIOS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,7 +114,7 @@ def parse_args(argv):
   parser.add_argument(
     "--scenario",
     action="append",
-    choices=SCENARIO_ORDER,
+    choices=SCENARIO_CHOICES,
     help="Scenario to run. Repeat to run several. Defaults to all.",
   )
   parser.add_argument("--output", help="JSONL output path.")
@@ -450,6 +453,20 @@ def run_scenario(name, *, explain):
   return metrics
 
 
+@contextmanager
+def _query_counter():
+  from django.db import connection
+
+  state = {"count": 0}
+
+  def wrapper(execute, sql, params, many, context):
+    state["count"] += 1
+    return execute(sql, params, many, context)
+
+  with connection.execute_wrapper(wrapper):
+    yield state
+
+
 def scenario_backend_snapshot():
   from dj_queue import observability
 
@@ -626,6 +643,117 @@ def scenario_worker_empty_claim():
     limit=100, queues=("__profile_empty__",), backend_alias="default"
   )
   return {"claimed_count": len(claimed_jobs)}
+
+
+def scenario_ordered_selector_claim():
+  from django.utils import timezone
+
+  from benchmarks.tasks import noop
+  from dj_queue.models import ClaimedExecution, Job, ReadyExecution
+  from dj_queue.operations.jobs import claim_ready_jobs, execute_claimed_job
+
+  selectors = (
+    "profile-selector-alpha",
+    "profile-selector-beta",
+    "profile-selector-gamma",
+  )
+  size = min(active_shape.jobs, 10_000)
+  now = timezone.now()
+
+  with _query_counter() as setup_queries:
+    with Timer() as setup_timer:
+      jobs = [
+        Job(
+          id=uuid.uuid4(),
+          task_path=noop.module_path,
+          queue_name=selectors[index % len(selectors)],
+          priority=noop.priority,
+          payload={"args": [f"selector-profile-{index}"], "kwargs": {}},
+          backend_alias="default",
+          created_at=now,
+          updated_at=now,
+        )
+        for index in range(size)
+      ]
+      Job.objects.bulk_create(jobs, batch_size=5_000)
+      ReadyExecution.objects.bulk_create(
+        [
+          ReadyExecution(
+            job_id=job.id,
+            backend_alias=job.backend_alias,
+            queue_name=job.queue_name,
+            priority=job.priority,
+            created_at=now,
+            latency_started_at=now,
+          )
+          for job in jobs
+        ],
+        batch_size=5_000,
+      )
+
+  phase_metrics = {selector: {"claims": 0, "duration": 0, "queries": 0} for selector in selectors}
+  claim_duration = 0
+  execute_duration = 0
+  claim_query_count = 0
+  execute_query_count = 0
+  completed = 0
+
+  with Timer() as drain_timer:
+    while completed < size:
+      with _query_counter() as claim_queries:
+        with Timer() as claim_timer:
+          claimed_jobs = claim_ready_jobs(limit=3, queues=selectors, backend_alias="default")
+      claim_duration += claim_timer.duration
+      claim_query_count += claim_queries["count"]
+      if not claimed_jobs:
+        break
+
+      phase = phase_metrics[claimed_jobs[0].job.queue_name]
+      phase["claims"] += 1
+      phase["duration"] += claim_timer.duration
+      phase["queries"] += claim_queries["count"]
+
+      with _query_counter() as execute_queries:
+        with Timer() as execute_timer:
+          for claimed_job in claimed_jobs:
+            execute_claimed_job(claimed_job, backend_alias="default")
+      execute_duration += execute_timer.duration
+      execute_query_count += execute_queries["count"]
+      completed += len(claimed_jobs)
+
+  finished_count = Job.objects.filter(
+    queue_name__in=selectors,
+    finished_at__isnull=False,
+  ).count()
+  if (
+    completed != size
+    or finished_count != size
+    or ReadyExecution.objects.filter(queue_name__in=selectors).exists()
+    or ClaimedExecution.objects.filter(job__queue_name__in=selectors).exists()
+  ):
+    raise AssertionError("ordered selector profile did not drain all ready jobs")
+
+  metrics = {
+    "profile_job_count": size,
+    "completed_count": completed,
+    "finished_count": finished_count,
+    "setup_duration_seconds": setup_timer.duration,
+    "setup_query_count": setup_queries["count"],
+    "drain_duration_seconds": drain_timer.duration,
+    "jobs_per_second": size / drain_timer.duration if drain_timer.duration > 0 else None,
+    "claim_duration_seconds": claim_duration,
+    "claim_query_count": claim_query_count,
+    "execute_duration_seconds": execute_duration,
+    "execute_query_count": execute_query_count,
+  }
+  for index, selector in enumerate(selectors):
+    label = selector.rsplit("-", 1)[-1]
+    phase = phase_metrics[selector]
+    metrics[f"claim_{label}_attempts"] = phase["claims"]
+    metrics[f"claim_{label}_duration_seconds"] = phase["duration"]
+    metrics[f"claim_{label}_query_count"] = phase["queries"]
+    metrics[f"claim_{label}_empty_prefix_selector_count"] = phase["claims"] * index
+  return metrics
 
 
 def scenario_dispatcher_no_due_scheduled():
@@ -814,6 +942,7 @@ SCENARIOS = {
   "queue-page-finished-deep": scenario_queue_page_finished_deep,
   "queue-page-invalid": scenario_queue_page_invalid,
   "worker-empty-claim": scenario_worker_empty_claim,
+  "ordered-selector-claim": scenario_ordered_selector_claim,
   "dispatcher-no-due-scheduled": scenario_dispatcher_no_due_scheduled,
   "dispatcher-no-expired-blocked": scenario_dispatcher_no_expired_blocked,
   "dispatcher-no-expired-semaphores": scenario_dispatcher_no_expired_semaphores,

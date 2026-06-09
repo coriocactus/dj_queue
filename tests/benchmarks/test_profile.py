@@ -21,3 +21,9 @@ def test_default_profile_scenarios_cover_observability_hot_surfaces():
 
   assert expected.issubset(profile_cli.SCENARIO_ORDER)
   assert expected.issubset(profile_cli.SCENARIOS)
+
+
+def test_ordered_selector_profile_is_explicit_only():
+  assert "ordered-selector-claim" in profile_cli.SCENARIO_CHOICES
+  assert "ordered-selector-claim" in profile_cli.SCENARIOS
+  assert "ordered-selector-claim" not in profile_cli.SCENARIO_ORDER
