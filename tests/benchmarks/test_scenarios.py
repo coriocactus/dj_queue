@@ -24,7 +24,7 @@ def test_scheduled_promotion_seeds_backend_scoped_rows():
   assert metrics["future_scheduled_count"] == 2
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_recurring_scale_reports_steady_poll_query_count():
   metrics = scheduling.recurring_scale(2)
 
