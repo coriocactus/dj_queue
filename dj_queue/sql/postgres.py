@@ -3,7 +3,14 @@ from datetime import timedelta
 from django.db import connections
 
 from dj_queue.exceptions import EnqueueError
-from dj_queue.models import BlockedExecution, ClaimedExecution, Job, ReadyExecution, Semaphore
+from dj_queue.models import (
+  BlockedExecution,
+  ClaimedExecution,
+  Job,
+  Pause,
+  ReadyExecution,
+  Semaphore,
+)
 from dj_queue.sql.state import state_absence_checks_sql, state_models_except
 
 
@@ -271,6 +278,88 @@ def consume_next_blocked_job(alias, *, backend_alias, key, use_skip_locked):
   }
 
 
+def select_ready_rows_by_exact_queues(
+  alias,
+  *,
+  backend_alias,
+  selectors,
+  limit,
+  use_skip_locked,
+):
+  selectors = tuple(dict.fromkeys(selectors))
+  if not selectors or limit <= 0:
+    return []
+
+  connection = connections[alias]
+  quote = connection.ops.quote_name
+  ready_table = quote(ReadyExecution._meta.db_table)
+  jobs_table = quote(Job._meta.db_table)
+  pause_table = quote(Pause._meta.db_table)
+  ready_pk_column = quote(ReadyExecution._meta.pk.column)
+  ready_job_column = quote(ReadyExecution._meta.get_field("job").column)
+  ready_backend_column = quote(ReadyExecution._meta.get_field("backend_alias").column)
+  ready_queue_column = quote(ReadyExecution._meta.get_field("queue_name").column)
+  ready_priority_column = quote(ReadyExecution._meta.get_field("priority").column)
+  job_pk_column = quote(Job._meta.pk.column)
+  pause_backend_column = quote(Pause._meta.get_field("backend_alias").column)
+  pause_queue_column = quote(Pause._meta.get_field("queue_name").column)
+  ready_columns = _model_columns_sql(ReadyExecution, quote=quote, table_alias="ready")
+  job_columns = _model_columns_sql(Job, quote=quote, table_alias="job")
+  skip_locked_sql = " SKIP LOCKED" if use_skip_locked else ""
+
+  ctes = []
+  params = []
+  for index, selector in enumerate(selectors):
+    prior_counts = " + ".join(
+      f"(SELECT COUNT(*) FROM selector_{prior_index})" for prior_index in range(index)
+    )
+    remaining_sql = "%s" if not prior_counts else f"GREATEST(0, %s - ({prior_counts}))"
+    ctes.append(
+      f"""
+      selector_{index} AS (
+        SELECT
+          {index} AS selector_rank,
+          {ready_columns},
+          {job_columns}
+        FROM {ready_table} ready
+        JOIN {jobs_table} job
+          ON job.{job_pk_column} = ready.{ready_job_column}
+        WHERE ready.{ready_backend_column} = %s
+          AND ready.{ready_queue_column} = %s
+          AND NOT EXISTS (
+            SELECT 1
+            FROM {pause_table} pause
+            WHERE pause.{pause_backend_column} = %s
+              AND pause.{pause_queue_column} = ready.{ready_queue_column}
+          )
+        ORDER BY ready.{ready_priority_column} DESC, ready.{ready_pk_column} ASC
+        LIMIT {remaining_sql}
+        FOR UPDATE OF ready{skip_locked_sql}
+      )
+      """
+    )
+    params.extend([backend_alias, selector, backend_alias, limit])
+
+  selectors_sql = " UNION ALL ".join(
+    f"SELECT * FROM selector_{index}" for index in range(len(selectors))
+  )
+  with connection.cursor() as cursor:
+    cursor.execute(
+      f"""
+      WITH {", ".join(ctes)}
+      SELECT *
+      FROM ({selectors_sql}) selected_ready
+      ORDER BY selector_rank ASC, ready_priority DESC, ready_id ASC
+      """,
+      params,
+    )
+    columns = [column[0] for column in cursor.description]
+    return [
+      _ready_row_from_record(alias, dict(zip(columns, row, strict=True)))
+      for row in cursor.fetchall()
+    ]
+
+
 def consume_ready_and_create_claimed_executions(alias, ready_rows, *, process, claimed_at):
   connection = connections[alias]
   quote = connection.ops.quote_name
@@ -397,3 +486,41 @@ def listen_channel(connection, channel):
 def notify_channel(connection, channel, payload):
   with connection.cursor() as cursor:
     cursor.execute("SELECT pg_notify(%s, %s)", [channel, payload])
+
+
+def _model_columns_sql(model, *, quote, table_alias):
+  return ",\n          ".join(
+    f"{table_alias}.{quote(field.column)} AS {quote(f'{table_alias}_{field.attname}')}"
+    for field in model._meta.concrete_fields
+  )
+
+
+def _ready_row_from_record(alias, record):
+  connection = connections[alias]
+  job = _model_from_record(Job, alias, connection, record, prefix="job")
+  ready = _model_from_record(ReadyExecution, alias, connection, record, prefix="ready")
+  ready.job = job
+  return ready
+
+
+def _model_from_record(model, alias, connection, record, *, prefix):
+  obj = model(
+    **{
+      field.attname: _field_value_from_record(
+        field,
+        record[f"{prefix}_{field.attname}"],
+        connection,
+      )
+      for field in model._meta.concrete_fields
+    }
+  )
+  obj._state.adding = False
+  obj._state.db = alias
+  return obj
+
+
+def _field_value_from_record(field, value, connection):
+  converter = getattr(field, "from_db_value", None)
+  if converter is None:
+    return value
+  return converter(value, None, connection)

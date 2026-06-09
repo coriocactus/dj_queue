@@ -1272,6 +1272,40 @@ def test_queue_selector_exact_group_query_budget_stays_claim_sized():
 
 
 @pytest.mark.django_db
+def test_queue_selector_duplicate_exact_entries_do_not_duplicate_claims():
+  result = echo.using(queue_name="alpha").enqueue("alpha")
+
+  claimed_jobs = claim_ready_jobs(limit=2, queues=("alpha", "alpha"))
+
+  assert [str(claimed_job.job.id) for claimed_job in claimed_jobs] == [result.id]
+
+
+@pytest.mark.skipif(
+  os.environ.get("DB_BACKEND", "sqlite") != "postgres",
+  reason="requires DB_BACKEND=postgres",
+)
+@pytest.mark.django_db(transaction=True)
+def test_postgres_exact_selector_claim_uses_one_selection_after_earlier_empty():
+  for queue_name in ("alpha", "alpha", "alpha", "beta", "beta", "beta"):
+    echo.using(queue_name=queue_name).enqueue(queue_name)
+
+  assert [
+    claimed_job.job.queue_name
+    for claimed_job in claim_ready_jobs(limit=3, queues=("alpha", "beta"))
+  ] == ["alpha", "alpha", "alpha"]
+
+  with CaptureQueriesContext(connection) as ctx:
+    claimed_jobs = claim_ready_jobs(limit=3, queues=("alpha", "beta"))
+
+  assert [claimed_job.job.queue_name for claimed_job in claimed_jobs] == [
+    "beta",
+    "beta",
+    "beta",
+  ]
+  assert len(ctx.captured_queries) <= 5
+
+
+@pytest.mark.django_db
 def test_claim_ready_jobs_bulk_inserts_claimed_rows_for_full_batch():
   jobs = [make_job(args=[index]) for index in range(3)]
   for job in jobs:

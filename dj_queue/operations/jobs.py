@@ -483,6 +483,8 @@ def _claim_ready_jobs_once(
       limit=limit,
       queues=queues,
       use_skip_locked=use_skip_locked,
+      alias=alias,
+      backend_alias=backend_alias,
     )
     if not ready_rows:
       return []
@@ -1481,7 +1483,7 @@ def _filter_queue_selectors(queryset, queues):
   return filter_by_queue_selectors(queryset, queues)
 
 
-def _select_ready_rows(queryset, *, limit, queues, use_skip_locked):
+def _select_ready_rows(queryset, *, limit, queues, use_skip_locked, alias, backend_alias):
   if selectors_match_all(queues):
     ordered = queryset.order_by("-priority", "id")
     return list(locked_queryset(ordered, use_skip_locked=use_skip_locked)[:limit])
@@ -1501,6 +1503,8 @@ def _select_ready_rows(queryset, *, limit, queues, use_skip_locked):
         limit=limit,
         use_skip_locked=use_skip_locked,
         selected_ids=selected_ids,
+        alias=alias,
+        backend_alias=backend_alias,
       )
     else:
       ordered = _ordered_selector_rows_queryset(
@@ -1525,7 +1529,27 @@ def _selectors_are_exact_queues(selectors):
   return all(not selector.endswith("*") for selector in selectors)
 
 
-def _select_exact_queue_rows(queryset, selectors, *, limit, use_skip_locked, selected_ids):
+def _select_exact_queue_rows(
+  queryset,
+  selectors,
+  *,
+  limit,
+  use_skip_locked,
+  selected_ids,
+  alias,
+  backend_alias,
+):
+  if not selected_ids:
+    select_ready_rows = getattr(backend_sql(alias), "select_ready_rows_by_exact_queues", None)
+    if select_ready_rows is not None:
+      return select_ready_rows(
+        alias,
+        backend_alias=backend_alias,
+        selectors=selectors,
+        limit=limit,
+        use_skip_locked=use_skip_locked,
+      )
+
   selected_rows = []
   for selector in selectors:
     remaining = limit - len(selected_rows)
