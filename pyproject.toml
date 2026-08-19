@@ -22,7 +22,7 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-  "django>=6.0.0",
+  "django>=6.0.0,<6.1",
 ]
 
 [project.urls]
@@ -62,3 +62,21 @@ markers = [
 target-version = "py312"
 line-length = 99
 indent-width = 2
+extend-exclude = ["**/migrations/**"]
+
+[tool.ruff.lint.per-file-ignores]
+"bin/admin.py" = ["E402"]
+"dj_queue/contrib/asgi.py" = ["BLE001"]
+"dj_queue/contrib/gunicorn.py" = ["BLE001"]
+"dj_queue/hooks.py" = ["BLE001"]
+"dj_queue/models/*.py" = ["RUF012"]
+"dj_queue/operations/jobs.py" = ["BLE001"]
+"dj_queue/runtime/*.py" = ["BLE001"]
+"examples/_example.py" = ["BLE001"]
+"examples/_server_app.py" = ["E402"]
+"examples/_settings.py" = ["E402"]
+"examples/ex24_advanced_multi_db.py" = ["E402"]
+"examples/ex25_advanced_asgi.py" = ["E402"]
+"examples/ex26_advanced_uvicorn.py" = ["E402"]
+"examples/ex27_advanced_gunicorn.py" = ["E402"]
+"tests/**/*.py" = ["BLE001"]

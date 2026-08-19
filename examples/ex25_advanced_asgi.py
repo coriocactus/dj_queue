@@ -14,7 +14,7 @@ ensure_project_on_path()
 tempdir = tempfile.TemporaryDirectory()
 os.environ["DJ_QUEUE_EXAMPLE_SERVER_DB"] = str(Path(tempdir.name) / "asgi.sqlite3")
 
-from examples import _server_app  # noqa: E402
+from examples import _server_app
 
 _server_app.prepare_database()
 

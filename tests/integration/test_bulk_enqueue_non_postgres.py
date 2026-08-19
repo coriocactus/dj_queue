@@ -8,7 +8,6 @@ from django.tasks import TaskResultStatus
 from dj_queue.models import Job, ReadyExecution
 from tests.tasks import echo
 
-
 logger = logging.getLogger("dj_queue.stress")
 
 

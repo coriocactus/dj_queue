@@ -4,14 +4,13 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from django.conf import settings
-from django.db.utils import DatabaseError
 from django.db.models import (
   Case,
   Count,
   F,
   IntegerField,
-  Min,
   Max,
+  Min,
   OuterRef,
   Q,
   Subquery,
@@ -19,8 +18,9 @@ from django.db.models import (
   When,
 )
 from django.db.models.functions import Coalesce
-from django.utils.dateparse import parse_datetime
+from django.db.utils import DatabaseError
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from dj_queue.config import configured_backend_aliases as configured_dj_queue_backend_aliases
 from dj_queue.config import load_backend_config
@@ -36,8 +36,8 @@ from dj_queue.models import (
   ReadyExecution,
   RecurringExecution,
   RecurringTask,
-  Semaphore,
   ScheduledExecution,
+  Semaphore,
 )
 from dj_queue.queue_selectors import queue_matches_selectors
 from dj_queue.queue_state import (
@@ -45,7 +45,6 @@ from dj_queue.queue_state import (
   queue_state_summaries_by_queue,
   queue_state_summary,
 )
-
 
 _NOT_PROVIDED = object()
 POSTGRES_DEAD_TUPLE_WARNING_COUNT = 10_000
@@ -621,7 +620,7 @@ def postgres_xmin_blocker_rows(diagnostics):
     for row in diagnostics["replication_slots"]
     if row["xmin_age"] is not None or row["catalog_xmin_age"] is not None
   ]
-  return tuple((*activity_rows, *slot_rows, *diagnostics["prepared_transactions"]))
+  return (*activity_rows, *slot_rows, *diagnostics["prepared_transactions"])
 
 
 def postgres_queue_table_rows(*, backend_alias):

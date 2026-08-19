@@ -173,18 +173,16 @@ def test_static_recurring_task_import_tolerates_task_decorators_before_target(
   module_name = "reentrant_recurring_tasks"
   monkeypatch.delitem(sys.modules, module_name, raising=False)
   (tmp_path / f"{module_name}.py").write_text(
-    "\n".join(
-      (
-        "from django.tasks import task",
-        "",
-        "@task",
-        "def earlier_task():",
-        "  return 'earlier'",
-        "",
-        "@task",
-        "def cleanup_unactivated_users():",
-        "  return 'cleanup'",
-      )
+    (
+      "from django.tasks import task\n"
+      "\n"
+      "@task\n"
+      "def earlier_task():\n"
+      "  return 'earlier'\n"
+      "\n"
+      "@task\n"
+      "def cleanup_unactivated_users():\n"
+      "  return 'cleanup'"
     ),
     encoding="utf-8",
   )
@@ -293,15 +291,13 @@ def test_multi_backend_toml_selects_requested_alias(settings, tmp_path):
   }
   config_path = tmp_path / "dj_queue.toml"
   config_path.write_text(
-    "\n".join(
-      (
-        "[backends.default]",
-        'mode = "async"',
-        'database_alias = "queue_default"',
-        "[backends.critical]",
-        'mode = "fork"',
-        'database_alias = "queue_critical"',
-      )
+    (
+      "[backends.default]\n"
+      'mode = "async"\n'
+      'database_alias = "queue_default"\n'
+      "[backends.critical]\n"
+      'mode = "fork"\n'
+      'database_alias = "queue_critical"'
     ),
     encoding="utf-8",
   )
@@ -336,12 +332,7 @@ def test_multi_backend_toml_missing_alias_falls_back_to_tasks(settings, tmp_path
   }
   config_path = tmp_path / "dj_queue.toml"
   config_path.write_text(
-    "\n".join(
-      (
-        "[backends.default]",
-        'mode = "fork"',
-      )
-    ),
+    '[backends.default]\nmode = "fork"',
     encoding="utf-8",
   )
 
@@ -401,13 +392,7 @@ def test_multi_backend_toml_rejects_mixed_shapes(settings, tmp_path):
   }
   config_path = tmp_path / "dj_queue.toml"
   config_path.write_text(
-    "\n".join(
-      (
-        'mode = "async"',
-        "[backends.default]",
-        'database_alias = "queue"',
-      )
-    ),
+    'mode = "async"\n[backends.default]\ndatabase_alias = "queue"',
     encoding="utf-8",
   )
 

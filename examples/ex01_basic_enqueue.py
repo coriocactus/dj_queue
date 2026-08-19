@@ -8,7 +8,6 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _settings
 from _example import result, status_name, step, takeaway, title
-
 from django.tasks import task
 
 from dj_queue.models import Job, ReadyExecution

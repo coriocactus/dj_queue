@@ -103,10 +103,9 @@ def held_xmin_worker_drain(size):
 
 
 def concurrency_contention(size):
-  with _capture_query_count() as captured:
-    with Timer() as enqueue_timer:
-      for index in range(size):
-        limited.enqueue(1, value=f"limited-{index}")
+  with _capture_query_count() as captured, Timer() as enqueue_timer:
+    for index in range(size):
+      limited.enqueue(1, value=f"limited-{index}")
   enqueue_query_count = captured["count"]
 
   blocked_count = BlockedExecution.objects.count()
@@ -243,17 +242,15 @@ def ordered_selector_claim(size):
   completed = 0
   with Timer() as timer:
     while completed < size:
-      with _capture_query_count() as captured:
-        with Timer() as claim_timer:
-          claimed_jobs = claim_ready_jobs(limit=3, queues=selectors)
+      with _capture_query_count() as captured, Timer() as claim_timer:
+        claimed_jobs = claim_ready_jobs(limit=3, queues=selectors)
       claim_query_count += captured["count"]
       claim_duration += claim_timer.duration
       if not claimed_jobs:
         break
-      with _capture_query_count() as captured:
-        with Timer() as execute_timer:
-          for claimed_job in claimed_jobs:
-            execute_claimed_job(claimed_job)
+      with _capture_query_count() as captured, Timer() as execute_timer:
+        for claimed_job in claimed_jobs:
+          execute_claimed_job(claimed_job)
       execute_query_count += captured["count"]
       execute_duration += execute_timer.duration
       completed += len(claimed_jobs)

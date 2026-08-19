@@ -15,7 +15,6 @@ from dj_queue.models import (
 )
 from tests.factories import enqueue_ready_job, make_failed_job
 
-
 pytestmark = pytest.mark.django_db(transaction=True)
 
 

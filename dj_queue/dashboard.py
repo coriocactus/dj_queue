@@ -1,5 +1,4 @@
 import json
-
 from urllib.parse import urlencode
 from uuid import UUID
 
@@ -13,6 +12,7 @@ from dj_queue import observability
 from dj_queue.api import QueueInfo
 from dj_queue.config import load_backend_config
 from dj_queue.db import database_capabilities, get_database_alias
+from dj_queue.models import RecurringExecution, RecurringTask, Semaphore
 from dj_queue.queue_state import (
   QUEUE_STATE_DEFINITIONS,
   QUEUE_STATE_LABELS,
@@ -20,8 +20,6 @@ from dj_queue.queue_state import (
   queue_state_count_key,
   queue_state_queryset,
 )
-from dj_queue.models import RecurringExecution, RecurringTask, Semaphore
-
 
 PAGE_SIZE = 100
 OVERVIEW_PAGE_SIZES = {
@@ -987,8 +985,6 @@ def _sort_process_overview_rows(*, rows, sort):
     reverse = part.startswith("-")
     sort_specs.append((key_name, reverse))
 
-  primary_key, primary_reverse = sort_specs[0]
-
   groups = []
   current_group = None
   for row in rows:
@@ -1101,7 +1097,9 @@ def _queue_sort_specs(*, state, sort):
 
 def _sort_rows_by_keys(*, rows, sort_specs, getter=None):
   if getter is None:
-    getter = lambda row, key: row.get(key)  # noqa: E731
+
+    def getter(row, key):
+      return row.get(key)
 
   def sort_key(row):
     parts = []

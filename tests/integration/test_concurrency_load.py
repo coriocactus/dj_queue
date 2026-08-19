@@ -13,7 +13,6 @@ from dj_queue.runtime.worker import Worker
 from tests.runtime.test_supervisor import wait_until
 from tests.tasks import limited
 
-
 logger = logging.getLogger("dj_queue.stress")
 
 

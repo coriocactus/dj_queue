@@ -10,7 +10,6 @@ import pytest
 
 from tests.sim.config import DEFAULT_SEEDS, DEFAULT_STEPS
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORKLOAD_FILES = {
   "core": "tests/integration/test_seeded_simulation.py",

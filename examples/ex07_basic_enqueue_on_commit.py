@@ -8,7 +8,6 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _settings  # noqa: F401
 from _example import result, step, takeaway, title
-
 from django.db import transaction
 from django.tasks import task
 

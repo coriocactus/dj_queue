@@ -1,6 +1,7 @@
-import pytest
 import sys
 from types import SimpleNamespace
+
+import pytest
 
 from benchmarks.harness import (
   assert_persistent_connection_budget,

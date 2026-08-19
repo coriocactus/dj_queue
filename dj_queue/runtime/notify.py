@@ -46,7 +46,7 @@ class NotifyWakeupBackend:
 
   def start(self):
     if self._watcher is not None:
-      return None
+      return
 
     self._stop_event.clear()
     try:
@@ -62,7 +62,7 @@ class NotifyWakeupBackend:
       self._watcher = None
       self._close_connection()
       handle_thread_error(error, context="worker.notify", backend_alias=self.backend_alias)
-    return None
+    return
 
   def stop(self, *, timeout=1):
     self._stop_event.set()
@@ -71,7 +71,6 @@ class NotifyWakeupBackend:
       self._watcher.join(timeout=timeout)
       if not self._watcher.is_alive():
         self._watcher = None
-    return None
 
   def _start_watcher(self):
     self._watcher = threading.Thread(target=self._watch, daemon=True, name="dj-queue-notify")
@@ -144,15 +143,15 @@ class NotifyWakeupBackend:
 def notify_ready_queues(queue_names, *, backend_alias="default"):
   config = load_backend_config(backend_alias)
   if not queue_names or not config.listen_notify:
-    return None
+    return
 
   alias = get_database_alias(backend_alias)
   if not supports_listen_notify(alias):
-    return None
+    return
 
   payload = json.dumps(list(dict.fromkeys(queue_names)), separators=(",", ":"))
   _notify(READY_CHANNEL, payload, backend_alias=backend_alias)
-  return None
+  return
 
 
 def build_wakeup_backend(*, backend_alias="default", queues=(), wake_up=None):
@@ -169,8 +168,8 @@ def _notify(channel, payload, *, backend_alias):
     postgres_sql.notify_channel(connections[alias], channel, payload)
   except Exception as error:
     handle_thread_error(error, context="producer.notify", backend_alias=backend_alias)
-    return None
-  return None
+    return
+  return
 
 
 def _queue_names_from_payload(payload):

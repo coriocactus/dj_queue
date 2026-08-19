@@ -15,8 +15,8 @@ from benchmarks.harness import (
   ensure_database_exists,
   environment_metadata,
   parse_sizes,
-  prepare_database,
   preflight_persistent_connection_budget,
+  prepare_database,
   reset_database,
 )
 from benchmarks.reports import render_four_horsemen_report, render_markdown_report

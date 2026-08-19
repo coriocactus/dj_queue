@@ -9,7 +9,6 @@ from dj_queue.operations.jobs import (
 )
 from dj_queue.queue_state import queue_state_queryset
 
-
 QUEUE_JOB_ACTIONS = {
   "ready": ({"name": "discard", "label": "discard selected"},),
   "claimed": (),

@@ -4,8 +4,8 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils.module_loading import import_string
 
-from dj_queue.cron import is_valid_cron, latest_cron_run, next_cron_run
 from dj_queue.config import load_backend_config
+from dj_queue.cron import is_valid_cron, latest_cron_run, next_cron_run
 from dj_queue.db import get_database_alias, locked_queryset
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import RecurringExecution, RecurringTask

@@ -97,9 +97,8 @@ def recurring_scale(size):
 
   try:
     scheduler.start()
-    with CaptureQueriesContext(connection) as captured:
-      with Timer() as timer:
-        fired_jobs = scheduler.poll_once(now=now)
+    with CaptureQueriesContext(connection) as captured, Timer() as timer:
+      fired_jobs = scheduler.poll_once(now=now)
   finally:
     scheduler.stop()
 

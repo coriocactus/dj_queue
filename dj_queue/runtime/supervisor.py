@@ -4,10 +4,10 @@ import socket
 import sys
 import threading
 import time
+from datetime import timedelta
 
 from django.db import connections
 from django.utils import timezone
-from datetime import timedelta
 
 from dj_queue.config import load_backend_config
 from dj_queue.exceptions import ProcessExitError, ProcessMissingError, ProcessPrunedError
@@ -591,7 +591,7 @@ class ForkSupervisor(Supervisor):
           self._fail_claimed_jobs_for_child(child_pid, spec)
         self.children.clear()
         self._child_started_at.clear()
-        return None
+        return
 
       if not pid:
         time.sleep(min(0.05, max(deadline - time.monotonic(), 0)))
@@ -601,7 +601,7 @@ class ForkSupervisor(Supervisor):
       self._child_started_at.pop(pid, None)
       if spec is not None:
         self._fail_claimed_jobs_for_child(pid, spec, status=status)
-    return None
+    return
 
   def poll_once(self):
     super().poll_once()

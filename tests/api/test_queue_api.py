@@ -23,7 +23,6 @@ from tests.factories import (
   make_scheduled_job,
 )
 
-
 pytestmark = pytest.mark.django_db(transaction=True)
 
 

@@ -1,5 +1,5 @@
-from concurrent.futures import ThreadPoolExecutor, wait
 import threading
+from concurrent.futures import ThreadPoolExecutor, wait
 
 from django.db import connections
 
@@ -98,7 +98,7 @@ class WorkerPool:
 
   def _close_worker_connections(self, count):
     if count <= 0:
-      return None
+      return
 
     barrier = threading.Barrier(count)
 
@@ -111,7 +111,7 @@ class WorkerPool:
 
     futures = [self._executor.submit(close_connections) for _index in range(count)]
     wait(futures, timeout=2)
-    return None
+    return
 
   def _notify_drained(self):
     with self._lock:

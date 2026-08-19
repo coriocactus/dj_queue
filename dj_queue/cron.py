@@ -5,7 +5,6 @@ from datetime import UTC, date, datetime, timedelta, timezone, tzinfo
 from functools import lru_cache
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-
 _MAX_SEARCH_DAYS = 400 * 366
 _ONE_DAY = timedelta(days=1)
 _INT_RE = re.compile(r"[-+]?\d+\Z")
@@ -222,9 +221,7 @@ class _Schedule:
       return False
     if not self.months.matches(moment.month):
       return False
-    if not self._matches_day(moment):
-      return False
-    return True
+    return self._matches_day(moment)
 
   def _matches_day(self, moment: datetime) -> bool:
     day_of_month_matches = self._matches_day_of_month(moment)

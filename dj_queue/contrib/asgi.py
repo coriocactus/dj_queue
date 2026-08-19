@@ -42,7 +42,7 @@ class DjQueueLifespan:
 
       try:
         await asyncio.wait_for(self._poll_stop.wait(), timeout=self.supervisor.polling_interval)
-      except asyncio.TimeoutError:
+      except TimeoutError:
         continue
 
   async def _start_wrapped_lifespan_app(self, scope, receive, send):

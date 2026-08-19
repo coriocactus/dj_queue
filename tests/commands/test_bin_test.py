@@ -1,6 +1,6 @@
 import importlib.util
-from pathlib import Path
 import sys
+from pathlib import Path
 
 
 def load_test_bin_module():

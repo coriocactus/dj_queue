@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 from django.utils import timezone
 
+import dj_queue.operations._helpers as operation_helpers
 from dj_queue.config import WorkerConfig
 from dj_queue.exceptions import ProcessExitError
 from dj_queue.models import (
@@ -24,7 +25,6 @@ from dj_queue.operations.jobs import (
   complete_claimed_job,
   execute_claimed_job,
 )
-import dj_queue.operations._helpers as operation_helpers
 from dj_queue.runtime.worker import Worker
 from tests.tasks import echo, fail, limited, nan_result, non_json_result, with_context
 

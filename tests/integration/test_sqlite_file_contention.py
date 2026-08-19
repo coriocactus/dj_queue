@@ -1,6 +1,6 @@
-from concurrent.futures import ThreadPoolExecutor
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from django.core.management import call_command
@@ -10,7 +10,6 @@ from django.utils import timezone
 from dj_queue.models import ClaimedExecution, Job, ReadyExecution
 from dj_queue.operations.jobs import claim_ready_jobs
 from tests.tasks import echo
-
 
 pytestmark = [
   pytest.mark.django_db(transaction=True),

@@ -1,4 +1,7 @@
 import asyncio
+import os
+import subprocess
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -10,7 +13,6 @@ from django.tasks import TaskResultStatus
 from dj_queue.models import Job, Process
 from dj_queue.runtime.supervisor import AsyncSupervisor
 from tests.tasks import echo
-
 
 pytestmark = [
   pytest.mark.django_db(transaction=True),
@@ -61,6 +63,21 @@ def wait_until(predicate, timeout=1):
       return
     time.sleep(0.01)
   assert predicate()
+
+
+def test_gunicorn_hooks_import_before_django_setup():
+  environment = {
+    key: value for key, value in os.environ.items() if key != "DJANGO_SETTINGS_MODULE"
+  }
+  result = subprocess.run(
+    [sys.executable, "-c", "from dj_queue.contrib.gunicorn import post_fork, worker_exit"],
+    check=False,
+    env=environment,
+    capture_output=True,
+    text=True,
+  )
+
+  assert result.returncode == 0, result.stderr
 
 
 def test_gunicorn_post_fork_starts_one_embedded_supervisor(monkeypatch):

@@ -1,9 +1,8 @@
-from pathlib import Path
 import multiprocessing
 import time
+from pathlib import Path
 
 import pytest
-
 
 pytestmark = [
   pytest.mark.django_db(transaction=True),

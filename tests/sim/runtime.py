@@ -1,6 +1,6 @@
-from concurrent.futures import Future
 import logging
 import random
+from concurrent.futures import Future
 from datetime import timedelta
 from uuid import uuid4
 
@@ -24,7 +24,6 @@ from dj_queue.operations.jobs import retry_failed_job, schedule_failed_job_retry
 from dj_queue.runtime.supervisor import AsyncSupervisor
 from tests.sim.config import fixed_now, simulation_tasks_settings
 from tests.tasks import echo, limited
-
 
 logger = logging.getLogger("dj_queue.stress")
 

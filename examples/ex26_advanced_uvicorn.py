@@ -51,7 +51,7 @@ environment = {
 
 os.environ["DJ_QUEUE_EXAMPLE_SERVER_DB"] = str(db_path)
 
-from examples import _server_app  # noqa: E402
+from examples import _server_app
 
 _server_app.prepare_database()
 

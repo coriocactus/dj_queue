@@ -38,6 +38,7 @@ def start_services():
   for svc in DB_SERVICES:
     result = subprocess.run(
       ["docker", "compose", "ps", svc, "--format", "{{.Health}}"],
+      check=False,
       capture_output=True,
       text=True,
     )
@@ -61,6 +62,7 @@ def wait_for_healthy(timeout=60):
     for svc in list(pending):
       result = subprocess.run(
         ["docker", "compose", "ps", svc, "--format", "{{.Health}}"],
+        check=False,
         capture_output=True,
         text=True,
       )
@@ -168,6 +170,7 @@ def draw_backend_line(progress, idx, backends_count, lock):
 def collect_total(backend):
   result = subprocess.run(
     ["pytest", "--collect-only", "-q"],
+    check=False,
     capture_output=True,
     text=True,
     env={**os.environ, "DB_BACKEND": backend},

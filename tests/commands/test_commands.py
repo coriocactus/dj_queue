@@ -19,7 +19,6 @@ from dj_queue.models import (
   Semaphore,
 )
 
-
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
@@ -284,14 +283,12 @@ def test_dj_queue_command_uses_selected_backend_toml_overlay(monkeypatch, settin
   }
   config_path = tmp_path / "dj_queue.toml"
   config_path.write_text(
-    "\n".join(
-      (
-        "[backends.default]",
-        'mode = "async"',
-        "[backends.secondary]",
-        'mode = "fork"',
-        'database_alias = "queue_secondary"',
-      )
+    (
+      "[backends.default]\n"
+      'mode = "async"\n'
+      "[backends.secondary]\n"
+      'mode = "fork"\n'
+      'database_alias = "queue_secondary"'
     ),
     encoding="utf-8",
   )
@@ -641,7 +638,7 @@ def test_procline_is_best_effort_when_dependency_missing(monkeypatch):
       imported.append(name)
       raise ModuleNotFoundError(name)
 
-  import dj_queue.runtime.procline as procline
+  from dj_queue.runtime import procline
 
   monkeypatch.setattr(procline, "importlib", FakeImportlib)
 

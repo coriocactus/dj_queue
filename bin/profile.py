@@ -433,9 +433,8 @@ def run_scenario(name, *, explain):
   from django.test.utils import CaptureQueriesContext
 
   scenario = SCENARIOS[name]
-  with CaptureQueriesContext(connection) as captured:
-    with Timer() as timer:
-      metrics = scenario()
+  with CaptureQueriesContext(connection) as captured, Timer() as timer:
+    metrics = scenario()
 
   captured_queries = list(captured.captured_queries)
   metrics.update(
@@ -660,36 +659,35 @@ def scenario_ordered_selector_claim():
   size = min(active_shape.jobs, 10_000)
   now = timezone.now()
 
-  with _query_counter() as setup_queries:
-    with Timer() as setup_timer:
-      jobs = [
-        Job(
-          id=uuid.uuid4(),
-          task_path=noop.module_path,
-          queue_name=selectors[index % len(selectors)],
-          priority=noop.priority,
-          payload={"args": [f"selector-profile-{index}"], "kwargs": {}},
-          backend_alias="default",
-          created_at=now,
-          updated_at=now,
-        )
-        for index in range(size)
-      ]
-      Job.objects.bulk_create(jobs, batch_size=5_000)
-      ReadyExecution.objects.bulk_create(
-        [
-          ReadyExecution(
-            job_id=job.id,
-            backend_alias=job.backend_alias,
-            queue_name=job.queue_name,
-            priority=job.priority,
-            created_at=now,
-            latency_started_at=now,
-          )
-          for job in jobs
-        ],
-        batch_size=5_000,
+  with _query_counter() as setup_queries, Timer() as setup_timer:
+    jobs = [
+      Job(
+        id=uuid.uuid4(),
+        task_path=noop.module_path,
+        queue_name=selectors[index % len(selectors)],
+        priority=noop.priority,
+        payload={"args": [f"selector-profile-{index}"], "kwargs": {}},
+        backend_alias="default",
+        created_at=now,
+        updated_at=now,
       )
+      for index in range(size)
+    ]
+    Job.objects.bulk_create(jobs, batch_size=5_000)
+    ReadyExecution.objects.bulk_create(
+      [
+        ReadyExecution(
+          job_id=job.id,
+          backend_alias=job.backend_alias,
+          queue_name=job.queue_name,
+          priority=job.priority,
+          created_at=now,
+          latency_started_at=now,
+        )
+        for job in jobs
+      ],
+      batch_size=5_000,
+    )
 
   phase_metrics = {selector: {"claims": 0, "duration": 0, "queries": 0} for selector in selectors}
   claim_duration = 0
@@ -700,9 +698,8 @@ def scenario_ordered_selector_claim():
 
   with Timer() as drain_timer:
     while completed < size:
-      with _query_counter() as claim_queries:
-        with Timer() as claim_timer:
-          claimed_jobs = claim_ready_jobs(limit=3, queues=selectors, backend_alias="default")
+      with _query_counter() as claim_queries, Timer() as claim_timer:
+        claimed_jobs = claim_ready_jobs(limit=3, queues=selectors, backend_alias="default")
       claim_duration += claim_timer.duration
       claim_query_count += claim_queries["count"]
       if not claimed_jobs:
@@ -713,10 +710,9 @@ def scenario_ordered_selector_claim():
       phase["duration"] += claim_timer.duration
       phase["queries"] += claim_queries["count"]
 
-      with _query_counter() as execute_queries:
-        with Timer() as execute_timer:
-          for claimed_job in claimed_jobs:
-            execute_claimed_job(claimed_job, backend_alias="default")
+      with _query_counter() as execute_queries, Timer() as execute_timer:
+        for claimed_job in claimed_jobs:
+          execute_claimed_job(claimed_job, backend_alias="default")
       execute_duration += execute_timer.duration
       execute_query_count += execute_queries["count"]
       completed += len(claimed_jobs)

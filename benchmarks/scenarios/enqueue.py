@@ -13,9 +13,8 @@ def single_enqueue(size):
   with Timer() as timer:
     for index in range(size):
       if query_count_sample is None:
-        with CaptureQueriesContext(connection) as captured:
-          with Timer() as enqueue_timer:
-            result = noop.enqueue(f"single-{index}")
+        with CaptureQueriesContext(connection) as captured, Timer() as enqueue_timer:
+          result = noop.enqueue(f"single-{index}")
         query_count_sample = len(captured)
       else:
         with Timer() as enqueue_timer:
@@ -43,9 +42,8 @@ def bulk_enqueue(size):
   backend = noop.get_backend()
   task_calls = [(noop, (f"bulk-{index}",), {}) for index in range(size)]
 
-  with CaptureQueriesContext(connection) as captured:
-    with Timer() as timer:
-      results = backend.enqueue_all(task_calls)
+  with CaptureQueriesContext(connection) as captured, Timer() as timer:
+    results = backend.enqueue_all(task_calls)
 
   ready_count = ReadyExecution.objects.count()
   job_count = Job.objects.count()

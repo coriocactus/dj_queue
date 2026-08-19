@@ -111,13 +111,10 @@ def ensure_postgres_database_exists():
     "port": os.environ.get("BENCHMARK_DB_PORT", "17432"),
     "autocommit": True,
   }
-  with psycopg.connect(**conninfo) as conn:
-    with conn.cursor() as cursor:
-      cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s", [db_name])
-      if cursor.fetchone() is None:
-        cursor.execute(
-          psycopg.sql.SQL("CREATE DATABASE {}").format(psycopg.sql.Identifier(db_name))
-        )
+  with psycopg.connect(**conninfo) as conn, conn.cursor() as cursor:
+    cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s", [db_name])
+    if cursor.fetchone() is None:
+      cursor.execute(psycopg.sql.SQL("CREATE DATABASE {}").format(psycopg.sql.Identifier(db_name)))
 
 
 def ensure_mysql_family_database_exists(backend):
@@ -139,12 +136,11 @@ def ensure_mysql_family_database_exists(backend):
     "database": os.environ.get("BENCHMARK_MAINTENANCE_DB", "mysql"),
     "autocommit": True,
   }
-  with pymysql.connect(**conninfo) as conn:
-    with conn.cursor() as cursor:
-      cursor.execute(
-        f"CREATE DATABASE IF NOT EXISTS `{mysql_identifier(db_name)}` "
-        "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-      )
+  with pymysql.connect(**conninfo) as conn, conn.cursor() as cursor:
+    cursor.execute(
+      f"CREATE DATABASE IF NOT EXISTS `{mysql_identifier(db_name)}` "
+      "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+    )
 
 
 def mysql_identifier(value):
@@ -188,7 +184,7 @@ def preflight_persistent_connection_budget(*, backend):
 
 def assert_persistent_connection_budget(*, estimated_connections, available_connections):
   if estimated_connections < available_connections:
-    return None
+    return
   raise RuntimeError(
     "benchmark persistent connection preflight failed: "
     f"estimated {estimated_connections} worker connections but only "

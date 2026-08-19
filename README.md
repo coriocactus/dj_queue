@@ -105,6 +105,7 @@ Define a task with Django's `@task` decorator:
 # myapp/tasks.py
 from django.tasks import task
 
+
 @task
 def add(a, b):
   return a + b
@@ -425,9 +426,11 @@ Tasks can opt into database-backed concurrency limits.
 ```python
 from django.tasks import task
 
+
 @task
 def sync_account(account_id, action):
   return f"{account_id}:{action}"
+
 
 sync_account.func.concurrency_key = "account:{account_id}"
 sync_account.func.concurrency_limit = 1
@@ -570,13 +573,16 @@ Each callback receives the live supervisor or runner instance.
 ```python
 from dj_queue.hooks import on_start, on_worker_start, register_hook
 
+
 @on_start
 def supervisor_started(process):
   print(process.name)
 
+
 @on_worker_start
 def worker_started(process):
   print(process.metadata)
+
 
 @register_hook("scheduler.exit")
 def scheduler_exited(process):

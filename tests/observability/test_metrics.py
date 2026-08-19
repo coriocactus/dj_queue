@@ -1,5 +1,5 @@
-from dj_queue.observability import BackendSnapshot
 from dj_queue.metrics import MetricSample, metric_families
+from dj_queue.observability import BackendSnapshot
 
 
 def test_metric_families_project_snapshot_without_prometheus_dependency():

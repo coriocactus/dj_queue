@@ -10,7 +10,6 @@ from dj_queue.models import ClaimedExecution, Job, ReadyExecution
 from dj_queue.operations.jobs import claim_ready_jobs
 from tests.tasks import echo
 
-
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
@@ -71,9 +70,12 @@ def test_concurrent_enqueue_and_claim_no_lost_jobs():
             claimed_ids.extend(str(claimed_job.job.id) for claimed_job in claimed_jobs)
           continue
 
-        if producers_done.is_set() and Job.objects.count() == total_jobs:
-          if ReadyExecution.objects.exists() is False:
-            return
+        if (
+          producers_done.is_set()
+          and Job.objects.count() == total_jobs
+          and ReadyExecution.objects.exists() is False
+        ):
+          return
         time.sleep(0.005)
     finally:
       connections.close_all()

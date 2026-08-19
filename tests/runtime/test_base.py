@@ -25,9 +25,8 @@ def test_app_executor_closes_old_connections_on_exit_when_body_raises(monkeypatc
 
   monkeypatch.setattr("dj_queue.runtime.base.close_old_connections", record_close)
 
-  with pytest.raises(RuntimeError, match="boom"):
-    with app_executor():
-      events.append("body")
-      raise RuntimeError("boom")
+  with pytest.raises(RuntimeError, match="boom"), app_executor():
+    events.append("body")
+    raise RuntimeError("boom")
 
   assert events == ["old", "body", "old"]

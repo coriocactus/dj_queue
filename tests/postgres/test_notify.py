@@ -16,7 +16,6 @@ from dj_queue.runtime.notify import (
 from dj_queue.runtime.worker import Worker
 from tests.tasks import echo
 
-
 pytestmark = pytest.mark.postgres
 
 

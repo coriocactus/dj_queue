@@ -24,7 +24,6 @@ from dj_queue.operations.jobs import (
 )
 from tests.tasks import limited_discard
 
-
 pytestmark = pytest.mark.django_db(transaction=True)
 
 

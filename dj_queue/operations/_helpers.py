@@ -358,11 +358,11 @@ def _consume_selected_rows(alias, model, rows):
 def _bulk_create(alias, model, objects):
   objects = tuple(objects)
   if not objects:
-    return None
+    return
 
   fields = [field for field in model._meta.concrete_fields if not field.generated]
   batch_size = connections[alias].ops.bulk_batch_size(fields, objects)
   if batch_size is None or batch_size <= 0:
     batch_size = len(objects)
   model.objects.using(alias).bulk_create(objects, batch_size=batch_size)
-  return None
+  return

@@ -1,7 +1,7 @@
 import pytest
 
-from dj_queue.models import ClaimedExecution, FailedExecution, Job, Pause, ReadyExecution
 from dj_queue.exceptions import ProcessExitError, ProcessMissingError, ProcessPrunedError
+from dj_queue.models import ClaimedExecution, FailedExecution, Job, Pause, ReadyExecution
 from tests.sim.config import simulation_seeds, simulation_steps
 from tests.sim.runtime import RuntimeSimulation
 

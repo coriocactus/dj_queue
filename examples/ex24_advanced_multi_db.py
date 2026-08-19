@@ -6,9 +6,8 @@ import tempfile
 from pathlib import Path
 
 import django
-from django.conf import settings
-
 from _example import ensure_project_on_path, result, step, takeaway, title
+from django.conf import settings
 
 ensure_project_on_path()
 
@@ -37,12 +36,12 @@ settings.configure(
 
 django.setup()
 
-from django.core.management import call_command  # noqa: E402
-from django.db import connections  # noqa: E402
-from django.tasks import task  # noqa: E402
+from django.core.management import call_command
+from django.db import connections
+from django.tasks import task
 
-from dj_queue.api import claim_ready_jobs  # noqa: E402
-from dj_queue.models import Job, ReadyExecution  # noqa: E402
+from dj_queue.api import claim_ready_jobs
+from dj_queue.models import Job, ReadyExecution
 
 
 @task

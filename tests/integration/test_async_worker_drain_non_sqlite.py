@@ -1,7 +1,7 @@
-from collections import Counter
 import logging
 import os
 import time
+from collections import Counter
 
 import pytest
 from django.utils import timezone
@@ -9,7 +9,6 @@ from django.utils import timezone
 from dj_queue.models import ClaimedExecution, Job, Process, ReadyExecution
 from dj_queue.runtime.supervisor import AsyncSupervisor
 from tests.tasks import echo
-
 
 logger = logging.getLogger("dj_queue.stress")
 

@@ -2,11 +2,11 @@ import importlib
 import pkgutil
 
 import django
-import dj_queue
 from django.apps import apps
 from django.conf import settings
 from django.core.management import get_commands
 
+import dj_queue
 
 if not settings.configured:
   settings.configure(

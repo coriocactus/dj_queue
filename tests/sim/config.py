@@ -1,8 +1,7 @@
-from datetime import datetime
 import os
+from datetime import datetime
 
 from django.utils import timezone
-
 
 DEFAULT_SEEDS = [1, 7, 19]
 DEFAULT_STEPS = 90

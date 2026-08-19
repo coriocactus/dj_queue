@@ -2,7 +2,6 @@ from django.urls import path
 
 from dj_queue.views import observability_metrics_view, observability_stats_view
 
-
 app_name = "dj_queue"
 
 urlpatterns = [

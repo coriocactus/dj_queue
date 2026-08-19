@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
   "benchmark_cli", PROJECT_ROOT / "bin" / "benchmark.py"

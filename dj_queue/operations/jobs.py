@@ -24,8 +24,8 @@ from dj_queue.models import (
   Job,
   Process,
   ReadyExecution,
-  Semaphore,
   ScheduledExecution,
+  Semaphore,
 )
 from dj_queue.operations._helpers import (
   _bulk_create,
@@ -42,8 +42,8 @@ from dj_queue.operations._helpers import (
   _lock_active_pauses,
   _normalize_json_round_trip,
   _normalize_payload,
-  _ready_execution_rows,
   _ready_execution_row,
+  _ready_execution_rows,
   _scheduled_execution_row,
   _task_option,
 )
@@ -67,7 +67,6 @@ from dj_queue.sql import backend_sql
 from dj_queue.sql import common as sql_common
 from dj_queue.task_results import task_result_for_claimed_job
 from dj_queue.wakeup import notify_ready_queues_on_commit
-
 
 CLAIM_READY_JOBS_RETRY_ATTEMPTS = 3
 CLAIM_READY_JOBS_RETRY_SLEEP_BASE = 0.01
@@ -1625,9 +1624,7 @@ def _transient_errno(error):
   errno = getattr(error, "errno", None)
   if errno in TRANSIENT_CLAIM_ERROR_ERRNOS:
     return True
-  if error.args and error.args[0] in TRANSIENT_CLAIM_ERROR_ERRNOS:
-    return True
-  return False
+  return bool(error.args and error.args[0] in TRANSIENT_CLAIM_ERROR_ERRNOS)
 
 
 def _normalize_return_value(return_value):

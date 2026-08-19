@@ -7,7 +7,6 @@ from django.utils import timezone
 
 from dj_queue.models import Job, Pause, Process, ReadyExecution, RecurringTask, Semaphore
 
-
 pytestmark = pytest.mark.django_db(transaction=True)
 
 

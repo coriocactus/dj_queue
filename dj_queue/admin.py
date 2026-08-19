@@ -6,13 +6,11 @@ from django.contrib import admin, messages
 from django.http import HttpResponseNotAllowed, HttpResponseRedirect
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
+from django.utils import timezone
 from django.utils.html import format_html
 from django.utils.http import url_has_allowed_host_and_scheme
-from django.utils import timezone
 
-from dj_queue import dashboard
-from dj_queue import dashboard_actions
-from dj_queue import observability
+from dj_queue import dashboard, dashboard_actions, observability
 from dj_queue.api import QueueInfo, unschedule_recurring_task
 from dj_queue.db import get_database_alias
 from dj_queue.exceptions import EnqueueError

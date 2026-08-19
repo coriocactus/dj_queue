@@ -1,8 +1,8 @@
-from datetime import timedelta
-from contextlib import contextmanager
-import time
-import threading
 import signal
+import threading
+import time
+from contextlib import contextmanager
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
@@ -11,6 +11,7 @@ from django.db.utils import OperationalError
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
+import dj_queue.operations.jobs as job_operations
 from dj_queue.config import load_backend_config
 from dj_queue.exceptions import ProcessExitError, ProcessMissingError, ProcessPrunedError
 from dj_queue.models import (
@@ -22,7 +23,6 @@ from dj_queue.models import (
   ReadyExecution,
   Semaphore,
 )
-import dj_queue.operations.jobs as job_operations
 from dj_queue.runtime.supervisor import AsyncSupervisor, ForkSupervisor, Supervisor
 from tests.tasks import limited
 

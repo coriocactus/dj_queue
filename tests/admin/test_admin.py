@@ -4,8 +4,8 @@ import pytest
 from django.contrib import admin as django_admin
 from django.contrib.auth import get_user_model
 from django.urls import reverse
-from django.utils.html import format_html
 from django.utils import timezone
+from django.utils.html import format_html
 
 from dj_queue.admin import _install_dj_queue_admin_site
 from dj_queue.models import (
@@ -20,7 +20,6 @@ from dj_queue.models import (
   ScheduledExecution,
   Semaphore,
 )
-
 
 pytestmark = pytest.mark.django_db(transaction=True)
 

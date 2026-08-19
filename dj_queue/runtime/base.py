@@ -1,8 +1,8 @@
-from contextlib import contextmanager, nullcontext
 import math
 import threading
 import time
 import weakref
+from contextlib import contextmanager, nullcontext
 
 from django.db import close_old_connections
 from django.db.utils import OperationalError
@@ -157,9 +157,9 @@ class BaseRunner:
   def stop(self):
     process = self._begin_stop()
     if process is None:
-      return None
+      return
     self._finish_stop(process)
-    return None
+    return
 
   def request_stop(self):
     self._stop_event.set()
@@ -331,16 +331,15 @@ class BaseRunner:
 
   def _touch_process_row(self):
     alias = get_database_alias(self.backend_alias)
-    with app_executor():
-      with _process_write_context(alias):
-        return sqlite_retry(
-          lambda: (
-            Process.objects.using(alias)
-            .filter(pk=self.process.pk)
-            .update(last_heartbeat_at=timezone.now())
-          ),
-          alias=alias,
-        )
+    with app_executor(), _process_write_context(alias):
+      return sqlite_retry(
+        lambda: (
+          Process.objects.using(alias)
+          .filter(pk=self.process.pk)
+          .update(last_heartbeat_at=timezone.now())
+        ),
+        alias=alias,
+      )
 
   def _effective_heartbeat_interval(self):
     try:

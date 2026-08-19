@@ -12,8 +12,8 @@ from dj_queue.queue_state import (
   queue_state_count_fields,
   queue_state_count_key,
   queue_state_counts,
-  queue_state_summaries_by_queue,
   queue_state_queryset,
+  queue_state_summaries_by_queue,
   status_rank_expression,
 )
 from tests.factories import (
@@ -24,7 +24,6 @@ from tests.factories import (
   make_raw_ready_job,
   make_scheduled_job,
 )
-
 
 pytestmark = pytest.mark.django_db
 

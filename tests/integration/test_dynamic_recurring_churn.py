@@ -8,7 +8,6 @@ from dj_queue.api import schedule_recurring_task, unschedule_recurring_task
 from dj_queue.models import Job, RecurringExecution, RecurringTask
 from dj_queue.runtime.scheduler import Scheduler
 
-
 pytestmark = pytest.mark.django_db(transaction=True)
 
 

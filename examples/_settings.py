@@ -11,9 +11,9 @@ from _example import ensure_project_on_path
 
 ensure_project_on_path()
 
-import django  # noqa: E402
-from django.conf import settings  # noqa: E402
-from django.db import connections  # noqa: E402
+import django
+from django.conf import settings
+from django.db import connections
 
 DB_BACKEND = os.environ.get("DB_BACKEND", "sqlite")
 MYSQL_FAMILY = {"mysql", "mariadb"}
@@ -83,7 +83,7 @@ settings.configure(
 
 django.setup()
 
-from django.core.management import call_command  # noqa: E402
+from django.core.management import call_command
 
 
 def _reset_example_database():
@@ -113,7 +113,7 @@ _reset_example_database()
 call_command("migrate", "--run-syncdb", verbosity=0)
 
 # clear any leftover state so each example starts clean
-from dj_queue.models import Job, Pause, RecurringTask, Semaphore  # noqa: E402
+from dj_queue.models import Job, Pause, RecurringTask, Semaphore
 
 for model in (Job, Pause, RecurringTask, Semaphore):
   model.objects.all().delete()

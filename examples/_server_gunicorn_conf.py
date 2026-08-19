@@ -1,5 +1,5 @@
-from examples import _server_app  # noqa: F401
 from dj_queue.contrib import gunicorn
+from examples import _server_app  # noqa: F401
 
 post_fork = gunicorn.post_fork
 worker_exit = gunicorn.worker_exit

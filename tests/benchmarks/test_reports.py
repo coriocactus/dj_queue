@@ -3,7 +3,6 @@ from pathlib import Path
 from benchmarks.catalog import SCENARIO_CONTEXT, SCENARIO_DESCRIPTIONS
 from benchmarks.reports import render_four_horsemen_markdown, render_markdown
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 

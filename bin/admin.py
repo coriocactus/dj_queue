@@ -110,7 +110,7 @@ DEMO_STATIC_RECURRING = {
   for key, queue_name, schedule, priority, description, _minutes_ago in DEMO_STATIC_RECURRING_SPECS
 }
 
-from django.conf import settings  # noqa: E402
+from django.conf import settings
 
 if not settings.configured:
   settings.configure(
@@ -227,11 +227,11 @@ if not settings.configured:
 # ---------------------------------------------------------------------------
 
 
-import django  # noqa: E402
+import django
 
 django.setup()
 
-from django.db.backends.signals import connection_created  # noqa: E402
+from django.db.backends.signals import connection_created
 
 
 def _enable_wal(sender, connection, **kwargs):
@@ -246,18 +246,18 @@ def _enable_wal(sender, connection, **kwargs):
 
 connection_created.connect(_enable_wal)
 
-from django.contrib import admin  # noqa: E402
-from django.contrib.auth import get_user_model, login  # noqa: E402
-from django.contrib.staticfiles.handlers import ASGIStaticFilesHandler  # noqa: E402
-from django.core.asgi import get_asgi_application  # noqa: E402
-from django.core.management import call_command  # noqa: E402
-from django.http import HttpResponse, JsonResponse  # noqa: E402
-from django.tasks import task  # noqa: E402
-from django.urls import include, path  # noqa: E402
-from django.utils import timezone  # noqa: E402
+from django.contrib import admin
+from django.contrib.auth import get_user_model, login
+from django.contrib.staticfiles.handlers import ASGIStaticFilesHandler
+from django.core.asgi import get_asgi_application
+from django.core.management import call_command
+from django.http import HttpResponse, JsonResponse
+from django.tasks import task
+from django.urls import include, path
+from django.utils import timezone
 
-from dj_queue.contrib.asgi import DjQueueLifespan  # noqa: E402
-from dj_queue.models import (  # noqa: E402
+from dj_queue.contrib.asgi import DjQueueLifespan
+from dj_queue.models import (
   BlockedExecution,
   FailedExecution,
   Job,
@@ -269,8 +269,7 @@ from dj_queue.models import (  # noqa: E402
   ScheduledExecution,
   Semaphore,
 )
-from tests.tasks import add, echo, fail, sleep_for  # noqa: E402
-
+from tests.tasks import add, echo, fail, sleep_for
 
 SEEDED_PROCESS_NAMES = (
   "dashboard-supervisor",

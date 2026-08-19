@@ -21,7 +21,6 @@ from dj_queue.runtime.scheduler import Scheduler
 from dj_queue.wakeup import notify_ready_queues_on_commit
 from tests.tasks import echo
 
-
 pytestmark = pytest.mark.django_db(transaction=True)
 
 

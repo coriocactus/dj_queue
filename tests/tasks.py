@@ -1,6 +1,6 @@
 import os
-from pathlib import Path
 import time
+from pathlib import Path
 
 from django.tasks import task
 

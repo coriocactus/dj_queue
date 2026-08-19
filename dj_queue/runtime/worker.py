@@ -109,11 +109,11 @@ class Worker(BaseRunner):
     def finish():
       with finish_lock:
         if self.process is None:
-          return None
+          return
         self._stop_heartbeat_thread()
         with app_executor():
           self._finish_stop(process)
-      return None
+      return
 
     self.wakeup_backend.stop(timeout=timeout)
     drained = self.pool.shutdown(timeout, on_drained=finish)

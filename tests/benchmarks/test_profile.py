@@ -1,7 +1,6 @@
 import importlib.util
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("profile_cli", PROJECT_ROOT / "bin" / "profile.py")
 profile_cli = importlib.util.module_from_spec(SPEC)

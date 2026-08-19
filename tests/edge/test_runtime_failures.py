@@ -10,7 +10,6 @@ from dj_queue.models import ClaimedExecution, FailedExecution, Job, Process, Rea
 from dj_queue.runtime.supervisor import ForkSupervisor, Supervisor
 from dj_queue.runtime.worker import Worker
 
-
 pytestmark = pytest.mark.django_db(transaction=True)
 
 

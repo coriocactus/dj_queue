@@ -1,44 +1,45 @@
 import asyncio
 import copy
-from datetime import timedelta
 import math
-from types import SimpleNamespace
 import uuid
+from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from django.db import connection, transaction
-from django.test.utils import CaptureQueriesContext
 from django.tasks import TaskResultStatus
 from django.tasks.exceptions import TaskResultDoesNotExist
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
+import dj_queue.operations._helpers as operation_helpers
 from dj_queue.api import enqueue_on_commit
 from dj_queue.backend import DjQueueBackend, _async_backend_call
 from dj_queue.exceptions import DjQueueError, EnqueueError
 from dj_queue.models import (
-  ClaimedExecution,
   BlockedExecution,
+  ClaimedExecution,
   FailedExecution,
   Job,
   Process,
   ReadyExecution,
   RecurringExecution,
-  Semaphore,
   ScheduledExecution,
+  Semaphore,
 )
-from dj_queue.operations.concurrency import promote_expired_blocked_jobs
 from dj_queue.operations.cleanup import (
   clear_failed_jobs,
   clear_finished_jobs,
   clear_recurring_executions,
 )
+from dj_queue.operations.concurrency import promote_expired_blocked_jobs
 from dj_queue.operations.jobs import (
-  claim_ready_jobs,
   DispatchOutcome,
-  dispatch_scheduled_job_now,
+  claim_ready_jobs,
   discard_failed_job,
   discard_ready_jobs,
   discard_scheduled_jobs,
+  dispatch_scheduled_job_now,
   enqueue_job_with_dispatch,
   promote_failed_job_retries,
   promote_scheduled_jobs,
@@ -46,7 +47,6 @@ from dj_queue.operations.jobs import (
   retry_failed_jobs,
   schedule_failed_job_retry,
 )
-import dj_queue.operations._helpers as operation_helpers
 from tests.tasks import add, async_echo, echo, limited, limited_discard
 
 
@@ -1245,10 +1245,9 @@ def test_enqueue_on_commit_helper_defers_insert_until_commit():
 def test_enqueue_on_commit_helper_rollback_drops_work():
   job_count = Job.objects.count()
 
-  with pytest.raises(RuntimeError):
-    with transaction.atomic():
-      enqueue_on_commit(echo, "never")
-      raise RuntimeError("rollback")
+  with pytest.raises(RuntimeError), transaction.atomic():
+    enqueue_on_commit(echo, "never")
+    raise RuntimeError("rollback")
 
   assert Job.objects.count() == job_count
 

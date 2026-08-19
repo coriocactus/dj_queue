@@ -4,8 +4,8 @@ from examples._example import ensure_project_on_path
 
 ensure_project_on_path()
 
-import django  # noqa: E402
-from django.conf import settings  # noqa: E402
+import django
+from django.conf import settings
 
 DB_PATH = os.environ.get("DJ_QUEUE_EXAMPLE_SERVER_DB")
 if not DB_PATH:
@@ -47,16 +47,16 @@ if not settings.configured:
 
 django.setup()
 
-from django.core.asgi import get_asgi_application  # noqa: E402
-from django.core.management import call_command  # noqa: E402
-from django.core.wsgi import get_wsgi_application  # noqa: E402
-from django.db import connections  # noqa: E402
-from django.http import JsonResponse  # noqa: E402
-from django.tasks import task  # noqa: E402
-from django.urls import path  # noqa: E402
+from django.core.asgi import get_asgi_application
+from django.core.management import call_command
+from django.core.wsgi import get_wsgi_application
+from django.db import connections
+from django.http import JsonResponse
+from django.tasks import task
+from django.urls import path
 
-from dj_queue.contrib.asgi import DjQueueLifespan  # noqa: E402
-from dj_queue.models import Job, Pause, Process, RecurringTask, Semaphore  # noqa: E402
+from dj_queue.contrib.asgi import DjQueueLifespan
+from dj_queue.models import Job, Pause, Process, RecurringTask, Semaphore
 
 
 def prepare_database():

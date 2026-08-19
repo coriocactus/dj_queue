@@ -1,13 +1,12 @@
-from collections import Counter
 import logging
 import multiprocessing
 import os
 import time
+from collections import Counter
 
 import pytest
 
 from dj_queue.models import ClaimedExecution, ReadyExecution
-
 
 logger = logging.getLogger("dj_queue.stress")
 

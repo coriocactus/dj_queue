@@ -19,6 +19,7 @@ def test_example_runs_successfully(name):
   script = str(EXAMPLES_DIR / f"{name}.py")
   result = subprocess.run(
     [script],
+    check=False,
     cwd=EXAMPLES_DIR.parent,
     env={**os.environ, "DB_BACKEND": os.environ.get("DB_BACKEND", "sqlite")},
     capture_output=True,

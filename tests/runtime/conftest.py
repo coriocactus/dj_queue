@@ -3,7 +3,6 @@ import time
 
 import pytest
 
-
 _heartbeat_thread_prefix = "dj_queue-heartbeat-"
 
 

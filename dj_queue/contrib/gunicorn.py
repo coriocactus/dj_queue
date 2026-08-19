@@ -5,13 +5,14 @@ import threading
 from pathlib import Path
 
 from dj_queue.runtime.errors import handle_thread_error
-from dj_queue.runtime.supervisor import AsyncSupervisor
 
 LOCK_PATH_PREFIX = "dj_queue_gunicorn_supervisor"
 LOCK_RETRY_INTERVAL = 1.0
 
 
 def build_supervisor(backend_alias="default"):
+  from dj_queue.runtime.supervisor import AsyncSupervisor
+
   return AsyncSupervisor.from_backend_config(backend_alias=backend_alias, standalone=False)
 
 
@@ -156,13 +157,13 @@ def worker_exit(_server, worker):
     if lock_file is not None:
       _release_supervisor_lock(lock_file)
       worker._dj_queue_supervisor_lock = None
-    return None
+    return
 
   supervisor.stop()
   worker._dj_queue_supervisor = None
   _release_supervisor_lock(lock_file)
   worker._dj_queue_supervisor_lock = None
-  return None
+  return
 
 
 def _supervisor_shutdown_timeout(supervisor, default=1.0):
@@ -200,9 +201,9 @@ def _try_acquire_supervisor_lock(*, backend_alias="default"):
 
 def _release_supervisor_lock(lock_file):
   if lock_file is None:
-    return None
+    return
   try:
     fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
   finally:
     lock_file.close()
-  return None
+  return

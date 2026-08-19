@@ -12,7 +12,6 @@ from dj_queue.runtime.scheduler import Scheduler
 from dj_queue.runtime.worker import Worker
 from tests.tasks import echo, limited, other_queue
 
-
 pytestmark = pytest.mark.django_db(transaction=True)
 
 

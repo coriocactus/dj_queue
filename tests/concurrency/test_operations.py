@@ -6,10 +6,13 @@ from datetime import timedelta
 import pytest
 from django.db import connection, connections
 from django.db.utils import OperationalError
-from django.test.utils import CaptureQueriesContext
 from django.tasks import TaskResultStatus
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
+import dj_queue.operations.concurrency as concurrency_operations
+import dj_queue.operations.jobs as job_operations
+from dj_queue.api import QueueInfo
 from dj_queue.models import (
   BlockedExecution,
   ClaimedExecution,
@@ -30,20 +33,17 @@ from dj_queue.operations.concurrency import (
   semaphore_acquire_many,
   semaphore_release,
 )
-import dj_queue.operations.concurrency as concurrency_operations
-from dj_queue.operations.recurring import fire_recurring_task
 from dj_queue.operations.jobs import (
+  EnqueueError,
   claim_ready_jobs,
   complete_claimed_job,
   discard_ready_jobs,
-  EnqueueError,
   execute_claimed_job,
   fail_claimed_job,
   promote_failed_job_retries,
   promote_scheduled_jobs,
 )
-import dj_queue.operations.jobs as job_operations
-from dj_queue.api import QueueInfo
+from dj_queue.operations.recurring import fire_recurring_task
 from dj_queue.sql import mysql as mysql_sql
 from dj_queue.sql import postgres as postgres_sql
 from tests.tasks import echo, limited, limited_discard, other_queue
@@ -1365,9 +1365,11 @@ def test_claim_ready_jobs_rejects_conflicting_state_with_fixed_query_budget():
     traceback="traceback",
   )
 
-  with CaptureQueriesContext(connection) as ctx:
-    with pytest.raises(EnqueueError, match="already has an execution-state row"):
-      claim_ready_jobs(limit=1)
+  with (
+    CaptureQueriesContext(connection) as ctx,
+    pytest.raises(EnqueueError, match="already has an execution-state row"),
+  ):
+    claim_ready_jobs(limit=1)
 
   expected_queries = 7 if connection.vendor == "postgresql" else 5
   assert len(ctx.captured_queries) == expected_queries

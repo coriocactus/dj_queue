@@ -10,7 +10,6 @@ from dj_queue.operations.jobs import claim_ready_jobs
 from dj_queue.runtime.worker import Worker
 from tests.tasks import echo
 
-
 pytestmark = pytest.mark.filterwarnings(
   r"ignore:Overriding setting DATABASES can lead to unexpected behavior\.:UserWarning"
 )
