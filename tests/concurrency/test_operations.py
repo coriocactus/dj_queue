@@ -10,6 +10,7 @@ from django.test.utils import CaptureQueriesContext
 from django.tasks import TaskResultStatus
 from django.utils import timezone
 
+import dj_queue.db as database
 from dj_queue.models import (
   BlockedExecution,
   ClaimedExecution,
@@ -191,7 +192,7 @@ def test_claim_ready_jobs_retries_transient_database_deadlock(monkeypatch):
   ),
 )
 def test_transient_claim_error_classification_uses_codes_before_message(error):
-  assert job_operations._is_transient_claim_error(error) is True
+  assert database.is_transient_database_error(error) is True
 
 
 def test_transient_claim_error_classification_checks_driver_cause():
@@ -199,11 +200,11 @@ def test_transient_claim_error_classification_checks_driver_cause():
   error = OperationalError("driver wrapped error")
   error.__cause__ = cause
 
-  assert job_operations._is_transient_claim_error(error) is True
+  assert database.is_transient_database_error(error) is True
 
 
 def test_non_transient_claim_error_classification_rejects_unknown_errors():
-  assert job_operations._is_transient_claim_error(OperationalError("table missing")) is False
+  assert database.is_transient_database_error(OperationalError("table missing")) is False
 
 
 @pytest.mark.django_db
@@ -255,6 +256,82 @@ def test_execute_claimed_job_uses_terminal_update_query_budget():
 
   expected_queries = 3 if connection.vendor == "postgresql" else 4
   assert len(ctx.captured_queries) == expected_queries
+
+
+@pytest.mark.django_db
+def test_execute_claimed_job_retries_terminal_deadlock_without_repeating_task(monkeypatch):
+  job = make_job(args=["done"])
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+  claimed_job = claim_ready_jobs(limit=1)[0]
+  task_calls = 0
+  transition_calls = 0
+  original_call_task = job_operations._call_task
+  original_release = job_operations._release_concurrency_slot
+
+  def call_task(*args, **kwargs):
+    nonlocal task_calls
+    task_calls += 1
+    return original_call_task(*args, **kwargs)
+
+  def release_with_deadlock_once(*args, **kwargs):
+    nonlocal transition_calls
+    transition_calls += 1
+    if transition_calls == 1:
+      raise OperationalError("deadlock found when trying to get lock")
+    return original_release(*args, **kwargs)
+
+  monkeypatch.setattr(job_operations, "_call_task", call_task)
+  monkeypatch.setattr(job_operations, "_release_concurrency_slot", release_with_deadlock_once)
+
+  execute_claimed_job(claimed_job)
+
+  assert task_calls == 1
+  assert transition_calls == 2
+  assert ClaimedExecution.objects.filter(job=job).exists() is False
+  assert Job.objects.get(pk=job.id).return_value == "done"
+
+
+@pytest.mark.django_db
+def test_execute_failed_job_retries_terminal_deadlock_without_repeating_task(monkeypatch):
+  job = make_job(task_path="tests.tasks.fail", args=["expected"])
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+  claimed_job = claim_ready_jobs(limit=1)[0]
+  task_calls = 0
+  transition_calls = 0
+  original_call_task = job_operations._call_task
+  original_release = job_operations._release_concurrency_slot
+
+  def call_task(*args, **kwargs):
+    nonlocal task_calls
+    task_calls += 1
+    return original_call_task(*args, **kwargs)
+
+  def release_with_deadlock_once(*args, **kwargs):
+    nonlocal transition_calls
+    transition_calls += 1
+    if transition_calls == 1:
+      raise OperationalError("deadlock found when trying to get lock")
+    return original_release(*args, **kwargs)
+
+  monkeypatch.setattr(job_operations, "_call_task", call_task)
+  monkeypatch.setattr(job_operations, "_release_concurrency_slot", release_with_deadlock_once)
+
+  execute_claimed_job(claimed_job)
+
+  assert task_calls == 1
+  assert transition_calls == 2
+  assert ClaimedExecution.objects.filter(job=job).exists() is False
+  assert FailedExecution.objects.filter(job=job, message="expected").exists() is True
 
 
 @pytest.mark.django_db
@@ -468,6 +545,37 @@ def test_concurrent_failed_retry_promotion_consumes_each_due_row_once():
   assert set(promoted_ids) == expected_ids
   assert FailedExecution.objects.filter(job__in=jobs).exists() is False
   assert ReadyExecution.objects.filter(job__in=jobs).count() == len(jobs)
+
+
+@pytest.mark.django_db
+def test_retry_failed_jobs_retries_transient_database_deadlock(monkeypatch):
+  job = make_job(args=["retry"])
+  FailedExecution.objects.create(
+    job=job,
+    exception_class="builtins.ValueError",
+    message="boom",
+    traceback="traceback",
+  )
+  calls = 0
+  original_dispatch = job_operations._dispatch_consumed_failed_rows
+
+  def dispatch_with_deadlock_once(*args, **kwargs):
+    nonlocal calls
+    calls += 1
+    if calls == 1:
+      raise OperationalError("deadlock found when trying to get lock")
+    return original_dispatch(*args, **kwargs)
+
+  monkeypatch.setattr(
+    job_operations,
+    "_dispatch_consumed_failed_rows",
+    dispatch_with_deadlock_once,
+  )
+
+  assert job_operations.retry_failed_jobs(job_ids=[job.id]) == 1
+  assert calls == 2
+  assert FailedExecution.objects.filter(job=job).exists() is False
+  assert ReadyExecution.objects.filter(job=job).exists() is True
 
 
 @pytest.mark.django_db

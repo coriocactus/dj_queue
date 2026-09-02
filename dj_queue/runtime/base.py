@@ -1,4 +1,5 @@
 from contextlib import contextmanager, nullcontext
+from importlib.metadata import version
 import math
 import threading
 import time
@@ -28,6 +29,8 @@ def app_executor():
 _sqlite_process_write_lock = threading.Lock()
 _safe_polling_interval = 1.0
 _liveness_check_min_interval = 1.0
+DJ_QUEUE_VERSION = version("dj-queue")
+ROLLOUT_PROTOCOL_VERSION = 1
 
 # runners with a live daemon heartbeat thread, so all heartbeats can be stopped
 # deterministically (graceful shutdown, and test teardown before the database
@@ -224,7 +227,11 @@ class BaseRunner:
     return {}
 
   def runtime_metadata(self):
-    return self.process_metadata()
+    return {
+      **self.process_metadata(),
+      "dj_queue_version": DJ_QUEUE_VERSION,
+      "rollout_protocol": ROLLOUT_PROTOCOL_VERSION,
+    }
 
   def _begin_stop(self, *, stop_heartbeat=True):
     if self._stopped:

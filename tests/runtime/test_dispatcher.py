@@ -14,6 +14,7 @@ from dj_queue.models import (
   ScheduledExecution,
   Semaphore,
 )
+from dj_queue.runtime.base import DJ_QUEUE_VERSION, ROLLOUT_PROTOCOL_VERSION
 from dj_queue.runtime.dispatcher import Dispatcher
 from tests.tasks import echo, limited
 
@@ -85,7 +86,9 @@ def test_dispatcher_registers_process_with_metadata():
   assert process.name == "dispatcher-1"
   assert process.metadata == {
     "batch_size": 25,
+    "dj_queue_version": DJ_QUEUE_VERSION,
     "polling_interval": 0.5,
+    "rollout_protocol": ROLLOUT_PROTOCOL_VERSION,
     "concurrency_maintenance": True,
     "concurrency_maintenance_interval": 30,
   }

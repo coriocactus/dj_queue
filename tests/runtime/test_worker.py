@@ -25,6 +25,7 @@ from dj_queue.operations.jobs import (
   execute_claimed_job,
 )
 import dj_queue.operations._helpers as operation_helpers
+from dj_queue.runtime.base import DJ_QUEUE_VERSION, ROLLOUT_PROTOCOL_VERSION
 from dj_queue.runtime.worker import Worker
 from tests.tasks import echo, fail, limited, nan_result, non_json_result, with_context
 
@@ -197,7 +198,9 @@ def test_worker_registers_process_with_metadata():
   assert process.pid == 101
   assert process.hostname == "host"
   assert process.metadata == {
+    "dj_queue_version": DJ_QUEUE_VERSION,
     "queues": ["alpha", "beta*"],
+    "rollout_protocol": ROLLOUT_PROTOCOL_VERSION,
     "threads": 2,
     "prefetch_multiplier": 2,
     "polling_interval": 0.25,
