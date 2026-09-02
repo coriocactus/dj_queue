@@ -494,6 +494,28 @@ def deep_health_problems(*, backend_alias, max_age=None, now=None):
   if invalid_jobs:
     problems.append(f"{invalid_jobs} jobs have invalid execution state")
 
+  invalid_policies = (
+    Job.objects.using(alias)
+    .filter(backend_alias=backend_alias)
+    .exclude(
+      Q(
+        concurrency_limit__isnull=True,
+        concurrency_duration__isnull=True,
+        concurrency_on_conflict__isnull=True,
+      )
+      | Q(
+        concurrency_key__isnull=False,
+        concurrency_limit__gte=1,
+        concurrency_duration__gte=1,
+        concurrency_on_conflict__in=("block", "discard"),
+      )
+      & ~Q(concurrency_key="")
+    )
+    .count()
+  )
+  if invalid_policies:
+    problems.append(f"{invalid_policies} jobs have invalid concurrency policy")
+
   for label, model in _backend_owned_state_models():
     mismatched = _state_backend_mismatch_count(model, alias=alias, backend_alias=backend_alias)
     if mismatched:

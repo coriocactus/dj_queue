@@ -7,6 +7,7 @@ from django.utils import timezone
 from dj_queue import observability
 from dj_queue.models import (
   FailedExecution,
+  Job,
   Pause,
   Process,
   ReadyExecution,
@@ -343,6 +344,19 @@ def test_deep_health_allows_semaphore_occupancy_above_a_reduced_limit():
   problems = observability.deep_health_problems(backend_alias="default")
 
   assert not any("semaphores have impossible slot counts" in problem for problem in problems)
+
+
+def test_deep_health_reports_invalid_job_concurrency_policy():
+  Job.objects.create(
+    task_path="tests.tasks.echo",
+    backend_alias="default",
+    concurrency_key="account:1",
+    concurrency_limit=1,
+  )
+
+  problems = observability.deep_health_problems(backend_alias="default")
+
+  assert "1 jobs have invalid concurrency policy" in problems
 
 
 def test_backend_snapshot_derives_active_count_from_authoritative_value():

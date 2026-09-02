@@ -68,28 +68,6 @@ class Job(models.Model):
         condition=Q(priority__gte=-100) & Q(priority__lte=100),
         name="dj_queue_jobs_priority_range",
       ),
-      models.CheckConstraint(
-        condition=(
-          Q(
-            concurrency_limit__isnull=True,
-            concurrency_duration__isnull=True,
-            concurrency_on_conflict__isnull=True,
-          )
-          | (
-            Q(
-              concurrency_key__isnull=False,
-              concurrency_limit__isnull=False,
-              concurrency_duration__isnull=False,
-              concurrency_on_conflict__isnull=False,
-              concurrency_limit__gte=1,
-              concurrency_duration__gte=1,
-              concurrency_on_conflict__in=("block", "discard"),
-            )
-            & ~Q(concurrency_key="")
-          )
-        ),
-        name="djq_jobs_concurrency_policy",
-      ),
     ]
     indexes = [
       models.Index(fields=["queue_name", "finished_at"]),

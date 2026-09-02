@@ -213,38 +213,6 @@ def test_priority_range_constraint():
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize(
-  "policy",
-  (
-    {
-      "concurrency_limit": 1,
-      "concurrency_duration": 60,
-      "concurrency_on_conflict": "block",
-    },
-    {
-      "concurrency_key": "account:1",
-      "concurrency_limit": 1,
-    },
-    {
-      "concurrency_key": "account:1",
-      "concurrency_limit": 1,
-      "concurrency_duration": 0,
-      "concurrency_on_conflict": "block",
-    },
-    {
-      "concurrency_key": "account:1",
-      "concurrency_limit": 1,
-      "concurrency_duration": 60,
-      "concurrency_on_conflict": "wait",
-    },
-  ),
-)
-def test_job_concurrency_policy_constraint(policy):
-  with pytest.raises(IntegrityError), transaction.atomic():
-    make_job(**policy)
-
-
-@pytest.mark.django_db
 def test_job_delete_cascades_to_all_execution_rows():
   ready_job = make_job(task_path="tests.tasks.ready")
   scheduled_job = make_job(
