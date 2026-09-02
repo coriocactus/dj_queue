@@ -353,6 +353,48 @@ Polling is the portability path everywhere. Backend-specific features improve la
 
 For production PostgreSQL operational guidance, see [Postgres Queue Health](#postgres-queue-health).
 
+## Rolling Upgrades
+
+`dj_queue` supports live queue writes during a one-generation N/N−1 rolling
+upgrade. Schema changes use an expand, bridge, activate, and contract sequence:
+
+- release N adds nullable fields and writes both old and new representations
+- N and N−1 workers and producers can use the expanded schema together
+- release N+1 can activate the new representation after N−1 has left the fleet
+- a later release removes compatibility fields only after its oldest supported writer no longer needs them
+
+Use this deployment order:
+
+1. Keep release N−1 application and queue processes running.
+2. Apply release N migrations once.
+3. Roll application producers and queue processes from N−1 to N.
+4. Check `python manage.py dj_queue_health` and confirm no N−1 processes remain in your deployment platform.
+
+A code rollback from N to N−1 keeps the expanded schema in place. Do not reverse
+the database migration during a live rollback. N−2 processes and skipped bridge
+releases are not supported.
+
+This contract covers `dj_queue`'s schema and runtime. Jobs can outlive an
+application deployment, so keep your task import paths and accepted argument
+shapes compatible. Use a new task name when a payload change cannot be backward
+compatible.
+
+Maintainers can prove a candidate rollout against two immutable revisions:
+
+```bash
+bin/prerelease.py \
+  --from-ref <release-n-1-ref> \
+  --to-ref <release-n-ref> \
+  --backend postgres \
+  --django '>=6.0,<6.1'
+```
+
+The command calibrates release N−1, applies release N migrations under live
+writes, runs both versions together, drains with release N, and verifies queue
+state and side effects. It writes wheel hashes, one-second metrics, logs, and a
+result manifest under `benchmark-results/`. The **Pre-release migration load**
+workflow runs the database floor and current-version lanes.
+
 ## Recurring Tasks
 
 `dj_queue` supports both static recurring tasks from settings and dynamic
