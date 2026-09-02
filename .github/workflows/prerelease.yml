@@ -1,0 +1,167 @@
+name: Pre-release migration load
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_ref:
+        description: Release N-1 Git ref
+        required: true
+        type: string
+      to_ref:
+        description: Release N Git ref
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      from_ref:
+        description: Release N-1 Git ref
+        required: true
+        type: string
+      to_ref:
+        description: Release N Git ref
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  load:
+    name: ${{ matrix.database }} ${{ matrix.version }} / Django ${{ matrix.django }}
+    runs-on: [self-hosted, linux, prerelease]
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - database: postgres
+            version: "14"
+            image: postgres:14
+            port: 5432
+            user: dj_queue
+            password: dj_queue
+            django: "6.0"
+            django_range: ">=6.0,<6.1"
+            health: >-
+              --health-cmd "pg_isready -U dj_queue -d postgres"
+              --health-interval 2s
+              --health-timeout 5s
+              --health-retries 30
+          - database: postgres
+            version: "18"
+            image: postgres:18
+            port: 5432
+            user: dj_queue
+            password: dj_queue
+            django: "6.1"
+            django_range: ">=6.1,<6.2"
+            health: >-
+              --health-cmd "pg_isready -U dj_queue -d postgres"
+              --health-interval 2s
+              --health-timeout 5s
+              --health-retries 30
+          - database: mysql
+            version: "8.0"
+            image: mysql:8.0
+            port: 3306
+            user: root
+            password: root
+            django: "6.0"
+            django_range: ">=6.0,<6.1"
+            health: >-
+              --health-cmd "mysqladmin ping -h 127.0.0.1 -proot"
+              --health-interval 2s
+              --health-timeout 5s
+              --health-retries 30
+          - database: mysql
+            version: "26.7"
+            image: mysql:26.7
+            port: 3306
+            user: root
+            password: root
+            django: "6.1"
+            django_range: ">=6.1,<6.2"
+            health: >-
+              --health-cmd "mysqladmin ping -h 127.0.0.1 -proot"
+              --health-interval 2s
+              --health-timeout 5s
+              --health-retries 30
+          - database: mariadb
+            version: "10.6"
+            image: mariadb:10.6
+            port: 3306
+            user: root
+            password: root
+            django: "6.0"
+            django_range: ">=6.0,<6.1"
+            health: >-
+              --health-cmd "healthcheck.sh --connect --innodb_initialized"
+              --health-interval 2s
+              --health-timeout 5s
+              --health-retries 30
+          - database: mariadb
+            version: "12.3"
+            image: mariadb:12.3
+            port: 3306
+            user: root
+            password: root
+            django: "6.1"
+            django_range: ">=6.1,<6.2"
+            health: >-
+              --health-cmd "healthcheck.sh --connect --innodb_initialized"
+              --health-interval 2s
+              --health-timeout 5s
+              --health-retries 30
+    services:
+      database:
+        image: ${{ matrix.image }}
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: dj_queue
+          POSTGRES_PASSWORD: dj_queue
+          MYSQL_ROOT_PASSWORD: root
+          MARIADB_ROOT_PASSWORD: root
+        ports:
+          - ${{ matrix.port }}:${{ matrix.port }}
+        options: ${{ matrix.health }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          version: "0.12.9"
+          python-version: "3.14"
+      - name: Install harness dependencies
+        run: uv sync --locked
+      - name: Record immutable database image
+        id: database-image
+        env:
+          DATABASE_IMAGE: ${{ matrix.image }}
+        run: echo "value=${DATABASE_IMAGE}@$(docker image inspect "$DATABASE_IMAGE" --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
+      - name: Run ten-minute mixed-version proof
+        env:
+          FROM_REF: ${{ inputs.from_ref }}
+          TO_REF: ${{ inputs.to_ref }}
+          RESULT_DIR: benchmark-results/${{ matrix.database }}-${{ matrix.version }}-django-${{ matrix.django }}
+        run: >-
+          bin/prerelease.py
+          --from-ref "$FROM_REF"
+          --to-ref "$TO_REF"
+          --backend "${{ matrix.database }}"
+          --django "${{ matrix.django_range }}"
+          --database-host 127.0.0.1
+          --database-port "${{ matrix.port }}"
+          --database-user "${{ matrix.user }}"
+          --database-password "${{ matrix.password }}"
+          --database-image "${{ steps.database-image.outputs.value }}"
+          --result-dir "$RESULT_DIR"
+      - name: Upload proof artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: prerelease-${{ matrix.database }}-${{ matrix.version }}-django-${{ matrix.django }}
+          path: benchmark-results/
+          if-no-files-found: warn
+          retention-days: 30
