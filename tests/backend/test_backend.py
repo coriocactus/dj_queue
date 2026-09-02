@@ -151,6 +151,18 @@ def test_enqueue_job_with_dispatch_returns_explicit_outcome():
 
 
 @pytest.mark.django_db
+def test_enqueue_persists_concurrency_policy():
+  result = limited_discard.enqueue(1, value="ready")
+
+  job = Job.objects.get(pk=result.id)
+
+  assert job.concurrency_key == "account:1"
+  assert job.concurrency_limit == 1
+  assert job.concurrency_duration == 60
+  assert job.concurrency_on_conflict == "discard"
+
+
+@pytest.mark.django_db
 def test_enqueue_rejects_queue_outside_backend_allow_list(settings):
   settings.TASKS = {
     "default": {
@@ -351,6 +363,15 @@ def test_enqueue_bulk_mixed_states():
   assert ReadyExecution.objects.count() == 2
   assert ScheduledExecution.objects.count() == 1
   assert Job.objects.blocked().count() == 1
+  limited_jobs = Job.objects.filter(concurrency_key="account:1")
+  assert (
+    limited_jobs.filter(
+      concurrency_limit=1,
+      concurrency_duration=60,
+      concurrency_on_conflict="block",
+    ).count()
+    == 2
+  )
 
 
 @pytest.mark.django_db
@@ -682,6 +703,32 @@ def test_promote_failed_job_retries_leaves_future_rows_failed():
   assert promoted == []
   assert failed.retry_at == retry_at
   assert ReadyExecution.objects.filter(job=job).exists() is False
+
+
+@pytest.mark.django_db
+def test_failed_retry_promotion_isolates_unresolvable_historical_policy():
+  due_at = timezone.now() - timedelta(seconds=1)
+  missing = make_job(
+    task_path="tests.missing.removed_task",
+    concurrency_key="account:missing",
+  )
+  following = make_job(task=echo, args=["following"])
+  for job in (missing, following):
+    FailedExecution.objects.create(
+      job=job,
+      exception_class="builtins.ValueError",
+      message="retry",
+      traceback="traceback",
+      retry_at=due_at,
+    )
+
+  promoted = promote_failed_job_retries(batch_size=10)
+
+  assert [job.id for job in promoted] == [following.id]
+  failed = FailedExecution.objects.get(job=missing)
+  assert failed.exception_class == "dj_queue.exceptions.DispatchPolicyError"
+  assert failed.retry_at is None
+  assert ReadyExecution.objects.filter(job=following).exists() is True
 
 
 @pytest.mark.django_db
@@ -1111,6 +1158,51 @@ def test_scheduled_promotion_bulk_promotes_jobs_without_importing_tasks(monkeypa
   assert [job.pk for job in promoted] == [job.pk for job in jobs]
   assert ReadyExecution.objects.count() == len(jobs)
   assert ScheduledExecution.objects.exists() is False
+
+
+@pytest.mark.django_db
+def test_scheduled_promotion_uses_persisted_concurrency_policy(monkeypatch):
+  future = timezone.now() + timedelta(minutes=5)
+  result = limited.using(run_after=future).enqueue(1, value="later")
+  due_at = timezone.now() - timedelta(seconds=1)
+  Job.objects.filter(pk=result.id).update(scheduled_at=due_at)
+  ScheduledExecution.objects.filter(job_id=result.id).update(scheduled_at=due_at)
+
+  def fail_import(_task_path):
+    raise AssertionError("scheduled promotion should use persisted concurrency policy")
+
+  monkeypatch.setattr("dj_queue.operations.jobs.import_string", fail_import)
+
+  promoted = promote_scheduled_jobs(batch_size=10)
+
+  assert [job.id for job in promoted] == [uuid.UUID(result.id)]
+  assert ReadyExecution.objects.filter(job_id=result.id).exists() is True
+
+
+@pytest.mark.django_db
+def test_scheduled_promotion_isolates_unresolvable_historical_policy():
+  due_at = timezone.now() - timedelta(seconds=1)
+  missing = make_job(
+    task_path="tests.missing.removed_task",
+    scheduled_at=due_at,
+    concurrency_key="account:missing",
+  )
+  following = make_job(task=echo, args=["following"], scheduled_at=due_at)
+  for job in (missing, following):
+    ScheduledExecution.objects.create(
+      job=job,
+      backend_alias=job.backend_alias,
+      queue_name=job.queue_name,
+      priority=job.priority,
+      scheduled_at=due_at,
+    )
+
+  promoted = promote_scheduled_jobs(batch_size=10)
+
+  assert [job.id for job in promoted] == [following.id]
+  assert FailedExecution.objects.filter(job=missing).exists() is True
+  assert ScheduledExecution.objects.filter(job=missing).exists() is False
+  assert ReadyExecution.objects.filter(job=following).exists() is True
 
 
 @pytest.mark.django_db

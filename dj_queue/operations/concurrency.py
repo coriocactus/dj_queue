@@ -11,11 +11,12 @@ from django.utils.module_loading import import_string
 
 from dj_queue.config import load_backend_config
 from dj_queue.db import database_capabilities, get_database_alias, locked_queryset
-from dj_queue.exceptions import EnqueueError
+from dj_queue.exceptions import DispatchPolicyError, EnqueueError
 from dj_queue.log import log_event
 from dj_queue.models import (
   BlockedExecution,
   ClaimedExecution,
+  FailedExecution,
   ReadyExecution,
   Semaphore,
 )
@@ -230,9 +231,8 @@ def _recovered_release_settings(alias, jobs, *, backend_alias):
   settings = set()
   for job in jobs:
     try:
-      task = import_string(job.task_path)
-      limit, duration_seconds, _ = concurrency_settings(task, backend_alias=backend_alias)
-    except (AttributeError, EnqueueError, ImportError):
+      limit, duration_seconds, _ = concurrency_settings_for_job(job)
+    except DispatchPolicyError:
       limit = _semaphore_limit(alias, job.concurrency_key) or 1
       duration_seconds = config.default_concurrency_duration
     settings.add((limit, duration_seconds))
@@ -374,6 +374,41 @@ def concurrency_settings(task, *, backend_alias):
   on_conflict = str(_task_option(task, "on_conflict", "block"))
   if on_conflict not in {"block", "discard"}:
     raise EnqueueError("on_conflict must be 'block' or 'discard'")
+  return limit, duration_seconds, on_conflict
+
+
+def concurrency_settings_for_job(job, *, task=None):
+  policy = (
+    job.concurrency_limit,
+    job.concurrency_duration,
+    job.concurrency_on_conflict,
+  )
+  if all(value is None for value in policy):
+    try:
+      if task is None:
+        task = import_string(job.task_path)
+      return concurrency_settings(task, backend_alias=job.backend_alias)
+    except (AttributeError, EnqueueError, ImportError) as error:
+      raise DispatchPolicyError(
+        f"job {job.id} has no resolvable concurrency policy: {error}"
+      ) from error
+
+  if any(value is None for value in policy):
+    raise DispatchPolicyError(f"job {job.id} has incomplete persisted concurrency policy")
+
+  try:
+    limit = _positive_int_option(job.concurrency_limit, "concurrency_limit")
+    duration_seconds = _positive_int_option(
+      job.concurrency_duration,
+      "concurrency_duration",
+    )
+    on_conflict = str(job.concurrency_on_conflict)
+    if on_conflict not in {"block", "discard"}:
+      raise EnqueueError("on_conflict must be 'block' or 'discard'")
+  except EnqueueError as error:
+    raise DispatchPolicyError(
+      f"job {job.id} has invalid persisted concurrency policy: {error}"
+    ) from error
   return limit, duration_seconds, on_conflict
 
 
@@ -542,7 +577,7 @@ def _consume_blocked_job_for_slot(
       now=now,
     )
 
-  if not slot_acquired and slot_handoff is not SlotHandoffMode.RELEASE_CLAIMED:
+  if not slot_acquired and slot_handoff is SlotHandoffMode.ACQUIRE:
     slot_acquired = semaphore_acquire(
       key,
       limit=limit,
@@ -691,6 +726,7 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
     use_skip_locked = load_backend_config(backend_alias).use_skip_locked
   now = timezone.now()
   promoted_jobs = []
+  policy_failures = []
   task_settings = {}
   uses_serialized_writes = database_capabilities(alias).uses_serialized_writes
 
@@ -712,11 +748,30 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
 
     for blocked in blocked_rows:
       job = blocked.job
-      limit, duration_seconds = task_settings.get(job.task_path, (None, None))
-      if limit is None:
-        task = import_string(job.task_path)
-        limit, duration_seconds, _ = concurrency_settings(task, backend_alias=backend_alias)
-        task_settings[job.task_path] = (limit, duration_seconds)
+      try:
+        settings = None
+        if job.concurrency_limit is None:
+          settings = task_settings.get(job.task_path)
+        if settings is None:
+          limit, duration_seconds, _ = concurrency_settings_for_job(job)
+          if job.concurrency_limit is None:
+            task_settings[job.task_path] = (limit, duration_seconds)
+        else:
+          limit, duration_seconds = settings
+      except DispatchPolicyError as error:
+        if not uses_serialized_writes:
+          consumed = _consume_selected_rows(alias, BlockedExecution, [blocked])
+          if not consumed:
+            continue
+        _ensure_no_other_execution_state(alias, job, ignored_models=(BlockedExecution,))
+        FailedExecution.objects.using(alias).create(
+          job_id=job.id,
+          exception_class=(f"{error.__class__.__module__}.{error.__class__.__qualname__}"),
+          message=str(error),
+          traceback="",
+        )
+        policy_failures.append((job, error))
+        continue
 
       if semaphore_acquire(
         blocked.concurrency_key,
@@ -763,6 +818,15 @@ def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use
       concurrency_key=job.concurrency_key,
     )
     notify_ready_queues_on_commit((job.queue_name,), backend_alias=backend_alias)
+  for job, error in policy_failures:
+    log_event(
+      "job.failed",
+      backend_alias=backend_alias,
+      job_id=str(job.id),
+      failure_kind="dispatch_policy",
+      exception_class=f"{error.__class__.__module__}.{error.__class__.__qualname__}",
+      message=str(error),
+    )
   return promoted_jobs
 
 

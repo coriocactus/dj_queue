@@ -53,6 +53,9 @@ class Job(models.Model):
   backend_alias = models.CharField(max_length=64)
   scheduled_at = models.DateTimeField(null=True, blank=True)
   concurrency_key = models.CharField(max_length=255, null=True, blank=True)
+  concurrency_limit = models.IntegerField(null=True, blank=True)
+  concurrency_duration = models.IntegerField(null=True, blank=True)
+  concurrency_on_conflict = models.CharField(max_length=7, null=True, blank=True)
   finished_at = models.DateTimeField(null=True, blank=True)
   return_value = models.JSONField(null=True, blank=True)
   created_at = models.DateTimeField(auto_now_add=True)
@@ -64,7 +67,29 @@ class Job(models.Model):
       models.CheckConstraint(
         condition=Q(priority__gte=-100) & Q(priority__lte=100),
         name="dj_queue_jobs_priority_range",
-      )
+      ),
+      models.CheckConstraint(
+        condition=(
+          Q(
+            concurrency_limit__isnull=True,
+            concurrency_duration__isnull=True,
+            concurrency_on_conflict__isnull=True,
+          )
+          | (
+            Q(
+              concurrency_key__isnull=False,
+              concurrency_limit__isnull=False,
+              concurrency_duration__isnull=False,
+              concurrency_on_conflict__isnull=False,
+              concurrency_limit__gte=1,
+              concurrency_duration__gte=1,
+              concurrency_on_conflict__in=("block", "discard"),
+            )
+            & ~Q(concurrency_key="")
+          )
+        ),
+        name="djq_jobs_concurrency_policy",
+      ),
     ]
     indexes = [
       models.Index(fields=["queue_name", "finished_at"]),

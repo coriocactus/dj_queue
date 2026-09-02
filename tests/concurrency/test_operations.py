@@ -764,6 +764,23 @@ def test_invalid_concurrency_settings_after_claim_do_not_leak_slot(monkeypatch):
 
 
 @pytest.mark.django_db
+def test_completion_uses_persisted_concurrency_policy(monkeypatch):
+  first = limited.enqueue(1, value="first")
+  second = limited.enqueue(1, value="second")
+  claim_ready_jobs(limit=1)
+
+  def fail_import(_task_path):
+    raise AssertionError("completion should use persisted concurrency policy")
+
+  monkeypatch.setattr(job_operations, "import_string", fail_import)
+
+  complete_claimed_job(first.id, "done")
+
+  assert ReadyExecution.objects.filter(job_id=second.id).exists() is True
+  assert BlockedExecution.objects.filter(job_id=second.id).exists() is False
+
+
+@pytest.mark.django_db
 def test_reduced_concurrency_limit_after_claim_keeps_waiter_blocked(monkeypatch):
   monkeypatch.setattr(limited.func, "concurrency_limit", 2)
   first = limited.enqueue(1, value="first")
@@ -959,6 +976,59 @@ def test_promote_expired_blocked_jobs_uses_backend_default_concurrency_duration(
 
   blocked = BlockedExecution.objects.get(job=job)
   assert blocked.expires_at >= before_promote + timedelta(seconds=200)
+
+
+@pytest.mark.django_db
+def test_blocked_promotion_uses_persisted_concurrency_policy(monkeypatch):
+  limited.enqueue(1, value="first")
+  second = limited.enqueue(1, value="second")
+  BlockedExecution.objects.filter(job_id=second.id).update(
+    expires_at=timezone.now() - timedelta(seconds=1)
+  )
+
+  def fail_import(_task_path):
+    raise AssertionError("blocked promotion should use persisted concurrency policy")
+
+  monkeypatch.setattr(concurrency_operations, "import_string", fail_import)
+  before_promote = timezone.now()
+
+  assert promote_expired_blocked_jobs(batch_size=10) == []
+
+  blocked = BlockedExecution.objects.get(job_id=second.id)
+  assert blocked.expires_at >= before_promote + timedelta(seconds=50)
+
+
+@pytest.mark.django_db
+def test_blocked_promotion_isolates_unresolvable_historical_policy():
+  expired_at = timezone.now() - timedelta(seconds=2)
+  missing = make_job(
+    task_path="tests.missing.removed_task",
+    concurrency_key="account:missing",
+  )
+  following = make_job(
+    task=limited,
+    args=[2],
+    concurrency_key="account:following",
+    concurrency_limit=1,
+    concurrency_duration=60,
+    concurrency_on_conflict="block",
+  )
+  for index, job in enumerate((missing, following)):
+    BlockedExecution.objects.create(
+      job=job,
+      backend_alias=job.backend_alias,
+      queue_name=job.queue_name,
+      priority=job.priority,
+      concurrency_key=job.concurrency_key,
+      expires_at=expired_at + timedelta(seconds=index),
+    )
+
+  promoted = promote_expired_blocked_jobs(batch_size=10)
+
+  assert [job.id for job in promoted] == [following.id]
+  assert FailedExecution.objects.filter(job=missing).exists() is True
+  assert BlockedExecution.objects.filter(job=missing).exists() is False
+  assert ReadyExecution.objects.filter(job=following).exists() is True
 
 
 @pytest.mark.django_db

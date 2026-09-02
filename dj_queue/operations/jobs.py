@@ -15,7 +15,7 @@ from django.utils.module_loading import import_string
 
 from dj_queue.config import load_allowed_queues, load_backend_config
 from dj_queue.db import database_capabilities, get_database_alias, locked_queryset
-from dj_queue.exceptions import EnqueueError
+from dj_queue.exceptions import DispatchPolicyError, EnqueueError
 from dj_queue.log import event_logging_enabled, log_event
 from dj_queue.models import (
   BlockedExecution,
@@ -51,6 +51,7 @@ from dj_queue.operations.concurrency import (
   SlotHandoffMode,
   claim_next_blocked_job,
   concurrency_settings,
+  concurrency_settings_for_job,
   release_recovered_concurrency_slots,
   semaphore_acquire,
   semaphore_acquire_many,
@@ -149,6 +150,11 @@ def enqueue_job_with_dispatch(task, args, kwargs, *, backend_alias="default", va
   alias = get_database_alias(backend_alias)
   payload = _normalize_payload(args, kwargs)
   concurrency_key = _resolve_concurrency_key(task, args, kwargs)
+  concurrency_limit, concurrency_duration, concurrency_on_conflict = _concurrency_policy(
+    task,
+    concurrency_key,
+    backend_alias=backend_alias,
+  )
 
   with transaction.atomic(using=alias):
     job = Job.objects.using(alias).create(
@@ -159,6 +165,9 @@ def enqueue_job_with_dispatch(task, args, kwargs, *, backend_alias="default", va
       backend_alias=backend_alias,
       scheduled_at=task.run_after,
       concurrency_key=concurrency_key,
+      concurrency_limit=concurrency_limit,
+      concurrency_duration=concurrency_duration,
+      concurrency_on_conflict=concurrency_on_conflict,
     )
     dispatch_outcome = _dispatch_job(
       job,
@@ -193,6 +202,11 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
       validate_priority(task.priority)
     payload = _normalize_payload(args, kwargs)
     concurrency_key = _resolve_concurrency_key(task, args, kwargs)
+    concurrency_limit, concurrency_duration, concurrency_on_conflict = _concurrency_policy(
+      task,
+      concurrency_key,
+      backend_alias=backend_alias,
+    )
     prepared.append(
       _PreparedJob(
         task=task,
@@ -204,6 +218,9 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
           backend_alias=backend_alias,
           scheduled_at=task.run_after,
           concurrency_key=concurrency_key,
+          concurrency_limit=concurrency_limit,
+          concurrency_duration=concurrency_duration,
+          concurrency_on_conflict=concurrency_on_conflict,
           created_at=now,
           updated_at=now,
         ),
@@ -880,6 +897,7 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
     use_skip_locked = load_backend_config(backend_alias).use_skip_locked
   now = timezone.now()
   ready_queue_names = []
+  policy_failures = []
 
   with transaction.atomic(using=alias):
     queryset = (
@@ -915,10 +933,17 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
       ready_queue_names.extend(job.queue_name for job in direct_jobs)
 
     direct_job_ids = {job.pk for job in direct_jobs}
+    promoted_jobs = list(direct_jobs)
     for job in jobs:
       if job.pk in direct_job_ids:
         continue
-      dispatch_outcome = _dispatch_existing_job(job)
+      try:
+        dispatch_outcome = _dispatch_existing_job(job)
+      except DispatchPolicyError as error:
+        _record_dispatch_policy_failure(alias, job, error)
+        policy_failures.append((job, error))
+        continue
+      promoted_jobs.append(job)
       if dispatch_outcome.should_notify:
         ready_queue_names.append(job.queue_name)
 
@@ -926,7 +951,8 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
     notify_ready_queues_on_commit(
       tuple(dict.fromkeys(ready_queue_names)), backend_alias=backend_alias
     )
-  return jobs
+  _log_dispatch_policy_failures(policy_failures, backend_alias=backend_alias)
+  return promoted_jobs
 
 
 def dispatch_scheduled_job_now(job_id, *, backend_alias="default"):
@@ -997,7 +1023,7 @@ def retry_failed_job(job_id, *, backend_alias="default"):
     failed_rows = _consume_selected_rows(alias, FailedExecution, [failed])
     if not failed_rows:
       raise EnqueueError("job is not failed")
-    jobs, ready_queue_names = _dispatch_consumed_failed_rows(
+    jobs, ready_queue_names, _policy_failures = _dispatch_consumed_failed_rows(
       alias,
       failed_rows,
       backend_alias=backend_alias,
@@ -1034,10 +1060,11 @@ def retry_failed_jobs(*, job_ids=None, batch_size=500, backend_alias="default"):
     if not failed_rows:
       return 0
 
-    jobs, ready_queue_names = _dispatch_consumed_failed_rows(
+    jobs, ready_queue_names, policy_failures = _dispatch_consumed_failed_rows(
       alias,
       failed_rows,
       backend_alias=backend_alias,
+      isolate_policy_errors=True,
     )
 
   if ready_queue_names:
@@ -1047,6 +1074,7 @@ def retry_failed_jobs(*, job_ids=None, batch_size=500, backend_alias="default"):
     )
 
   _log_jobs_retried(jobs, backend_alias=backend_alias)
+  _log_dispatch_policy_failures(policy_failures, backend_alias=backend_alias)
   return len(jobs)
 
 
@@ -1075,10 +1103,11 @@ def promote_failed_job_retries(*, batch_size, backend_alias="default", use_skip_
     if not failed_rows:
       return []
 
-    jobs, ready_queue_names = _dispatch_consumed_failed_rows(
+    jobs, ready_queue_names, policy_failures = _dispatch_consumed_failed_rows(
       alias,
       failed_rows,
       backend_alias=backend_alias,
+      isolate_policy_errors=True,
     )
 
   if ready_queue_names:
@@ -1088,22 +1117,37 @@ def promote_failed_job_retries(*, batch_size, backend_alias="default", use_skip_
     )
 
   _log_jobs_retried(jobs, backend_alias=backend_alias)
+  _log_dispatch_policy_failures(policy_failures, backend_alias=backend_alias)
   return jobs
 
 
-def _dispatch_consumed_failed_rows(alias, failed_rows, *, backend_alias):
+def _dispatch_consumed_failed_rows(
+  alias,
+  failed_rows,
+  *,
+  backend_alias,
+  isolate_policy_errors=False,
+):
   jobs = []
   ready_queue_names = []
+  policy_failures = []
   for failed in failed_rows:
     job = failed.job
     job.return_value = None
     job.finished_at = None
     job.save(using=alias, update_fields=["return_value", "finished_at", "updated_at"])
-    dispatch_outcome = _dispatch_existing_job(job)
+    try:
+      dispatch_outcome = _dispatch_existing_job(job)
+    except DispatchPolicyError as error:
+      if not isolate_policy_errors:
+        raise
+      _record_dispatch_policy_failure(alias, job, error)
+      policy_failures.append((job, error))
+      continue
     jobs.append(job)
     if dispatch_outcome.should_notify:
       ready_queue_names.append(job.queue_name)
-  return jobs, ready_queue_names
+  return jobs, ready_queue_names, policy_failures
 
 
 def _log_jobs_retried(jobs, *, backend_alias):
@@ -1116,6 +1160,30 @@ def _log_jobs_retried(jobs, *, backend_alias):
       job_id=str(job.id),
       queue_name=job.queue_name,
       priority=job.priority,
+    )
+
+
+def _record_dispatch_policy_failure(alias, job, error):
+  _ensure_no_other_execution_state(alias, job)
+  FailedExecution.objects.using(alias).create(
+    job_id=job.id,
+    exception_class=_exception_path(error),
+    message=str(error),
+    traceback="",
+  )
+
+
+def _log_dispatch_policy_failures(failures, *, backend_alias):
+  if not event_logging_enabled(backend_alias=backend_alias):
+    return
+  for job, error in failures:
+    log_event(
+      "job.failed",
+      backend_alias=backend_alias,
+      job_id=str(job.id),
+      failure_kind="dispatch_policy",
+      exception_class=_exception_path(error),
+      message=str(error),
     )
 
 
@@ -1261,20 +1329,17 @@ def discard_blocked_jobs(*, job_ids=None, batch_size=500, backend_alias="default
 
 
 def _dispatch_existing_job(job, *, check_conflicts=True):
-  task = import_string(job.task_path)
-  return _dispatch_job(
-    job, task=task, backend_alias=job.backend_alias, check_conflicts=check_conflicts
-  )
+  return _dispatch_job(job, backend_alias=job.backend_alias, check_conflicts=check_conflicts)
 
 
-def _dispatch_decision(job, *, task, backend_alias, now):
+def _dispatch_decision(job, *, backend_alias, now, task=None):
   if job.scheduled_at is not None and job.scheduled_at > now:
     return _DispatchDecision(DispatchOutcome.SCHEDULED)
 
   if not job.concurrency_key:
     return _DispatchDecision(DispatchOutcome.READY)
 
-  limit, duration_seconds, on_conflict = concurrency_settings(task, backend_alias=backend_alias)
+  limit, duration_seconds, on_conflict = concurrency_settings_for_job(job, task=task)
   return _DispatchDecision(
     None,
     concurrency_key=job.concurrency_key,
@@ -1292,7 +1357,7 @@ def _concurrency_dispatch_outcome(decision, *, acquired):
   return DispatchOutcome.BLOCKED
 
 
-def _dispatch_job(job, *, task, backend_alias, now=None, check_conflicts=True):
+def _dispatch_job(job, *, backend_alias, now=None, check_conflicts=True, task=None):
   alias = get_database_alias(backend_alias)
   if now is None:
     now = timezone.now()
@@ -1366,10 +1431,8 @@ def _release_concurrency_slot(job, *, task=None, process_id=None, worker_ids=())
   alias = get_database_alias(job.backend_alias)
   config = load_backend_config(job.backend_alias)
   try:
-    if task is None:
-      task = import_string(job.task_path)
-    limit, duration_seconds, _ = concurrency_settings(task, backend_alias=job.backend_alias)
-  except (AttributeError, EnqueueError, ImportError):
+    limit, duration_seconds, _ = concurrency_settings_for_job(job, task=task)
+  except DispatchPolicyError:
     limit = _semaphore_limit(job) or 1
     duration_seconds = config.default_concurrency_duration
 
@@ -1460,6 +1523,12 @@ def _resolve_concurrency_key(task, args, kwargs):
   if not isinstance(value, str) or not value or len(value) > 255:
     raise EnqueueError("concurrency_key must resolve to a non-empty string up to 255 chars")
   return value
+
+
+def _concurrency_policy(task, concurrency_key, *, backend_alias):
+  if concurrency_key is None:
+    return None, None, None
+  return concurrency_settings(task, backend_alias=backend_alias)
 
 
 def _bound_arguments(task, args, kwargs):
