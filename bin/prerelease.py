@@ -609,27 +609,30 @@ def performance_results(
   enforce_performance=True,
 ):
   warmup = max(1, plan.duration * 0.05)
+  y_window_start = plan.x_stop_at + warmup
+  steady_window = plan.producer_stop_at - y_window_start
+  x_window_start = plan.migration_at - steady_window
   x_throughput = sample_throughput(
     samples,
     "completed_x",
-    warmup,
+    x_window_start,
     plan.migration_at,
   )
   y_throughput = sample_throughput(
     samples,
     "completed_y",
-    plan.x_stop_at + warmup,
+    y_window_start,
     plan.producer_stop_at,
   )
   x_p95 = percentile(
-    probe.enqueue_latencies(run_id, "X", start=warmup, end=plan.migration_at),
+    probe.enqueue_latencies(run_id, "X", start=x_window_start, end=plan.migration_at),
     95,
   )
   y_p95 = percentile(
     probe.enqueue_latencies(
       run_id,
       "Y",
-      start=plan.x_stop_at + warmup,
+      start=y_window_start,
       end=plan.producer_stop_at,
     ),
     95,

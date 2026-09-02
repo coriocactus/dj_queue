@@ -145,7 +145,7 @@ def test_performance_results_accept_valid_rollout():
   assert result["x_enqueue_p95_ms"] == 10
   assert result["y_enqueue_p95_ms"] == 12
   assert result["queue_recovered_at_seconds"] == 16
-  assert probe.windows == [("X", 1.5, 9), ("Y", 19.5, 24)]
+  assert probe.windows == [("X", 4.5, 9), ("Y", 19.5, 24)]
 
 
 def test_performance_results_reject_regressions_and_collector_errors():
@@ -202,6 +202,7 @@ def test_performance_results_can_report_without_enforcing_short_smoke_ratios():
   plan = prerelease.PhasePlan.for_duration(30)
   samples = [
     {"elapsed_seconds": 2, "completed_x": 0, "depth": 10, "deadlocks": 0},
+    {"elapsed_seconds": 5, "completed_x": 0, "depth": 10, "deadlocks": 0},
     {"elapsed_seconds": 8, "completed_x": 60, "depth": 10, "deadlocks": 0},
     {"elapsed_seconds": 20, "completed_y": 0, "depth": 100, "deadlocks": 0},
     {"elapsed_seconds": 24, "completed_y": 20, "depth": 100, "deadlocks": 0},
