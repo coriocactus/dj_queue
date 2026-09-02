@@ -61,6 +61,19 @@ def test_postgres_diagnostics_bind_table_name_pattern():
   assert calls[-1][1] == ["dj_queue_%"]
 
 
+def test_mariadb_diagnostics_use_information_schema_lock_waits():
+  calls = []
+  probe = object.__new__(prerelease.DatabaseProbe)
+  probe.backend = "mariadb"
+  probe.rows = lambda _sql, _params=(): [("Innodb_deadlocks", "0")]
+  probe.scalar = lambda sql, params=(): calls.append((sql, params)) or 0
+
+  result = probe._database_diagnostics()
+
+  assert result == {"deadlocks": 0, "waiting_locks": 0}
+  assert calls == [("SELECT COUNT(*) FROM information_schema.INNODB_LOCK_WAITS", ())]
+
+
 def test_performance_results_accept_valid_rollout():
   plan = prerelease.PhasePlan.for_duration(30)
   samples = [

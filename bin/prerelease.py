@@ -225,12 +225,12 @@ class DatabaseProbe:
       if self.backend in {"mysql", "mariadb"}:
         deadlock_rows = self.rows("SHOW GLOBAL STATUS LIKE 'Innodb_deadlocks'")
         values = {"deadlocks": int(deadlock_rows[0][1]) if deadlock_rows else 0}
-        try:
-          values["waiting_locks"] = self.scalar(
-            "SELECT COUNT(*) FROM performance_schema.data_lock_waits"
-          )
-        except Exception as error:  # noqa: BLE001
-          values["waiting_locks_error"] = str(error)
+        lock_waits_table = (
+          "information_schema.INNODB_LOCK_WAITS"
+          if self.backend == "mariadb"
+          else "performance_schema.data_lock_waits"
+        )
+        values["waiting_locks"] = self.scalar(f"SELECT COUNT(*) FROM {lock_waits_table}")
         return values
       return {"deadlocks": 0, "waiting_locks": 0}
     except Exception as error:  # noqa: BLE001
