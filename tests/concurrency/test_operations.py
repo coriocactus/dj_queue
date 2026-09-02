@@ -1546,6 +1546,36 @@ def test_promote_scheduled_jobs_rejects_job_with_conflicting_execution_state():
 
 
 @pytest.mark.django_db
+def test_promote_scheduled_jobs_retries_transient_database_deadlock(monkeypatch):
+  job = make_job(scheduled_at=timezone.now() - timedelta(seconds=1))
+  ScheduledExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+    scheduled_at=job.scheduled_at,
+  )
+  original_consume = job_operations._consume_selected_rows
+  calls = 0
+
+  def deadlock_once(*args, **kwargs):
+    nonlocal calls
+    calls += 1
+    if calls == 1:
+      raise OperationalError("deadlock found when trying to get lock")
+    return original_consume(*args, **kwargs)
+
+  monkeypatch.setattr(job_operations, "_consume_selected_rows", deadlock_once)
+
+  promoted = promote_scheduled_jobs(batch_size=10)
+
+  assert calls == 2
+  assert promoted == [job]
+  assert ScheduledExecution.objects.filter(job=job).exists() is False
+  assert ReadyExecution.objects.filter(job=job).exists() is True
+
+
+@pytest.mark.django_db
 def test_promote_scheduled_concurrency_job_rejects_conflicting_execution_state():
   job = make_job(
     task=limited,
@@ -1651,6 +1681,31 @@ def test_cleanup_expired_semaphores_respects_batch_size():
 
   assert deleted == 2
   assert Semaphore.objects.filter(expires_at__lte=now).count() == 1
+
+
+@pytest.mark.django_db
+def test_cleanup_expired_semaphores_retries_transient_database_deadlock(monkeypatch):
+  Semaphore.objects.create(
+    key="expired",
+    value=0,
+    limit=1,
+    expires_at=timezone.now() - timedelta(seconds=1),
+  )
+  original_locked_queryset = concurrency_operations.locked_queryset
+  calls = 0
+
+  def deadlock_once(*args, **kwargs):
+    nonlocal calls
+    calls += 1
+    if calls == 1:
+      raise OperationalError("deadlock found when trying to get lock")
+    return original_locked_queryset(*args, **kwargs)
+
+  monkeypatch.setattr(concurrency_operations, "locked_queryset", deadlock_once)
+
+  assert cleanup_expired_semaphores() == 1
+  assert calls == 2
+  assert Semaphore.objects.filter(key="expired").exists() is False
 
 
 @pytest.mark.skipif(

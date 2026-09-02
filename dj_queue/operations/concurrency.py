@@ -10,7 +10,12 @@ from django.utils import timezone
 from django.utils.module_loading import import_string
 
 from dj_queue.config import load_backend_config
-from dj_queue.db import database_capabilities, get_database_alias, locked_queryset
+from dj_queue.db import (
+  database_capabilities,
+  get_database_alias,
+  locked_queryset,
+  retry_transient_database_errors,
+)
 from dj_queue.exceptions import EnqueueError
 from dj_queue.log import log_event
 from dj_queue.models import (
@@ -672,17 +677,28 @@ def _create_claimed_execution_after_blocked_consume(alias, *, job, process_id, c
 def cleanup_expired_semaphores(*, batch_size=500, backend_alias="default"):
   batch_size = _positive_int_option(batch_size, "batch_size")
   alias = get_database_alias(backend_alias)
-  now = timezone.now()
-  queryset = _expired_semaphore_cleanup_queryset(alias, now=now)
-  semaphore_ids = list(
-    queryset.order_by("expires_at", "key").values_list("pk", flat=True)[:batch_size]
-  )
-  if not semaphore_ids:
-    return 0
-  deleted, _ = (
-    _expired_semaphore_cleanup_queryset(alias, now=now).filter(pk__in=semaphore_ids).delete()
-  )
-  return deleted
+  use_skip_locked = load_backend_config(backend_alias).use_skip_locked
+
+  def cleanup_transition():
+    now = timezone.now()
+    with transaction.atomic(using=alias):
+      queryset = locked_queryset(
+        _expired_semaphore_cleanup_queryset(alias, now=now),
+        use_skip_locked=use_skip_locked,
+      )
+      semaphore_ids = list(
+        queryset.order_by("expires_at", "key").values_list("pk", flat=True)[:batch_size]
+      )
+      if not semaphore_ids:
+        return 0
+      deleted, _ = (
+        _expired_semaphore_cleanup_queryset(alias, now=now)
+        .filter(pk__in=semaphore_ids)
+        .delete()
+      )
+      return deleted
+
+  return retry_transient_database_errors(cleanup_transition)
 
 
 def _expired_semaphore_cleanup_queryset(alias, *, now):

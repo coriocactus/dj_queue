@@ -856,49 +856,55 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
   alias = get_database_alias(backend_alias)
   if use_skip_locked is None:
     use_skip_locked = load_backend_config(backend_alias).use_skip_locked
-  now = timezone.now()
-  ready_queue_names = []
 
-  with transaction.atomic(using=alias):
-    queryset = (
-      ScheduledExecution.objects.using(alias)
-      .select_related("job")
-      .filter(backend_alias=backend_alias, scheduled_at__lte=now)
-      .order_by("scheduled_at", "-priority", "id")
-    )
-    scheduled_rows = list(locked_queryset(queryset, use_skip_locked=use_skip_locked)[:batch_size])
-    if not scheduled_rows:
-      return []
-    _ensure_state_rows_belong_to_backend(scheduled_rows, backend_alias)
-
-    scheduled_rows = _consume_selected_rows(alias, ScheduledExecution, scheduled_rows)
-    if not scheduled_rows:
-      return []
-
-    jobs = [row.job for row in scheduled_rows]
-
-    direct_jobs = [job for job in jobs if not job.concurrency_key]
-    if direct_jobs:
-      _bulk_create_ready_executions_locked(
-        alias,
-        _ready_execution_rows(
-          direct_jobs,
-          backend_alias=backend_alias,
-          ready_at=now,
-          created_at=now,
-        ),
-        backend_alias=backend_alias,
-        check_conflicts=True,
+  def promote_transition():
+    now = timezone.now()
+    ready_queue_names = []
+    with transaction.atomic(using=alias):
+      queryset = (
+        ScheduledExecution.objects.using(alias)
+        .select_related("job")
+        .filter(backend_alias=backend_alias, scheduled_at__lte=now)
+        .order_by("scheduled_at", "-priority", "id")
       )
-      ready_queue_names.extend(job.queue_name for job in direct_jobs)
+      scheduled_rows = list(
+        locked_queryset(queryset, use_skip_locked=use_skip_locked)[:batch_size]
+      )
+      if not scheduled_rows:
+        return [], []
+      _ensure_state_rows_belong_to_backend(scheduled_rows, backend_alias)
 
-    direct_job_ids = {job.pk for job in direct_jobs}
-    for job in jobs:
-      if job.pk in direct_job_ids:
-        continue
-      dispatch_outcome = _dispatch_existing_job(job)
-      if dispatch_outcome.should_notify:
-        ready_queue_names.append(job.queue_name)
+      scheduled_rows = _consume_selected_rows(alias, ScheduledExecution, scheduled_rows)
+      if not scheduled_rows:
+        return [], []
+
+      jobs = [row.job for row in scheduled_rows]
+
+      direct_jobs = [job for job in jobs if not job.concurrency_key]
+      if direct_jobs:
+        _bulk_create_ready_executions_locked(
+          alias,
+          _ready_execution_rows(
+            sorted(direct_jobs, key=lambda job: job.pk),
+            backend_alias=backend_alias,
+            ready_at=now,
+            created_at=now,
+          ),
+          backend_alias=backend_alias,
+          check_conflicts=True,
+        )
+        ready_queue_names.extend(job.queue_name for job in direct_jobs)
+
+      direct_job_ids = {job.pk for job in direct_jobs}
+      for job in jobs:
+        if job.pk in direct_job_ids:
+          continue
+        dispatch_outcome = _dispatch_existing_job(job)
+        if dispatch_outcome.should_notify:
+          ready_queue_names.append(job.queue_name)
+    return jobs, ready_queue_names
+
+  jobs, ready_queue_names = retry_transient_database_errors(promote_transition)
 
   if ready_queue_names:
     notify_ready_queues_on_commit(
