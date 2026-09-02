@@ -637,7 +637,7 @@ def queue_index_for_state(state):
 
 
 def scenario_worker_empty_claim():
-  from dj_queue.operations.jobs import claim_ready_jobs
+  from dj_queue.operations.claiming import claim_ready_jobs
 
   claimed_jobs = claim_ready_jobs(
     limit=100, queues=("__profile_empty__",), backend_alias="default"
@@ -650,7 +650,8 @@ def scenario_ordered_selector_claim():
 
   from benchmarks.tasks import noop
   from dj_queue.models import ClaimedExecution, Job, ReadyExecution
-  from dj_queue.operations.jobs import claim_ready_jobs, execute_claimed_job
+  from dj_queue.operations.claiming import claim_ready_jobs
+  from dj_queue.operations.jobs import execute_claimed_job
 
   selectors = (
     "profile-selector-alpha",

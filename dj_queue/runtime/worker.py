@@ -9,7 +9,8 @@ from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias
 from dj_queue.exceptions import ProcessExitError
 from dj_queue.models import Process
-from dj_queue.operations.jobs import claim_ready_jobs, execute_claimed_job, fail_claimed_job
+from dj_queue.operations.claiming import claim_ready_jobs
+from dj_queue.operations.jobs import execute_claimed_job, fail_claimed_job
 from dj_queue.runtime.base import BaseRunner, app_executor
 from dj_queue.runtime.errors import handle_thread_error
 from dj_queue.runtime.notify import build_wakeup_backend

@@ -10,6 +10,7 @@ from django.tasks import TaskResultStatus
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
+import dj_queue.operations.claiming as claiming_operations
 import dj_queue.operations.concurrency as concurrency_operations
 import dj_queue.operations.jobs as job_operations
 from dj_queue.api import QueueInfo
@@ -178,7 +179,7 @@ def test_claim_ready_jobs_retries_transient_database_deadlock(monkeypatch):
     consume_owner = postgres_sql
     target = "consume_ready_and_create_claimed_executions"
   else:
-    consume_owner = job_operations
+    consume_owner = claiming_operations
     target = "_consume_selected_rows"
   original_consume = getattr(consume_owner, target)
 
@@ -210,7 +211,7 @@ def test_claim_ready_jobs_retries_transient_database_deadlock(monkeypatch):
   ),
 )
 def test_transient_claim_error_classification_uses_codes_before_message(error):
-  assert job_operations._is_transient_claim_error(error) is True
+  assert claiming_operations._is_transient_claim_error(error) is True
 
 
 def test_transient_claim_error_classification_checks_driver_cause():
@@ -218,11 +219,11 @@ def test_transient_claim_error_classification_checks_driver_cause():
   error = OperationalError("driver wrapped error")
   error.__cause__ = cause
 
-  assert job_operations._is_transient_claim_error(error) is True
+  assert claiming_operations._is_transient_claim_error(error) is True
 
 
 def test_non_transient_claim_error_classification_rejects_unknown_errors():
-  assert job_operations._is_transient_claim_error(OperationalError("table missing")) is False
+  assert claiming_operations._is_transient_claim_error(OperationalError("table missing")) is False
 
 
 @pytest.mark.django_db
@@ -1143,16 +1144,14 @@ def test_claim_rechecks_pause_created_during_claim(monkeypatch):
     queue_name="critical",
     priority=0,
   )
-  original_select_ready_rows = __import__(
-    "dj_queue.operations.jobs", fromlist=["_select_ready_rows"]
-  )._select_ready_rows
+  original_select_ready_rows = claiming_operations._select_ready_rows
 
   def pause_during_selection(*args, **kwargs):
     rows = original_select_ready_rows(*args, **kwargs)
     QueueInfo("critical").pause()
     return rows
 
-  monkeypatch.setattr("dj_queue.operations.jobs._select_ready_rows", pause_during_selection)
+  monkeypatch.setattr(claiming_operations, "_select_ready_rows", pause_during_selection)
 
   claimed_jobs = claim_ready_jobs(limit=1, queues=("critical",))
 
@@ -1191,16 +1190,14 @@ def test_sqlite_claim_skips_ready_row_consumed_after_selection(monkeypatch):
     queue_name=job.queue_name,
     priority=job.priority,
   )
-  original_select_ready_rows = __import__(
-    "dj_queue.operations.jobs", fromlist=["_select_ready_rows"]
-  )._select_ready_rows
+  original_select_ready_rows = claiming_operations._select_ready_rows
 
   def consume_during_selection(*args, **kwargs):
     rows = original_select_ready_rows(*args, **kwargs)
     ReadyExecution.objects.filter(pk__in=[row.pk for row in rows]).delete()
     return rows
 
-  monkeypatch.setattr("dj_queue.operations.jobs._select_ready_rows", consume_during_selection)
+  monkeypatch.setattr(claiming_operations, "_select_ready_rows", consume_during_selection)
 
   assert claim_ready_jobs(limit=1) == []
   assert ClaimedExecution.objects.filter(job=job).exists() is False
@@ -1333,7 +1330,7 @@ def test_queue_selector_exact_group_uses_physical_queue_plan(monkeypatch):
     raise AssertionError("exact selectors should not use the generic ranked plan")
 
   monkeypatch.setattr(
-    job_operations,
+    claiming_operations,
     "_ordered_selector_rows_queryset",
     fail_generic_selector_plan,
   )
