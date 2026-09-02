@@ -84,6 +84,70 @@ def test_semaphore_acquire_release_cycle():
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+  ("value", "active_count", "acquired"),
+  ((0, 0, False), (1, 1, True)),
+)
+def test_semaphore_acquire_uses_value_when_bridge_count_is_stale(
+  value,
+  active_count,
+  acquired,
+):
+  Semaphore.objects.create(
+    key="account:mixed-version",
+    value=value,
+    active_count=active_count,
+    limit=1,
+    expires_at=timezone.now() + timedelta(seconds=60),
+  )
+
+  assert semaphore_acquire("account:mixed-version", limit=1, duration_seconds=60) is acquired
+
+  semaphore = Semaphore.objects.get(key="account:mixed-version")
+  assert semaphore.active_count == semaphore.limit - semaphore.value
+
+
+@pytest.mark.django_db
+def test_semaphore_release_repairs_null_bridge_count_from_value():
+  Semaphore.objects.create(
+    key="account:mixed-version",
+    value=0,
+    active_count=None,
+    limit=1,
+    expires_at=timezone.now() + timedelta(seconds=60),
+  )
+
+  assert semaphore_release("account:mixed-version", duration_seconds=60) is True
+
+  semaphore = Semaphore.objects.get(key="account:mixed-version")
+  assert semaphore.value == 1
+  assert semaphore.active_count == 0
+
+
+@pytest.mark.django_db
+def test_semaphore_acquire_many_uses_value_when_bridge_count_is_stale():
+  Semaphore.objects.create(
+    key="account:mixed-version",
+    value=2,
+    active_count=2,
+    limit=2,
+    expires_at=timezone.now() + timedelta(seconds=60),
+  )
+
+  acquired = semaphore_acquire_many(
+    "account:mixed-version",
+    count=2,
+    limit=2,
+    duration_seconds=60,
+  )
+
+  assert acquired == 2
+  semaphore = Semaphore.objects.get(key="account:mixed-version")
+  assert semaphore.value == 0
+  assert semaphore.active_count == 2
+
+
+@pytest.mark.django_db
 def test_semaphore_acquire_reconciles_increased_limit():
   assert semaphore_acquire("account:resize", limit=1, duration_seconds=60) is True
 
@@ -104,19 +168,16 @@ def test_semaphore_acquire_reconciles_reduced_limit_when_saturated():
 
   semaphore = Semaphore.objects.get(key="account:resize")
   assert semaphore.limit == 1
-  assert semaphore.active_count == 2
+  assert semaphore.active_count == 1
   assert semaphore.value == 0
 
 
 @pytest.mark.django_db
-def test_reduced_semaphore_limit_blocks_acquire_until_occupancy_falls_below_limit():
+def test_reduced_semaphore_limit_uses_compatibility_available_count():
   assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True
   assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True
 
   assert semaphore_acquire("account:resize", limit=1, duration_seconds=60) is False
-  assert semaphore_release("account:resize", duration_seconds=60) is True
-  assert semaphore_acquire("account:resize", limit=1, duration_seconds=60) is False
-
   assert semaphore_release("account:resize", duration_seconds=60) is True
   assert semaphore_acquire("account:resize", limit=1, duration_seconds=60) is True
 
@@ -153,16 +214,16 @@ def test_saturated_bulk_semaphore_acquire_without_reconcile_does_not_touch_row()
 
 
 @pytest.mark.django_db
-def test_semaphore_release_does_not_change_limit():
+def test_semaphore_release_reconciles_supplied_limit():
   assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True
   assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True
 
   assert semaphore_release("account:resize", limit=1, duration_seconds=60) is True
 
   semaphore = Semaphore.objects.get(key="account:resize")
-  assert semaphore.limit == 2
+  assert semaphore.limit == 1
   assert semaphore.active_count == 1
-  assert semaphore.value == 1
+  assert semaphore.value == 0
 
 
 @pytest.mark.django_db(transaction=True)
@@ -782,7 +843,7 @@ def test_completion_uses_persisted_concurrency_policy(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_reduced_concurrency_limit_after_claim_keeps_waiter_blocked(monkeypatch):
+def test_reduced_concurrency_limit_after_claim_uses_compatibility_handoff(monkeypatch):
   monkeypatch.setattr(limited.func, "concurrency_limit", 2)
   first = limited.enqueue(1, value="first")
   second = limited.enqueue(1, value="second")
@@ -795,9 +856,9 @@ def test_reduced_concurrency_limit_after_claim_keeps_waiter_blocked(monkeypatch)
   complete_claimed_job(first.id, "done")
 
   assert ClaimedExecution.objects.filter(job_id=second.id).exists() is True
-  assert BlockedExecution.objects.filter(job_id=third.id).exists() is True
-  assert ReadyExecution.objects.filter(job_id=third.id).exists() is False
-  assert Semaphore.objects.get(key="account:1").value == 0
+  assert BlockedExecution.objects.filter(job_id=third.id).exists() is False
+  assert ReadyExecution.objects.filter(job_id=third.id).exists() is True
+  assert Semaphore.objects.get(key="account:1").value == 1
 
 
 @pytest.mark.django_db
@@ -1651,6 +1712,82 @@ def test_postgres_semaphore_acquire_uses_one_semaphore_query_per_attempt():
     assert semaphore_acquire("account:postgres-upsert", limit=1, duration_seconds=60) is False
 
   assert len(queries_touching(ctx, "dj_queue_semaphores")) == 2
+
+
+def test_postgres_semaphore_acquire_uses_value_and_valid_placeholders(monkeypatch):
+  captured = {}
+
+  class FakeCursor:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *args):
+      return None
+
+    def execute(self, sql, params):
+      captured["sql"] = sql
+      captured["params"] = params
+
+    def fetchone(self):
+      return (False,)
+
+  monkeypatch.setattr(connections["default"], "cursor", lambda: FakeCursor())
+  now = timezone.now()
+
+  assert (
+    postgres_sql.semaphore_acquire(
+      "default",
+      "account:postgres-syntax",
+      limit=3,
+      expires_at=now + timedelta(seconds=60),
+      now=now,
+    )
+    is False
+  )
+
+  table = connection.ops.quote_name(Semaphore._meta.db_table)
+  value_column = connection.ops.quote_name("value")
+  assert f"WHERE {table}.{value_column} >" in captured["sql"]
+  assert captured["sql"].count("%s") == len(captured["params"])
+
+
+def test_postgres_released_slot_handoff_uses_value_and_valid_placeholders(monkeypatch):
+  captured = {}
+
+  class FakeCursor:
+    def __enter__(self):
+      return self
+
+    def __exit__(self, *args):
+      return None
+
+    def execute(self, sql, params):
+      captured["sql"] = sql
+      captured["params"] = params
+
+    def fetchone(self):
+      return None
+
+  monkeypatch.setattr(connections["default"], "cursor", lambda: FakeCursor())
+  now = timezone.now()
+
+  assert (
+    postgres_sql.consume_next_blocked_job_with_released_slot(
+      "default",
+      backend_alias="default",
+      key="account:postgres-syntax",
+      limit=3,
+      duration_seconds=60,
+      now=now,
+      use_skip_locked=True,
+    )
+    is None
+  )
+
+  table = connection.ops.quote_name(Semaphore._meta.db_table)
+  value_column = connection.ops.quote_name("value")
+  assert f"AND {table}.{value_column} >" in captured["sql"]
+  assert captured["sql"].count("%s") == len(captured["params"])
 
 
 def test_mysql_family_semaphore_acquire_avoids_deprecated_values_function(monkeypatch):

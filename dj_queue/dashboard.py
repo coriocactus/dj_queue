@@ -784,7 +784,10 @@ def _recurring_sort_requires_python(sort):
 
 
 def _semaphore_sort_requires_python(sort):
-  return any(part.removeprefix("-") == "blocked_waiters" for part in _parse_sort_fields(sort))
+  return any(
+    part.removeprefix("-") in {"active_count", "blocked_waiters"}
+    for part in _parse_sort_fields(sort)
+  )
 
 
 def _sort_with_tie_breaker(sort, tie_breaker):
@@ -829,7 +832,7 @@ def _semaphore_rows(semaphores, *, backend_alias, alias):
         "scope": "queue_database",
         "queue_database_alias": alias,
         "key": semaphore.key,
-        "active_count": semaphore.active_count,
+        "active_count": semaphore.occupied_count,
         "available_slots": semaphore.available_count,
         "limit": semaphore.limit,
         "blocked_waiters": semaphore.blocked_waiters,

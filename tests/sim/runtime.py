@@ -360,11 +360,12 @@ class RuntimeSimulation:
     assert duplicate_recurring_runs is False, f"seed {self.seed} created duplicate recurring runs"
 
     for semaphore in Semaphore.objects.all():
-      assert semaphore.active_count >= 0, (
-        f"seed {self.seed} invalid active count {semaphore.key}={semaphore.active_count}"
-      )
       assert semaphore.value == semaphore.available_count, (
         f"seed {self.seed} inconsistent semaphore {semaphore.key}: "
+        f"active={semaphore.active_count} available={semaphore.value} limit={semaphore.limit}"
+      )
+      assert semaphore.active_count == semaphore.occupied_count, (
+        f"seed {self.seed} stale semaphore bridge {semaphore.key}: "
         f"active={semaphore.active_count} available={semaphore.value} limit={semaphore.limit}"
       )
 

@@ -4,8 +4,8 @@ from datetime import timedelta
 from enum import StrEnum
 
 from django.db import connections, transaction
-from django.db.models import F, Q, Value
-from django.db.models.functions import Greatest
+from django.db.models import Case, F, IntegerField, Q, Value, When
+from django.db.models.functions import Greatest, Least
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
@@ -101,14 +101,14 @@ def semaphore_acquire(
     ):
       return True
 
-  available = _available_expression(limit)
+  available = _reconciled_available_expression(limit)
   with _operation_atomic(alias):
     updated = (
       Semaphore.objects.using(alias)
-      .filter(key=key, active_count__lt=limit)
+      .filter(key=key, value__gt=F("limit") - Value(limit))
       .update(
-        value=Greatest(Value(0), available - Value(1)),
-        active_count=F("active_count") + 1,
+        value=available - Value(1),
+        active_count=Value(limit) - available + Value(1),
         limit=limit,
         expires_at=expires_at,
         updated_at=now,
@@ -118,9 +118,14 @@ def semaphore_acquire(
       return True
 
     Semaphore.objects.using(alias).filter(key=key).filter(
-      Q(value__lt=available) | Q(value__gt=available) | ~Q(limit=limit)
+      Q(value__lt=available)
+      | Q(value__gt=available)
+      | Q(active_count__isnull=True)
+      | ~Q(active_count=Value(limit) - available)
+      | ~Q(limit=limit)
     ).update(
       value=available,
+      active_count=Value(limit) - available,
       limit=limit,
       updated_at=now,
     )
@@ -160,10 +165,10 @@ def semaphore_acquire_many(
     if created:
       return acquired
 
-    available = max(0, limit - semaphore.active_count)
+    available = min(limit, max(0, semaphore.value + limit - semaphore.limit))
     acquired = min(count, available)
-    active_count = semaphore.active_count + acquired
-    value = max(0, limit - active_count)
+    value = available - acquired
+    active_count = limit - value
     if acquired:
       semaphore.value = value
       semaphore.active_count = active_count
@@ -174,11 +179,19 @@ def semaphore_acquire_many(
         using=alias,
         update_fields=["value", "active_count", "limit", "expires_at", "updated_at"],
       )
-    elif semaphore.value != value or semaphore.limit != limit:
+    elif (
+      semaphore.value != value
+      or semaphore.active_count != active_count
+      or semaphore.limit != limit
+    ):
       semaphore.value = value
+      semaphore.active_count = active_count
       semaphore.limit = limit
       semaphore.updated_at = now
-      semaphore.save(using=alias, update_fields=["value", "limit", "updated_at"])
+      semaphore.save(
+        using=alias,
+        update_fields=["value", "active_count", "limit", "updated_at"],
+      )
     return acquired
 
 
@@ -187,12 +200,32 @@ def semaphore_release(key, *, limit=None, duration_seconds, backend_alias="defau
   now = timezone.now()
   expires_at = now + timedelta(seconds=duration_seconds)
 
+  if limit is not None:
+    available = _released_available_expression(limit)
+    updated = (
+      Semaphore.objects.using(alias)
+      .filter(key=key)
+      .update(
+        value=available,
+        active_count=Value(limit) - available,
+        limit=limit,
+        expires_at=expires_at,
+        updated_at=now,
+      )
+    )
+    return updated > 0
+
+  available = Case(
+    When(value__gte=F("limit"), then=F("limit")),
+    default=F("value") + 1,
+    output_field=IntegerField(),
+  )
   updated = (
     Semaphore.objects.using(alias)
-    .filter(key=key, active_count__gt=0)
+    .filter(key=key)
     .update(
-      value=Greatest(Value(0), F("limit") - F("active_count") + 1),
-      active_count=F("active_count") - 1,
+      value=available,
+      active_count=F("limit") - available,
       expires_at=expires_at,
       updated_at=now,
     )
@@ -215,11 +248,12 @@ def release_recovered_concurrency_slots(jobs, *, backend_alias="default"):
     if settings is None:
       fallback_jobs.extend(group_jobs)
       continue
-    _limit, duration_seconds = settings
+    limit, duration_seconds = settings
     _release_recovered_concurrency_group(
       alias,
       key,
       release_count=len(group_jobs),
+      limit=limit,
       duration_seconds=duration_seconds,
       backend_alias=backend_alias,
     )
@@ -250,6 +284,7 @@ def _release_recovered_concurrency_group(
   key,
   *,
   release_count,
+  limit,
   duration_seconds,
   backend_alias,
 ):
@@ -276,21 +311,21 @@ def _release_recovered_concurrency_group(
     if semaphore is None:
       return []
 
-    released_active_count = max(0, semaphore.active_count - release_count)
-    available = max(0, semaphore.limit - released_active_count)
+    available = min(limit, max(0, semaphore.value + limit - semaphore.limit + release_count))
     promote_count = min(release_count, available, len(blocked_rows))
     promoted_rows = blocked_rows[:promote_count]
     if promoted_rows:
       promoted_rows = _consume_selected_rows(alias, BlockedExecution, promoted_rows)
 
     promoted_jobs = [blocked.job for blocked in promoted_rows]
-    semaphore.active_count = released_active_count + len(promoted_jobs)
-    semaphore.value = max(0, semaphore.limit - semaphore.active_count)
+    semaphore.value = available - len(promoted_jobs)
+    semaphore.active_count = limit - semaphore.value
+    semaphore.limit = limit
     semaphore.expires_at = expires_at
     semaphore.updated_at = now
     semaphore.save(
       using=alias,
-      update_fields=["value", "active_count", "expires_at", "updated_at"],
+      update_fields=["value", "active_count", "limit", "expires_at", "updated_at"],
     )
 
     _bulk_create_ready_executions_locked(
@@ -324,14 +359,15 @@ def _release_recovered_concurrency_group(
   return promoted_jobs
 
 
-def _consume_released_semaphore_slot(alias, key, *, duration_seconds, now):
+def _consume_released_semaphore_slot(alias, key, *, limit, duration_seconds, now):
   expires_at = now + timedelta(seconds=duration_seconds)
   updated = (
     Semaphore.objects.using(alias)
-    .filter(key=key, active_count__lt=F("limit"))
+    .filter(key=key, value__gt=0)
     .update(
-      value=Greatest(Value(0), F("limit") - F("active_count") - 1),
-      active_count=F("active_count") + 1,
+      value=F("value") - 1,
+      active_count=Value(limit) - F("value") + 1,
+      limit=limit,
       expires_at=expires_at,
       updated_at=now,
     )
@@ -339,13 +375,16 @@ def _consume_released_semaphore_slot(alias, key, *, duration_seconds, now):
   return updated > 0
 
 
-def _handoff_released_claimed_slot(alias, key, *, duration_seconds, now):
+def _handoff_released_claimed_slot(alias, key, *, limit, duration_seconds, now):
   expires_at = now + timedelta(seconds=duration_seconds)
+  available = _released_available_expression(limit)
   updated = (
     Semaphore.objects.using(alias)
-    .filter(key=key, active_count__gt=0, active_count__lte=F("limit"))
+    .filter(key=key, value__gt=F("limit") - Value(limit) - Value(1))
     .update(
-      value=Greatest(Value(0), F("limit") - F("active_count")),
+      value=available - Value(1),
+      active_count=Value(limit) - available + Value(1),
+      limit=limit,
       expires_at=expires_at,
       updated_at=now,
     )
@@ -353,8 +392,15 @@ def _handoff_released_claimed_slot(alias, key, *, duration_seconds, now):
   return updated > 0
 
 
-def _available_expression(limit):
-  return Greatest(Value(0), Value(limit) - F("active_count"))
+def _released_available_expression(limit):
+  return Least(
+    Value(limit),
+    Greatest(Value(0), F("value") + Value(limit) - F("limit") + Value(1)),
+  )
+
+
+def _reconciled_available_expression(limit):
+  return Least(Value(limit), Greatest(Value(0), F("value") + Value(limit) - F("limit")))
 
 
 def concurrency_settings(task, *, backend_alias):
@@ -542,6 +588,7 @@ def _consume_blocked_job_for_slot(
       alias,
       backend_alias=backend_alias,
       key=key,
+      limit=limit,
       duration_seconds=duration_seconds,
       now=now,
       use_skip_locked=use_skip_locked and capabilities.supports_skip_locked,
@@ -566,6 +613,7 @@ def _consume_blocked_job_for_slot(
     slot_acquired = _handoff_released_claimed_slot(
       alias,
       key,
+      limit=limit,
       duration_seconds=duration_seconds,
       now=now,
     )
@@ -573,6 +621,7 @@ def _consume_blocked_job_for_slot(
     slot_acquired = _consume_released_semaphore_slot(
       alias,
       key,
+      limit=limit,
       duration_seconds=duration_seconds,
       now=now,
     )

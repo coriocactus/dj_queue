@@ -967,7 +967,7 @@ class PauseAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
 class SemaphoreAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   list_display = (
     "key",
-    "active_count",
+    "display_active_count",
     "display_available_count",
     "limit",
     "display_blocked_waiters",
@@ -975,7 +975,7 @@ class SemaphoreAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   )
   readonly_fields = (
     "key",
-    "active_count",
+    "display_active_count",
     "display_available_count",
     "value",
     "limit",
@@ -991,6 +991,10 @@ class SemaphoreAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     return queryset.annotate(
       blocked_waiter_count=observability.semaphore_blocked_waiter_count_expression(alias)
     )
+
+  @admin.display(description="active")
+  def display_active_count(self, obj):
+    return obj.occupied_count
 
   @admin.display(description="available")
   def display_available_count(self, obj):

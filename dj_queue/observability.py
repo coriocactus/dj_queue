@@ -17,7 +17,7 @@ from django.db.models import (
   Value,
   When,
 )
-from django.db.models.functions import Coalesce, Greatest
+from django.db.models.functions import Coalesce
 from django.db.utils import DatabaseError
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -540,13 +540,7 @@ def deep_health_problems(*, backend_alias, max_age=None, now=None):
 
   bad_semaphores = (
     Semaphore.objects.using(alias)
-    .filter(
-      Q(limit__lt=1)
-      | Q(active_count__lt=0)
-      | Q(value__lt=0)
-      | Q(value__gt=F("limit"))
-      | ~Q(value=Greatest(Value(0), F("limit") - F("active_count")))
-    )
+    .filter(Q(limit__lt=1) | Q(active_count__lt=0) | Q(value__lt=0) | Q(value__gt=F("limit")))
     .count()
   )
   if bad_semaphores:
@@ -866,7 +860,7 @@ def semaphore_rows_for_backend(*, backend_alias):
       "scope": "queue_database",
       "queue_database_alias": alias,
       "key": semaphore.key,
-      "active_count": semaphore.active_count,
+      "active_count": semaphore.occupied_count,
       "available_slots": semaphore.available_count,
       "limit": semaphore.limit,
       "blocked_waiters": waiters.get(semaphore.key, 0),

@@ -35,10 +35,13 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
   expires_at_column = quote("expires_at")
   created_at_column = quote("created_at")
   updated_at_column = quote("updated_at")
-  acquired_available = (
-    f"GREATEST(0, EXCLUDED.{limit_column} - ({table}.{active_count_column} + 1))"
+  conflicted_available = (
+    f"LEAST(EXCLUDED.{limit_column}, "
+    f"GREATEST(0, {table}.{value_column} + EXCLUDED.{limit_column} - {table}.{limit_column}))"
   )
-  current_available = f"GREATEST(0, %s - {active_count_column})"
+  conflicted_active = f"EXCLUDED.{limit_column} - ({conflicted_available} - 1)"
+  current_available = f"LEAST(%s, GREATEST(0, {value_column} + %s - {limit_column}))"
+  current_active = f"%s - ({current_available})"
 
   with connection.cursor() as cursor:
     cursor.execute(
@@ -56,23 +59,25 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
         VALUES (%s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT ({key_column}) DO UPDATE
         SET
-          {value_column} = {acquired_available},
-          {active_count_column} = {table}.{active_count_column} + 1,
+          {value_column} = {conflicted_available} - 1,
+          {active_count_column} = {conflicted_active},
           {limit_column} = EXCLUDED.{limit_column},
           {expires_at_column} = EXCLUDED.{expires_at_column},
           {updated_at_column} = EXCLUDED.{updated_at_column}
-        WHERE {table}.{active_count_column} < EXCLUDED.{limit_column}
+        WHERE {table}.{value_column} > {table}.{limit_column} - EXCLUDED.{limit_column}
         RETURNING TRUE AS acquired
       ), reconciled AS (
         UPDATE {table}
         SET
           {value_column} = {current_available},
+          {active_count_column} = {current_active},
           {limit_column} = %s,
           {updated_at_column} = %s
         WHERE {key_column} = %s
           AND NOT EXISTS (SELECT 1 FROM acquired)
           AND (
             {value_column} <> {current_available}
+            OR {active_count_column} IS DISTINCT FROM {current_active}
             OR {limit_column} <> %s
           )
         RETURNING FALSE AS acquired
@@ -91,8 +96,16 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
         now,
         limit,
         limit,
+        limit,
+        limit,
+        limit,
+        limit,
         now,
         key,
+        limit,
+        limit,
+        limit,
+        limit,
         limit,
         limit,
       ],
@@ -107,6 +120,7 @@ def consume_next_blocked_job_with_released_slot(
   *,
   backend_alias,
   key,
+  limit,
   duration_seconds,
   now,
   use_skip_locked,
@@ -135,10 +149,13 @@ def consume_next_blocked_job_with_released_slot(
   semaphore_updated_at_column = quote(Semaphore._meta.get_field("updated_at").column)
   skip_locked_sql = " SKIP LOCKED" if use_skip_locked else ""
   expires_at = now + timedelta(seconds=duration_seconds)
-  current_available = (
-    f"GREATEST(0, {semaphore_table}.{semaphore_limit_column} - "
-    f"{semaphore_table}.{semaphore_active_count_column})"
+  released_available = (
+    f"LEAST(%s, GREATEST(0, "
+    f"{semaphore_table}.{semaphore_value_column} + %s - "
+    f"{semaphore_table}.{semaphore_limit_column} + 1))"
   )
+  released_value = f"{released_available} - 1"
+  released_active = f"%s - ({released_value})"
 
   with connection.cursor() as cursor:
     cursor.execute(
@@ -163,13 +180,14 @@ def consume_next_blocked_job_with_released_slot(
       ), slot AS (
         UPDATE {semaphore_table}
         SET
-          {semaphore_value_column} = {current_available},
+          {semaphore_value_column} = {released_value},
+          {semaphore_active_count_column} = {released_active},
+          {semaphore_limit_column} = %s,
           {semaphore_expires_at_column} = %s,
           {semaphore_updated_at_column} = %s
         WHERE {semaphore_table}.{semaphore_key_column} = %s
           AND EXISTS (SELECT 1 FROM selected)
-          AND {semaphore_table}.{semaphore_active_count_column} > 0
-          AND {semaphore_table}.{semaphore_active_count_column} <= {semaphore_table}.{semaphore_limit_column}
+          AND {semaphore_table}.{semaphore_value_column} > {semaphore_table}.{semaphore_limit_column} - %s - 1
         RETURNING TRUE AS acquired
       ), deleted AS (
         DELETE FROM {blocked_table}
@@ -191,9 +209,16 @@ def consume_next_blocked_job_with_released_slot(
       [
         backend_alias,
         key,
+        limit,
+        limit,
+        limit,
+        limit,
+        limit,
+        limit,
         expires_at,
         now,
         key,
+        limit,
       ],
     )
     row = cursor.fetchone()

@@ -345,6 +345,21 @@ def test_deep_health_allows_semaphore_occupancy_above_a_reduced_limit():
   assert not any("semaphores have impossible slot counts" in problem for problem in problems)
 
 
+def test_backend_snapshot_derives_active_count_from_authoritative_value():
+  Semaphore.objects.create(
+    key="account:mixed-version",
+    value=0,
+    active_count=0,
+    limit=1,
+    expires_at=timezone.now() + timedelta(minutes=5),
+  )
+
+  snapshot = observability.backend_snapshot(backend_alias="default", now=timezone.now())
+
+  assert snapshot.semaphore_rows[0]["active_count"] == 1
+  assert snapshot.semaphore_rows[0]["available_slots"] == 0
+
+
 def test_deep_health_allows_unresolved_legacy_recurring_reservation():
   RecurringExecution.objects.create(
     backend_alias="default",

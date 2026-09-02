@@ -2,14 +2,6 @@
 # ruff: noqa: RUF012
 
 from django.db import migrations, models
-from django.db.models import F
-
-
-def backfill_active_count(apps, schema_editor):
-  Semaphore = apps.get_model("dj_queue", "Semaphore")
-  Semaphore.objects.using(schema_editor.connection.alias).update(
-    active_count=F("limit") - F("value")
-  )
 
 
 class Migration(migrations.Migration):
@@ -21,19 +13,6 @@ class Migration(migrations.Migration):
     migrations.AddField(
       model_name="semaphore",
       name="active_count",
-      field=models.IntegerField(default=0),
-    ),
-    migrations.RunPython(backfill_active_count, migrations.RunPython.noop),
-    migrations.AddConstraint(
-      model_name="semaphore",
-      constraint=models.CheckConstraint(
-        condition=models.Q(("active_count__gte", 0)), name="djq_se_active_nonnegative"
-      ),
-    ),
-    migrations.AddConstraint(
-      model_name="semaphore",
-      constraint=models.CheckConstraint(
-        condition=models.Q(("limit__gte", 1)), name="djq_se_limit_positive"
-      ),
+      field=models.IntegerField(null=True),
     ),
   ]
