@@ -343,6 +343,12 @@ def _execution_priority(job, priority):
 
 
 def _consume_selected_rows(alias, model, rows):
+  if database_capabilities(alias).backend_family in {"mysql", "mariadb"}:
+    from dj_queue.sql.mysql import consume_ready_rows
+
+    if model is ReadyExecution:
+      return consume_ready_rows(alias, rows)
+
   if not database_capabilities(alias).uses_serialized_writes:
     model.objects.using(alias).filter(pk__in=[row.pk for row in rows]).delete()
     return rows

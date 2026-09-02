@@ -1356,7 +1356,7 @@ def test_claim_ready_jobs_uses_fixed_query_budget_for_successful_claim():
   reason="requires DB_BACKEND=mysql or DB_BACKEND=mariadb",
 )
 @pytest.mark.django_db(transaction=True)
-def test_mysql_family_claim_forces_the_ready_priority_index():
+def test_mysql_family_claim_uses_indexed_ready_lookups():
   job = make_job()
   ReadyExecution.objects.create(
     job=job,
@@ -1373,7 +1373,13 @@ def test_mysql_family_claim_forces_the_ready_priority_index():
     for query in ctx.captured_queries
     if query["sql"].lstrip().startswith("SELECT") and "dj_queue_ready_executions" in query["sql"]
   ]
+  deletes = [
+    query["sql"]
+    for query in ctx.captured_queries
+    if query["sql"].lstrip().startswith("DELETE") and "dj_queue_ready_executions" in query["sql"]
+  ]
   assert any("FORCE INDEX (`djq_re_b_prio_d_idx`)" in query for query in selects)
+  assert any("STRAIGHT_JOIN `dj_queue_ready_executions` ready" in query for query in deletes)
 
 
 @pytest.mark.skipif(
