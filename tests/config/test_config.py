@@ -53,6 +53,44 @@ def test_invalid_mode_is_rejected(settings):
     load_backend_config()
 
 
+@pytest.mark.parametrize(
+  ("options", "setting_path", "unknown_option"),
+  (
+    ({"workerz": []}, "TASKS backend OPTIONS", "workerz"),
+    ({"workers": {"threadz": 3}}, "workers[0]", "threadz"),
+    ({"dispatchers": {"batch_sizes": 500}}, "dispatchers[0]", "batch_sizes"),
+    ({"scheduler": {"dynamic_tasks": True}}, "scheduler", "dynamic_tasks"),
+    (
+      {
+        "recurring": {
+          "daily": {
+            "task_path": "tests.tasks.echo",
+            "schedule": "* * * * *",
+            "queues": "default",
+          }
+        }
+      },
+      "recurring task 'daily'",
+      "queues",
+    ),
+  ),
+)
+def test_config_rejects_unknown_options(settings, options, setting_path, unknown_option):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": options,
+    },
+  }
+
+  with pytest.raises(ImproperlyConfigured) as exc_info:
+    load_backend_config()
+
+  message = str(exc_info.value)
+  assert setting_path in message
+  assert unknown_option in message
+
+
 def test_non_dj_queue_backend_alias_is_rejected(settings):
   settings.TASKS = {
     "default": {

@@ -78,6 +78,23 @@ def test_toml_config_rejects_invalid_toml(settings, tmp_path):
     load_backend_config(env={"DJ_QUEUE_CONFIG": str(config_path)})
 
 
+def test_toml_config_rejects_unknown_options(settings, tmp_path):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {},
+    }
+  }
+  config_path = tmp_path / "dj_queue.toml"
+  config_path.write_text("workerz = []\n", encoding="utf-8")
+
+  with pytest.raises(ImproperlyConfigured) as exc_info:
+    load_backend_config(env={"DJ_QUEUE_CONFIG": str(config_path)})
+
+  assert "DJ_QUEUE_CONFIG" in str(exc_info.value)
+  assert "workerz" in str(exc_info.value)
+
+
 def test_toml_config_rejects_non_json_values(settings, tmp_path):
   settings.TASKS = {
     "default": {

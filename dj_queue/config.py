@@ -34,6 +34,16 @@ DEFAULT_SCHEDULER = {
   "polling_interval": 5,
 }
 
+RECURRING_TASK_OPTIONS = {
+  "task_path",
+  "schedule",
+  "args",
+  "kwargs",
+  "queue_name",
+  "priority",
+  "description",
+}
+
 DEFAULT_OPTIONS = {
   "mode": "fork",
   "workers": [DEFAULT_WORKER],
@@ -363,6 +373,7 @@ def _resolved_options(
   settings_options = backend_block.get("OPTIONS", {})
   if not isinstance(settings_options, Mapping):
     raise ImproperlyConfigured("TASKS backend OPTIONS must be a mapping")
+  _reject_unknown_options(settings_options, DEFAULT_OPTIONS, "TASKS backend OPTIONS")
 
   resolved_options = dict(DEFAULT_OPTIONS)
   resolved_options.update(settings_options)
@@ -396,7 +407,7 @@ def _load_toml_options(config_path: Any, *, backend_alias: str) -> dict[str, Any
 
   raw_backends = config_payload.get("backends")
   if raw_backends is None:
-    return _json_serializable_options(config_payload, "DJ_QUEUE_CONFIG")
+    return _validated_toml_options(config_payload, "DJ_QUEUE_CONFIG")
 
   if len(config_payload) != 1:
     raise ImproperlyConfigured(
@@ -410,10 +421,16 @@ def _load_toml_options(config_path: Any, *, backend_alias: str) -> dict[str, Any
     return {}
   if not isinstance(backend_options, Mapping):
     raise ImproperlyConfigured(f"DJ_QUEUE_CONFIG backends[{backend_alias!r}] must be a mapping")
-  return _json_serializable_options(
+  return _validated_toml_options(
     dict(backend_options),
     f"DJ_QUEUE_CONFIG backends[{backend_alias!r}]",
   )
+
+
+def _validated_toml_options(options: Mapping[str, Any], setting_name: str) -> dict[str, Any]:
+  options = _json_serializable_options(options, setting_name)
+  _reject_unknown_options(options, DEFAULT_OPTIONS, setting_name)
+  return options
 
 
 def _json_serializable_options(options: Mapping[str, Any], setting_name: str) -> dict[str, Any]:
@@ -480,6 +497,7 @@ def _build_worker_configs(raw_workers: Any, mode: str) -> tuple[WorkerConfig, ..
   for index, raw_worker in enumerate(raw_workers or []):
     if not isinstance(raw_worker, Mapping):
       raise ImproperlyConfigured("worker entries must be mappings")
+    _reject_unknown_options(raw_worker, DEFAULT_WORKER, f"workers[{index}]")
 
     worker = WorkerConfig(
       queues=_as_queue_selectors(raw_worker.get("queues", DEFAULT_WORKER["queues"])),
@@ -520,6 +538,7 @@ def _build_dispatcher_configs(raw_dispatchers: Any) -> tuple[DispatcherConfig, .
   for index, raw_dispatcher in enumerate(raw_dispatchers or []):
     if not isinstance(raw_dispatcher, Mapping):
       raise ImproperlyConfigured("dispatcher entries must be mappings")
+    _reject_unknown_options(raw_dispatcher, DEFAULT_DISPATCHER, f"dispatchers[{index}]")
 
     dispatchers.append(
       DispatcherConfig(
@@ -555,6 +574,7 @@ def _build_scheduler_config(raw_scheduler: Any) -> SchedulerConfig:
     raw_scheduler = {}
   if not isinstance(raw_scheduler, Mapping):
     raise ImproperlyConfigured("scheduler config must be a mapping")
+  _reject_unknown_options(raw_scheduler, DEFAULT_SCHEDULER, "scheduler")
 
   return SchedulerConfig(
     dynamic_tasks_enabled=_bool_option(
@@ -587,6 +607,7 @@ def _build_recurring_config(
     key = _nonempty_string_option(key, "recurring task key")
     if not isinstance(raw_entry, Mapping):
       raise ImproperlyConfigured("recurring entries must be mappings")
+    _reject_unknown_options(raw_entry, RECURRING_TASK_OPTIONS, f"recurring task {key!r}")
 
     raw_task_path = raw_entry.get("task_path")
     raw_schedule = raw_entry.get("schedule")
@@ -696,6 +717,17 @@ def _dict_option(value: Any, setting_name: str) -> dict[str, Any]:
   if not isinstance(value, Mapping):
     raise ImproperlyConfigured(f"dj_queue {setting_name} must be a mapping")
   return dict(value)
+
+
+def _reject_unknown_options(
+  options: Mapping[Any, Any],
+  allowed_options: Mapping[Any, Any] | set[Any],
+  setting_name: str,
+) -> None:
+  unknown_options = sorted(set(options) - set(allowed_options), key=repr)
+  if unknown_options:
+    names = ", ".join(repr(name) for name in unknown_options)
+    raise ImproperlyConfigured(f"dj_queue {setting_name} contains unknown options: {names}")
 
 
 def _optional_nonnegative_int(value: Any, setting_name: str) -> int | None:
