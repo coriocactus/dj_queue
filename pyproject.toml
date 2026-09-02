@@ -14,6 +14,7 @@ classifiers = [
   "Development Status :: 4 - Beta",
   "Framework :: Django",
   "Framework :: Django :: 6.0",
+  "Framework :: Django :: 6.1",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.12",
@@ -22,7 +23,7 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-  "django>=6.0.0,<6.1",
+  "django>=6.0.0,<6.2",
 ]
 
 [project.urls]
@@ -43,6 +44,16 @@ dev = [
   "pytest>=9.0.2",
   "pytest-django>=4.12.0",
   "ruff>=0.15.8",
+]
+django60 = ["django>=6.0,<6.1"]
+django61 = ["django>=6.1,<6.2"]
+
+[tool.uv]
+conflicts = [
+  [
+    { group = "django60" },
+    { group = "django61" },
+  ],
 ]
 
 [tool.uv.build-backend]

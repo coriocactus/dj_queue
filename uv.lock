@@ -1,6 +1,10 @@
 version = 1
 revision = 3
 requires-python = ">=3.12"
+conflicts = [[
+    { package = "dj-queue", group = "django60" },
+    { package = "dj-queue", group = "django61" },
+]]
 
 [[package]]
 name = "asgiref"
@@ -16,7 +20,7 @@ name = "cffi"
 version = "2.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pycparser", marker = "implementation_name != 'PyPy'" },
+    { name = "pycparser", marker = "implementation_name != 'PyPy' or (extra == 'group-8-dj-queue-django60' and extra == 'group-8-dj-queue-django61')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/9e/ef/008a1939e372c06329a3fce4279c02f328488f3526744906eeec3da7ad5f/cffi-2.1.1.tar.gz", hash = "sha256:dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be", size = 530807, upload-time = "2026-08-03T21:21:18.939Z" }
 wheels = [
@@ -110,7 +114,7 @@ name = "cryptography"
 version = "50.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "platform_python_implementation != 'PyPy'" },
+    { name = "cffi", marker = "platform_python_implementation != 'PyPy' or (extra == 'group-8-dj-queue-django60' and extra == 'group-8-dj-queue-django61')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/de/41/6cbdcf9142d00fe82836fbb51e503e58088575cf7a0fe1dbff6695bf0840/cryptography-50.0.0.tar.gz", hash = "sha256:eeac2acb5a20ed25e0ad6d1df9891a520b78b404266b6d11778f25d5d691a6c9", size = 880201, upload-time = "2026-07-31T14:25:10.11Z" }
 wheels = [
@@ -160,7 +164,8 @@ name = "dj-queue"
 version = "0.13.0"
 source = { editable = "." }
 dependencies = [
-    { name = "django" },
+    { name = "django", version = "6.0.8", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-8-dj-queue-django60'" },
+    { name = "django", version = "6.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'group-8-dj-queue-django61' or extra != 'group-8-dj-queue-django60'" },
 ]
 
 [package.optional-dependencies]
@@ -181,10 +186,16 @@ dev = [
     { name = "pytest-django" },
     { name = "ruff" },
 ]
+django60 = [
+    { name = "django", version = "6.0.8", source = { registry = "https://pypi.org/simple" } },
+]
+django61 = [
+    { name = "django", version = "6.1", source = { registry = "https://pypi.org/simple" } },
+]
 
 [package.metadata]
 requires-dist = [
-    { name = "django", specifier = ">=6.0.0,<6.1" },
+    { name = "django", specifier = ">=6.0.0,<6.2" },
     { name = "prometheus-client", marker = "extra == 'prometheus'", specifier = ">=0.4.0" },
     { name = "psycopg", marker = "extra == 'postgres'", specifier = ">=3.3.3" },
 ]
@@ -200,19 +211,35 @@ dev = [
     { name = "pytest-django", specifier = ">=4.12.0" },
     { name = "ruff", specifier = ">=0.15.8" },
 ]
+django60 = [{ name = "django", specifier = ">=6.0,<6.1" }]
+django61 = [{ name = "django", specifier = ">=6.1,<6.2" }]
 
 [[package]]
 name = "django"
 version = "6.0.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "asgiref" },
-    { name = "sqlparse" },
-    { name = "tzdata", marker = "sys_platform == 'win32'" },
+    { name = "asgiref", marker = "extra == 'group-8-dj-queue-django60'" },
+    { name = "sqlparse", marker = "extra == 'group-8-dj-queue-django60'" },
+    { name = "tzdata", marker = "(sys_platform == 'win32' and extra == 'group-8-dj-queue-django60') or (extra == 'group-8-dj-queue-django60' and extra == 'group-8-dj-queue-django61')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3c/28/5fee292e588dbdb782582436d1eb62ac8809ec55b98ef27f5b9676a00e9a/django-6.0.8.tar.gz", hash = "sha256:cb0bd962d27fc866f3c514b20aae6a7df56ec80b488f9899da46d675cd051526", size = 10924565, upload-time = "2026-08-04T15:03:39.469Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2e/b4/23e74d261eebfa9c8baed5e8810f09858b9afd613d1037f42ff7aa95c87f/django-6.0.8-py3-none-any.whl", hash = "sha256:9b98b7e1902e0e575ea4f42c175fc9512784f7f2580898286aee3388b322219d", size = 8376956, upload-time = "2026-08-04T15:03:35.138Z" },
+]
+
+[[package]]
+name = "django"
+version = "6.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "asgiref" },
+    { name = "sqlparse" },
+    { name = "tzdata", marker = "(sys_platform == 'win32' and extra != 'group-8-dj-queue-django60') or (extra == 'group-8-dj-queue-django60' and extra == 'group-8-dj-queue-django61')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e2/42/6cb20996733984c1f6661daeda3877990836c76c633c6c8879d39f7120eb/django-6.1.tar.gz", hash = "sha256:86a2aacd59b817e4d6ac2ebfe22356c58f66f7b24e503f71b7c2fead677ee48b", size = 11223034, upload-time = "2026-08-05T19:21:53.789Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/91/9c/ce847620134cfab903e75690c498af73b46abbede2912ea89bd76d5c1e76/django-6.1-py3-none-any.whl", hash = "sha256:6c132cd980c9392b06807d4ca52d72530d631dc65a85d9dacede00a780cefbbe", size = 8417399, upload-time = "2026-08-05T19:21:47.285Z" },
 ]
 
 [[package]]
@@ -256,8 +283,8 @@ name = "psycopg"
 version = "3.3.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
-    { name = "tzdata", marker = "sys_platform == 'win32'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13' or (extra == 'group-8-dj-queue-django60' and extra == 'group-8-dj-queue-django61')" },
+    { name = "tzdata", marker = "sys_platform == 'win32' or (extra == 'group-8-dj-queue-django60' and extra == 'group-8-dj-queue-django61')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/db/2f/cb91e5502ec9de1de6f1b76cfbf69531932725361168bb06963620c77e2e/psycopg-3.3.4.tar.gz", hash = "sha256:e21207764952cff81b6b8bdacad9a3939f2793367fdac2987b3aac36a651b5bc", size = 165799, upload-time = "2026-05-01T23:31:55.179Z" }
 wheels = [
@@ -296,7 +323,7 @@ name = "pytest"
 version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'group-8-dj-queue-django60' and extra == 'group-8-dj-queue-django61')" },
     { name = "iniconfig" },
     { name = "packaging" },
     { name = "pluggy" },
