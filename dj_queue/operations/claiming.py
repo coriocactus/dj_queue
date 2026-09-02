@@ -1,15 +1,18 @@
-import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
 from django.db import transaction
 from django.db.models import Case, IntegerField, Value, When
-from django.db.utils import OperationalError
 from django.utils import timezone
 
 from dj_queue.config import load_backend_config
-from dj_queue.db import database_capabilities, get_database_alias, locked_queryset
+from dj_queue.db import (
+  database_capabilities,
+  get_database_alias,
+  locked_queryset,
+  retry_transient_database_errors,
+)
 from dj_queue.exceptions import EnqueueError
 from dj_queue.log import event_logging_enabled, log_event
 from dj_queue.models import ClaimedExecution, Job, Process, ReadyExecution
@@ -27,32 +30,6 @@ from dj_queue.queue_selectors import (
   selectors_match_all,
 )
 from dj_queue.sql import backend_sql
-
-CLAIM_READY_JOBS_RETRY_ATTEMPTS = 3
-CLAIM_READY_JOBS_RETRY_SLEEP_BASE = 0.01
-TRANSIENT_CLAIM_ERROR_SQLSTATES = {
-  "40001",  # serialization failure
-  "40P01",  # deadlock detected
-  "55P03",  # lock not available
-}
-TRANSIENT_CLAIM_ERROR_ERRNOS = {
-  1205,  # mysql lock wait timeout
-  1213,  # mysql deadlock
-}
-TRANSIENT_CLAIM_SQLITE_CODES = {
-  5,  # SQLITE_BUSY
-  6,  # SQLITE_LOCKED
-  261,  # SQLITE_BUSY_RECOVERY
-  262,  # SQLITE_LOCKED_SHAREDCACHE
-  517,  # SQLITE_BUSY_SNAPSHOT
-}
-TRANSIENT_CLAIM_ERROR_MESSAGES = (
-  "deadlock",
-  "lock wait timeout",
-  "try restarting transaction",
-  "could not serialize access",
-  "database is locked",
-)
 
 
 @dataclass(frozen=True)
@@ -78,21 +55,16 @@ def claim_ready_jobs(
   if use_skip_locked is None:
     use_skip_locked = load_backend_config(backend_alias).use_skip_locked
 
-  for attempt in range(CLAIM_READY_JOBS_RETRY_ATTEMPTS):
-    try:
-      claimed_jobs = _claim_ready_jobs_once(
-        limit=limit,
-        queues=queues,
-        process=process,
-        backend_alias=backend_alias,
-        use_skip_locked=use_skip_locked,
-        alias=alias,
-      )
-      break
-    except OperationalError as error:
-      if attempt == CLAIM_READY_JOBS_RETRY_ATTEMPTS - 1 or not _is_transient_claim_error(error):
-        raise
-      time.sleep(CLAIM_READY_JOBS_RETRY_SLEEP_BASE * (attempt + 1))
+  claimed_jobs = retry_transient_database_errors(
+    lambda: _claim_ready_jobs_once(
+      limit=limit,
+      queues=queues,
+      process=process,
+      backend_alias=backend_alias,
+      use_skip_locked=use_skip_locked,
+      alias=alias,
+    )
+  )
 
   if event_logging_enabled(backend_alias=backend_alias):
     for claimed_job in claimed_jobs:
@@ -313,37 +285,3 @@ def _ordered_selector_rows_queryset(queryset, selectors):
   return filtered.annotate(selector_rank=selector_rank).order_by(
     "selector_rank", "-priority", "id"
   )
-
-
-def _is_transient_claim_error(error):
-  for candidate in _exception_chain(error):
-    if _transient_sqlstate(candidate) or _transient_errno(candidate):
-      return True
-  message = str(error).lower()
-  return any(marker in message for marker in TRANSIENT_CLAIM_ERROR_MESSAGES)
-
-
-def _exception_chain(error):
-  seen = set()
-  while error is not None and id(error) not in seen:
-    seen.add(id(error))
-    yield error
-    error = error.__cause__ or error.__context__
-
-
-def _transient_sqlstate(error):
-  for name in ("pgcode", "sqlstate"):
-    value = getattr(error, name, None)
-    if value in TRANSIENT_CLAIM_ERROR_SQLSTATES:
-      return True
-  return False
-
-
-def _transient_errno(error):
-  sqlite_code = getattr(error, "sqlite_errorcode", None)
-  if sqlite_code in TRANSIENT_CLAIM_SQLITE_CODES:
-    return True
-  errno = getattr(error, "errno", None)
-  if errno in TRANSIENT_CLAIM_ERROR_ERRNOS:
-    return True
-  return bool(error.args and error.args[0] in TRANSIENT_CLAIM_ERROR_ERRNOS)

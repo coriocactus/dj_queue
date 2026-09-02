@@ -13,7 +13,12 @@ from django.utils import timezone
 from django.utils.module_loading import import_string
 
 from dj_queue.config import load_allowed_queues, load_backend_config
-from dj_queue.db import database_capabilities, get_database_alias, locked_queryset
+from dj_queue.db import (
+  database_capabilities,
+  get_database_alias,
+  locked_queryset,
+  retry_transient_database_errors,
+)
 from dj_queue.exceptions import DispatchPolicyError, EnqueueError
 from dj_queue.log import event_logging_enabled, log_event
 from dj_queue.models import (
@@ -509,32 +514,35 @@ def _complete_claimed_job(job, return_value, *, backend_alias="default", task=No
     job = job.job
   job = _resolve_claimed_job(job, alias=alias, backend_alias=backend_alias)
 
-  with transaction.atomic(using=alias):
-    now = timezone.now()
-    config = load_backend_config(job.backend_alias)
+  def complete_transition():
+    with transaction.atomic(using=alias):
+      now = timezone.now()
+      config = load_backend_config(job.backend_alias)
 
-    if config.preserve_finished_jobs:
-      if database_capabilities(alias).backend_family == "postgresql":
-        _delete_claimed_and_finish_job_if_no_execution_state(
-          alias,
-          job,
-          return_value,
-          finished_at=now,
-        )
+      if config.preserve_finished_jobs:
+        if database_capabilities(alias).backend_family == "postgresql":
+          _delete_claimed_and_finish_job_if_no_execution_state(
+            alias,
+            job,
+            return_value,
+            finished_at=now,
+          )
+        else:
+          _delete_claimed_execution(alias, job.id)
+          _finish_job_if_no_execution_state(alias, job, return_value, finished_at=now)
       else:
         _delete_claimed_execution(alias, job.id)
-        _finish_job_if_no_execution_state(alias, job, return_value, finished_at=now)
-    else:
-      _delete_claimed_execution(alias, job.id)
-      _ensure_no_other_execution_state(alias, job, ignored_models=(ClaimedExecution,))
-      job.delete(using=alias)
+        _ensure_no_other_execution_state(alias, job, ignored_models=(ClaimedExecution,))
+        job.delete(using=alias)
 
-    next_claimed_job = _release_concurrency_slot(
-      job,
-      task=task,
-      process_id=process_id,
-      worker_ids=worker_ids,
-    )
+      return _release_concurrency_slot(
+        job,
+        task=task,
+        process_id=process_id,
+        worker_ids=worker_ids,
+      )
+
+  next_claimed_job = retry_transient_database_errors(complete_transition)
   if event_logging_enabled(backend_alias=backend_alias):
     log_event(
       "job.executed",
@@ -568,17 +576,20 @@ def _fail_claimed_job(
     job = job.job
   job = _resolve_claimed_job(job, alias=alias, backend_alias=backend_alias)
 
-  with transaction.atomic(using=alias):
-    _delete_claimed_execution(alias, job.id)
-    _ensure_no_other_execution_state(alias, job, ignored_models=(ClaimedExecution,))
-    FailedExecution.objects.using(alias).create(
-      job_id=job.id,
-      exception_class=_exception_path(error),
-      message=str(error),
-      traceback=traceback_text,
-    )
+  def fail_transition():
+    with transaction.atomic(using=alias):
+      _delete_claimed_execution(alias, job.id)
+      _ensure_no_other_execution_state(alias, job, ignored_models=(ClaimedExecution,))
+      FailedExecution.objects.using(alias).create(
+        job_id=job.id,
+        exception_class=_exception_path(error),
+        message=str(error),
+        traceback=traceback_text,
+      )
 
-    _release_concurrency_slot(job, task=task)
+      _release_concurrency_slot(job, task=task)
+
+  retry_transient_database_errors(fail_transition)
   if event_logging_enabled(backend_alias=backend_alias):
     log_event(
       "job.failed",
@@ -882,22 +893,25 @@ def schedule_failed_job_retry(
 def retry_failed_job(job_id: UUID | str, *, backend_alias: str = "default") -> Job:
   alias = get_database_alias(backend_alias)
 
-  with transaction.atomic(using=alias):
-    failed = (
-      FailedExecution.objects.using(alias)
-      .select_for_update()
-      .select_related("job")
-      .get(job_id=job_id, job__backend_alias=backend_alias)
-    )
-    failed_rows = _consume_selected_rows(alias, FailedExecution, [failed])
-    if not failed_rows:
-      raise EnqueueError("job is not failed")
-    jobs, ready_queue_names, _policy_failures = _dispatch_consumed_failed_rows(
-      alias,
-      failed_rows,
-      backend_alias=backend_alias,
-    )
-    job = jobs[0]
+  def retry_transition():
+    with transaction.atomic(using=alias):
+      failed = (
+        FailedExecution.objects.using(alias)
+        .select_for_update()
+        .select_related("job")
+        .get(job_id=job_id, job__backend_alias=backend_alias)
+      )
+      failed_rows = _consume_selected_rows(alias, FailedExecution, [failed])
+      if not failed_rows:
+        raise EnqueueError("job is not failed")
+      jobs, ready_queue_names, _policy_failures = _dispatch_consumed_failed_rows(
+        alias,
+        failed_rows,
+        backend_alias=backend_alias,
+      )
+      return jobs[0], ready_queue_names
+
+  job, ready_queue_names = retry_transient_database_errors(retry_transition)
 
   if ready_queue_names:
     notify_ready_queues_on_commit(tuple(ready_queue_names), backend_alias=backend_alias)
@@ -914,32 +928,39 @@ def retry_failed_jobs(
 ) -> int:
   alias = get_database_alias(backend_alias)
   config = load_backend_config(backend_alias)
+  if job_ids is not None:
+    job_ids = tuple(job_ids)
 
-  with transaction.atomic(using=alias):
-    queryset = (
-      FailedExecution.objects.using(alias).filter(job__backend_alias=backend_alias).order_by("id")
-    )
-    if job_ids is not None:
-      queryset = queryset.filter(job_id__in=job_ids)
-    failed_rows = list(
-      locked_queryset(
-        queryset.select_related("job"),
-        use_skip_locked=config.use_skip_locked,
-      )[:batch_size]
-    )
-    if not failed_rows:
-      return 0
+  def retry_transition():
+    with transaction.atomic(using=alias):
+      queryset = (
+        FailedExecution.objects.using(alias)
+        .filter(job__backend_alias=backend_alias)
+        .order_by("id")
+      )
+      if job_ids is not None:
+        queryset = queryset.filter(job_id__in=job_ids)
+      failed_rows = list(
+        locked_queryset(
+          queryset.select_related("job"),
+          use_skip_locked=config.use_skip_locked,
+        )[:batch_size]
+      )
+      if not failed_rows:
+        return [], [], []
 
-    failed_rows = _consume_selected_rows(alias, FailedExecution, failed_rows)
-    if not failed_rows:
-      return 0
+      failed_rows = _consume_selected_rows(alias, FailedExecution, failed_rows)
+      if not failed_rows:
+        return [], [], []
 
-    jobs, ready_queue_names, policy_failures = _dispatch_consumed_failed_rows(
-      alias,
-      failed_rows,
-      backend_alias=backend_alias,
-      isolate_policy_errors=True,
-    )
+      return _dispatch_consumed_failed_rows(
+        alias,
+        failed_rows,
+        backend_alias=backend_alias,
+        isolate_policy_errors=True,
+      )
+
+  jobs, ready_queue_names, policy_failures = retry_transient_database_errors(retry_transition)
 
   if ready_queue_names:
     notify_ready_queues_on_commit(
@@ -958,31 +979,34 @@ def promote_failed_job_retries(*, batch_size, backend_alias="default", use_skip_
     use_skip_locked = load_backend_config(backend_alias).use_skip_locked
   now = timezone.now()
 
-  with transaction.atomic(using=alias):
-    queryset = (
-      FailedExecution.objects.using(alias)
-      .filter(job__backend_alias=backend_alias, retry_at__lte=now)
-      .order_by("retry_at", "id")
-    )
-    failed_rows = list(
-      locked_queryset(
-        queryset.select_related("job"),
-        use_skip_locked=use_skip_locked,
-      )[:batch_size]
-    )
-    if not failed_rows:
-      return []
+  def promote_transition():
+    with transaction.atomic(using=alias):
+      queryset = (
+        FailedExecution.objects.using(alias)
+        .filter(job__backend_alias=backend_alias, retry_at__lte=now)
+        .order_by("retry_at", "id")
+      )
+      failed_rows = list(
+        locked_queryset(
+          queryset.select_related("job"),
+          use_skip_locked=use_skip_locked,
+        )[:batch_size]
+      )
+      if not failed_rows:
+        return [], [], []
 
-    failed_rows = _consume_selected_rows(alias, FailedExecution, failed_rows)
-    if not failed_rows:
-      return []
+      failed_rows = _consume_selected_rows(alias, FailedExecution, failed_rows)
+      if not failed_rows:
+        return [], [], []
 
-    jobs, ready_queue_names, policy_failures = _dispatch_consumed_failed_rows(
-      alias,
-      failed_rows,
-      backend_alias=backend_alias,
-      isolate_policy_errors=True,
-    )
+      return _dispatch_consumed_failed_rows(
+        alias,
+        failed_rows,
+        backend_alias=backend_alias,
+        isolate_policy_errors=True,
+      )
+
+  jobs, ready_queue_names, policy_failures = retry_transient_database_errors(promote_transition)
 
   if ready_queue_names:
     notify_ready_queues_on_commit(
