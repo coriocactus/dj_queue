@@ -21,7 +21,7 @@ from dj_queue.log import log_event
 from dj_queue.models import (
   BlockedExecution,
   ClaimedExecution,
-  ReadyExecution,
+  Job,
   Semaphore,
 )
 from dj_queue.operations._helpers import (
@@ -683,43 +683,29 @@ def cleanup_expired_semaphores(*, batch_size=500, backend_alias="default"):
     now = timezone.now()
     with transaction.atomic(using=alias):
       queryset = locked_queryset(
-        _expired_semaphore_cleanup_queryset(alias, now=now),
+        Semaphore.objects.using(alias).filter(expires_at__lte=now),
         use_skip_locked=use_skip_locked,
       )
-      semaphore_ids = list(
-        queryset.order_by("expires_at", "key").values_list("pk", flat=True)[:batch_size]
+      semaphores = list(
+        queryset.order_by("expires_at", "key").values_list("pk", "key")[:batch_size]
       )
+      if not semaphores:
+        return 0
+      semaphore_keys = [key for _semaphore_id, key in semaphores]
+      active_keys = set(
+        Job.objects.using(alias)
+        .filter(concurrency_key__in=semaphore_keys)
+        .filter(Q(claimed_execution__isnull=False) | Q(ready_execution__isnull=False))
+        .values_list("concurrency_key", flat=True)
+        .distinct()
+      )
+      semaphore_ids = [semaphore_id for semaphore_id, key in semaphores if key not in active_keys]
       if not semaphore_ids:
         return 0
-      deleted, _ = (
-        _expired_semaphore_cleanup_queryset(alias, now=now)
-        .filter(pk__in=semaphore_ids)
-        .delete()
-      )
+      deleted, _ = Semaphore.objects.using(alias).filter(pk__in=semaphore_ids).delete()
       return deleted
 
   return retry_transient_database_errors(cleanup_transition)
-
-
-def _expired_semaphore_cleanup_queryset(alias, *, now):
-  claimed_concurrency_keys = (
-    ClaimedExecution.objects.using(alias)
-    .exclude(job__concurrency_key__isnull=True)
-    .exclude(job__concurrency_key="")
-    .values_list("job__concurrency_key", flat=True)
-  )
-  ready_concurrency_keys = (
-    ReadyExecution.objects.using(alias)
-    .exclude(job__concurrency_key__isnull=True)
-    .exclude(job__concurrency_key="")
-    .values_list("job__concurrency_key", flat=True)
-  )
-  return (
-    Semaphore.objects.using(alias)
-    .filter(expires_at__lte=now)
-    .exclude(key__in=claimed_concurrency_keys)
-    .exclude(key__in=ready_concurrency_keys)
-  )
 
 
 def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use_skip_locked=None):

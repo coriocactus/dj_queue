@@ -1692,6 +1692,28 @@ def test_cleanup_expired_semaphores():
 
 
 @pytest.mark.django_db
+def test_cleanup_expired_semaphores_deletes_without_execution_state_subqueries():
+  Semaphore.objects.create(
+    key="expired",
+    value=0,
+    limit=1,
+    expires_at=timezone.now() - timedelta(seconds=1),
+  )
+
+  with CaptureQueriesContext(connection) as ctx:
+    assert cleanup_expired_semaphores() == 1
+
+  semaphore_deletes = [
+    query["sql"]
+    for query in ctx.captured_queries
+    if query["sql"].lstrip().startswith("DELETE") and "dj_queue_semaphores" in query["sql"]
+  ]
+  assert len(semaphore_deletes) == 1
+  assert "dj_queue_ready_executions" not in semaphore_deletes[0]
+  assert "dj_queue_claimed_executions" not in semaphore_deletes[0]
+
+
+@pytest.mark.django_db
 def test_cleanup_expired_semaphores_respects_batch_size():
   now = timezone.now()
   for index in range(3):
