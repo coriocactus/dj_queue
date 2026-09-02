@@ -190,6 +190,10 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
   if not prepared:
     return []
 
+  job_ids = sorted(entry.job.pk for entry in prepared)
+  for entry, job_id in zip(prepared, job_ids, strict=True):
+    entry.job.pk = job_id
+
   for entry in prepared:
     entry.dispatch_decision = _dispatch_decision(
       entry.job,

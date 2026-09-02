@@ -279,6 +279,26 @@ def test_enqueue_bulk_immediate_query_budget_stays_batch_sized():
 
 
 @pytest.mark.django_db
+def test_enqueue_bulk_inserts_ready_rows_in_stable_job_order(monkeypatch):
+  job_ids = iter([uuid.UUID(int=3), uuid.UUID(int=2), uuid.UUID(int=1)])
+  monkeypatch.setattr(Job._meta.get_field("id"), "_get_default", lambda: next(job_ids))
+  original_bulk_create = operation_helpers._bulk_create
+  ready_job_ids = []
+
+  def capture_bulk_create(alias, model, objects):
+    objects = tuple(objects)
+    if model is ReadyExecution:
+      ready_job_ids.extend(row.job_id for row in objects)
+    return original_bulk_create(alias, model, objects)
+
+  monkeypatch.setattr(operation_helpers, "_bulk_create", capture_bulk_create)
+
+  echo.get_backend().enqueue_all([(echo, (index,), {}) for index in range(3)])
+
+  assert ready_job_ids == sorted(ready_job_ids)
+
+
+@pytest.mark.django_db
 def test_enqueue_bulk_preserves_claim_order_without_timestamp_sequence():
   backend = echo.get_backend()
 
