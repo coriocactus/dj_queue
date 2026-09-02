@@ -39,6 +39,37 @@ def test_smoke_defaults_use_small_isolated_run(tmp_path):
   assert args.seed_recurring_executions == 100
   assert args.calibration_jobs == 100
   assert args.database_name == str(result_dir / "dj_queue_prerelease.sqlite3")
+  assert prerelease.enforce_release_performance_gates(args) is False
+
+
+def test_only_canonical_release_profile_enforces_performance_gates(tmp_path):
+  base = [
+    "--from-ref",
+    "old",
+    "--to-ref",
+    "new",
+    "--backend",
+    "sqlite",
+  ]
+  release = prerelease.parse_args([*base, "--result-dir", str(tmp_path / "release")])
+  short = prerelease.parse_args(
+    [*base, "--result-dir", str(tmp_path / "short"), "--duration", "120"]
+  )
+  small_seed = prerelease.parse_args(
+    [
+      *base,
+      "--result-dir",
+      str(tmp_path / "small"),
+      "--seed-jobs",
+      "100",
+      "--seed-recurring-executions",
+      "100",
+    ]
+  )
+
+  assert prerelease.enforce_release_performance_gates(release) is True
+  assert prerelease.enforce_release_performance_gates(short) is False
+  assert prerelease.enforce_release_performance_gates(small_seed) is False
 
 
 def test_phase_plan_preserves_ten_minute_rollout_order():
@@ -192,6 +223,7 @@ def test_performance_results_rejects_one_sample_recovery():
     run_id="run",
     plan=plan,
     migration_finished_at=30,
+    enforce_performance=False,
   )
 
   assert result["queue_recovered_at_seconds"] is None
@@ -204,6 +236,9 @@ def test_performance_results_can_report_without_enforcing_short_smoke_ratios():
     {"elapsed_seconds": 2, "completed_x": 0, "depth": 10, "deadlocks": 0},
     {"elapsed_seconds": 5, "completed_x": 0, "depth": 10, "deadlocks": 0},
     {"elapsed_seconds": 8, "completed_x": 60, "depth": 10, "deadlocks": 0},
+    {"elapsed_seconds": 10, "depth": 10, "deadlocks": 0},
+    {"elapsed_seconds": 11, "depth": 10, "deadlocks": 0},
+    {"elapsed_seconds": 12, "depth": 10, "deadlocks": 0},
     {"elapsed_seconds": 20, "completed_y": 0, "depth": 100, "deadlocks": 0},
     {"elapsed_seconds": 24, "completed_y": 20, "depth": 100, "deadlocks": 0},
   ]
@@ -221,7 +256,7 @@ def test_performance_results_can_report_without_enforcing_short_smoke_ratios():
   assert result["performance_gates_enforced"] is False
   assert result["y_throughput"] < result["x_throughput"] * 0.90
   assert result["y_enqueue_p95_ms"] > result["x_enqueue_p95_ms"] * 1.25
-  assert result["queue_recovered_at_seconds"] is None
+  assert result["queue_recovered_at_seconds"] == 10
 
 
 def test_resolve_revisions_rejects_unrelated_revisions(monkeypatch):

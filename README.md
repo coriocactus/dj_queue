@@ -413,9 +413,9 @@ writes, runs both versions together, drains with release N, and verifies queue
 state and side effects. It rejects revisions that do not publish one shared
 rollout protocol. It writes wheel hashes, one-second metrics, logs, and a result
 manifest under `benchmark-results/`. The **Pre-release migration load** workflow
-runs the database floor and current-version lanes. `--smoke` keeps all validity
-gates and records performance, but leaves performance gates to the full
-ten-minute proof.
+runs the database floor and current-version lanes. `--smoke` and custom workload
+profiles keep all validity and stability gates and record performance. Only the
+default ten-minute release profile enforces the X-to-Y performance ratios.
 
 ## Recurring Tasks
 

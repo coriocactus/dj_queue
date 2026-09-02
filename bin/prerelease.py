@@ -20,6 +20,10 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RUNTIME_SCRIPT = PROJECT_ROOT / "benchmarks" / "prerelease_runtime.py"
+DEFAULT_DURATION = 600
+DEFAULT_LOAD_FACTOR = 0.675
+DEFAULT_WORKERS = 2
+DEFAULT_THREADS = 4
 DEFAULT_SEED = {
   "jobs": 100_000,
   "queues": 100,
@@ -314,8 +318,8 @@ def parse_args(argv):
   parser.add_argument(
     "--django", default=">=6.0,<6.1", help="One Django range for both revisions."
   )
-  parser.add_argument("--duration", type=float, default=600)
-  parser.add_argument("--load-factor", type=float, default=0.675)
+  parser.add_argument("--duration", type=float, default=DEFAULT_DURATION)
+  parser.add_argument("--load-factor", type=float, default=DEFAULT_LOAD_FACTOR)
   parser.add_argument("--seed-jobs", type=int, default=DEFAULT_SEED["jobs"])
   parser.add_argument("--seed-queues", type=int, default=DEFAULT_SEED["queues"])
   parser.add_argument("--seed-semaphores", type=int, default=DEFAULT_SEED["semaphores"])
@@ -325,8 +329,8 @@ def parse_args(argv):
     default=DEFAULT_SEED["recurring_executions"],
   )
   parser.add_argument("--calibration-jobs", type=int, default=DEFAULT_SEED["calibration_jobs"])
-  parser.add_argument("--workers", type=int, default=2)
-  parser.add_argument("--threads", type=int, default=4)
+  parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
+  parser.add_argument("--threads", type=int, default=DEFAULT_THREADS)
   parser.add_argument("--database-name")
   parser.add_argument("--database-host", default="127.0.0.1")
   parser.add_argument("--database-port", type=int)
@@ -400,6 +404,21 @@ def validate_args(args):
     raise ValueError("seed-recurring-executions cannot exceed seed-jobs")
   if "prerelease" not in args.database_name.lower():
     raise ValueError("database-name must contain 'prerelease'")
+
+
+def enforce_release_performance_gates(args):
+  return (
+    not args.smoke
+    and args.duration == DEFAULT_DURATION
+    and args.load_factor == DEFAULT_LOAD_FACTOR
+    and args.seed_jobs == DEFAULT_SEED["jobs"]
+    and args.seed_queues == DEFAULT_SEED["queues"]
+    and args.seed_semaphores == DEFAULT_SEED["semaphores"]
+    and args.seed_recurring_executions == DEFAULT_SEED["recurring_executions"]
+    and args.calibration_jobs == DEFAULT_SEED["calibration_jobs"]
+    and args.workers == DEFAULT_WORKERS
+    and args.threads == DEFAULT_THREADS
+  )
 
 
 def resolve_revisions(from_ref, to_ref):
@@ -678,8 +697,8 @@ def performance_results(
       problems.append("insufficient enqueue samples for latency gate")
     elif y_p95 > x_p95 * 1.25:
       problems.append(f"Y enqueue p95 {y_p95:.2f}ms exceeds 1.25x X {x_p95:.2f}ms")
-    if recovered_at is None:
-      problems.append("queue depth did not return to its pre-migration trend in 60 seconds")
+  if recovered_at is None:
+    problems.append("queue depth did not return to its pre-migration trend in 60 seconds")
   if deadlock_delta not in (None, 0):
     problems.append(f"database deadlock count increased by {deadlock_delta}")
   if any("collector_error" in sample for sample in samples):
@@ -916,7 +935,7 @@ def run(args):
           run_id=run_id,
           plan=plan,
           migration_finished_at=migration_finished_at,
-          enforce_performance=not args.smoke,
+          enforce_performance=enforce_release_performance_gates(args),
         )
         category_counts = analysis_probe.category_counts(run_id)
       finally:
