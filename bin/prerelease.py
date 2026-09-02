@@ -218,8 +218,8 @@ class DatabaseProbe:
           ),
           "waiting_locks": self.scalar("SELECT COUNT(*) FROM pg_locks WHERE NOT granted"),
           "dead_tuples": self.scalar(
-            "SELECT COALESCE(SUM(n_dead_tup), 0) FROM pg_stat_user_tables "
-            "WHERE relname LIKE 'dj_queue_%'"
+            "SELECT COALESCE(SUM(n_dead_tup), 0) FROM pg_stat_user_tables WHERE relname LIKE %s",
+            ["dj_queue_%"],
           ),
         }
       if self.backend in {"mysql", "mariadb"}:

@@ -49,6 +49,18 @@ def test_phase_plan_preserves_ten_minute_rollout_order():
   assert plan.producer_stop_at == 480
 
 
+def test_postgres_diagnostics_bind_table_name_pattern():
+  calls = []
+  probe = object.__new__(prerelease.DatabaseProbe)
+  probe.backend = "postgres"
+  probe.scalar = lambda sql, params=(): calls.append((sql, params)) or 0
+
+  result = probe._database_diagnostics()
+
+  assert result == {"deadlocks": 0, "waiting_locks": 0, "dead_tuples": 0}
+  assert calls[-1][1] == ["dj_queue_%"]
+
+
 def test_performance_results_accept_valid_rollout():
   plan = prerelease.PhasePlan.for_duration(30)
   samples = [
