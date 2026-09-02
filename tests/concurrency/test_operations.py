@@ -1342,8 +1342,38 @@ def test_claim_ready_jobs_uses_fixed_query_budget_for_successful_claim():
   with CaptureQueriesContext(connection) as ctx:
     claim_ready_jobs(limit=1)
 
-  expected_queries = 5 if connection.vendor == "postgresql" else 7
+  if connection.vendor == "postgresql":
+    expected_queries = 5
+  elif connection.vendor == "mysql":
+    expected_queries = 8
+  else:
+    expected_queries = 7
   assert len(ctx.captured_queries) == expected_queries
+
+
+@pytest.mark.skipif(
+  os.environ.get("DB_BACKEND", "sqlite") not in {"mysql", "mariadb"},
+  reason="requires DB_BACKEND=mysql or DB_BACKEND=mariadb",
+)
+@pytest.mark.django_db(transaction=True)
+def test_mysql_family_claim_forces_the_ready_priority_index():
+  job = make_job()
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+
+  with CaptureQueriesContext(connection) as ctx:
+    claim_ready_jobs(limit=1)
+
+  selects = [
+    query["sql"]
+    for query in ctx.captured_queries
+    if query["sql"].lstrip().startswith("SELECT") and "dj_queue_ready_executions" in query["sql"]
+  ]
+  assert any("FORCE INDEX (`djq_re_b_prio_d_idx`)" in query for query in selects)
 
 
 @pytest.mark.skipif(
@@ -1629,7 +1659,12 @@ def test_claim_ready_jobs_rejects_conflicting_state_with_fixed_query_budget():
   ):
     claim_ready_jobs(limit=1)
 
-  expected_queries = 7 if connection.vendor == "postgresql" else 5
+  if connection.vendor == "postgresql":
+    expected_queries = 7
+  elif connection.vendor == "mysql":
+    expected_queries = 6
+  else:
+    expected_queries = 5
   assert len(ctx.captured_queries) == expected_queries
 
 

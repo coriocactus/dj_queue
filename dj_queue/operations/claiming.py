@@ -178,6 +178,16 @@ def _filter_queue_selectors(queryset, queues):
 
 def _select_ready_rows(queryset, *, limit, queues, use_skip_locked, alias, backend_alias):
   if selectors_match_all(queues):
+    select_ready_row_ids = getattr(backend_sql(alias), "select_ready_row_ids", None)
+    if select_ready_row_ids is not None:
+      row_ids = select_ready_row_ids(
+        alias,
+        backend_alias=backend_alias,
+        limit=limit,
+        use_skip_locked=use_skip_locked,
+      )
+      rows_by_id = queryset.in_bulk(row_ids)
+      return [rows_by_id[row_id] for row_id in row_ids if row_id in rows_by_id]
     ordered = queryset.order_by("-priority", "id")
     return list(locked_queryset(ordered, use_skip_locked=use_skip_locked)[:limit])
 
