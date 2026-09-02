@@ -599,7 +599,15 @@ def sample_throughput(samples, field, start, end):
   return (selected[-1][field] - selected[0][field]) / elapsed
 
 
-def performance_results(samples, probe, *, run_id, plan, migration_finished_at):
+def performance_results(
+  samples,
+  probe,
+  *,
+  run_id,
+  plan,
+  migration_finished_at,
+  enforce_performance=True,
+):
   warmup = max(1, plan.duration * 0.05)
   x_throughput = sample_throughput(
     samples,
@@ -658,16 +666,17 @@ def performance_results(samples, probe, *, run_id, plan, migration_finished_at):
   deadlock_delta = deadlock_values[-1] - deadlock_values[0] if len(deadlock_values) >= 2 else None
 
   problems = []
-  if x_throughput is None or y_throughput is None:
-    problems.append("insufficient steady-state samples for throughput gate")
-  elif y_throughput < x_throughput * 0.90:
-    problems.append(f"Y throughput {y_throughput:.2f}/s is below 90% of X {x_throughput:.2f}/s")
-  if x_p95 is None or y_p95 is None:
-    problems.append("insufficient enqueue samples for latency gate")
-  elif y_p95 > x_p95 * 1.25:
-    problems.append(f"Y enqueue p95 {y_p95:.2f}ms exceeds 1.25x X {x_p95:.2f}ms")
-  if recovered_at is None:
-    problems.append("queue depth did not return to its pre-migration trend in 60 seconds")
+  if enforce_performance:
+    if x_throughput is None or y_throughput is None:
+      problems.append("insufficient steady-state samples for throughput gate")
+    elif y_throughput < x_throughput * 0.90:
+      problems.append(f"Y throughput {y_throughput:.2f}/s is below 90% of X {x_throughput:.2f}/s")
+    if x_p95 is None or y_p95 is None:
+      problems.append("insufficient enqueue samples for latency gate")
+    elif y_p95 > x_p95 * 1.25:
+      problems.append(f"Y enqueue p95 {y_p95:.2f}ms exceeds 1.25x X {x_p95:.2f}ms")
+    if recovered_at is None:
+      problems.append("queue depth did not return to its pre-migration trend in 60 seconds")
   if deadlock_delta not in (None, 0):
     problems.append(f"database deadlock count increased by {deadlock_delta}")
   if any("collector_error" in sample for sample in samples):
@@ -678,6 +687,7 @@ def performance_results(samples, probe, *, run_id, plan, migration_finished_at):
   return {
     "healthy": not problems,
     "problems": problems,
+    "performance_gates_enforced": enforce_performance,
     "x_throughput": x_throughput,
     "y_throughput": y_throughput,
     "x_enqueue_p95_ms": x_p95,
@@ -903,6 +913,7 @@ def run(args):
           run_id=run_id,
           plan=plan,
           migration_finished_at=migration_finished_at,
+          enforce_performance=not args.smoke,
         )
         category_counts = analysis_probe.category_counts(run_id)
       finally:

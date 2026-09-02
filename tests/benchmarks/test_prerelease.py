@@ -198,6 +198,31 @@ def test_performance_results_rejects_one_sample_recovery():
   assert any("queue depth" in problem for problem in result["problems"])
 
 
+def test_performance_results_can_report_without_enforcing_short_smoke_ratios():
+  plan = prerelease.PhasePlan.for_duration(30)
+  samples = [
+    {"elapsed_seconds": 2, "completed_x": 0, "depth": 10, "deadlocks": 0},
+    {"elapsed_seconds": 8, "completed_x": 60, "depth": 10, "deadlocks": 0},
+    {"elapsed_seconds": 20, "completed_y": 0, "depth": 100, "deadlocks": 0},
+    {"elapsed_seconds": 24, "completed_y": 20, "depth": 100, "deadlocks": 0},
+  ]
+
+  result = prerelease.performance_results(
+    samples,
+    LatencyProbe([10], [20]),
+    run_id="run",
+    plan=plan,
+    migration_finished_at=9.5,
+    enforce_performance=False,
+  )
+
+  assert result["healthy"] is True
+  assert result["performance_gates_enforced"] is False
+  assert result["y_throughput"] < result["x_throughput"] * 0.90
+  assert result["y_enqueue_p95_ms"] > result["x_enqueue_p95_ms"] * 1.25
+  assert result["queue_recovered_at_seconds"] is None
+
+
 def test_resolve_revisions_rejects_unrelated_revisions(monkeypatch):
   revisions = iter(("a" * 40, "b" * 40))
   monkeypatch.setattr(prerelease, "git_output", lambda *_args: next(revisions))
