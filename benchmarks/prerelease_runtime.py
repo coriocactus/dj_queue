@@ -196,6 +196,7 @@ def migrate():
       if connection.vendor == "mysql":
         with connection.cursor() as cursor:
           cursor.execute("SET SESSION lock_wait_timeout = 2")
+          cursor.execute("SET SESSION innodb_lock_wait_timeout = 2")
       call_command("migrate", verbosity=1, interactive=False)
       return
     except OperationalError as error:
