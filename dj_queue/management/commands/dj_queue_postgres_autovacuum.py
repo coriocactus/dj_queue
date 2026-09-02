@@ -1,3 +1,4 @@
+from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connections
 
@@ -10,11 +11,18 @@ class Command(BaseCommand):
   help = "Print PostgreSQL autovacuum storage-parameter SQL for dj_queue tables"
 
   def add_arguments(self, parser):
-    parser.add_argument("--backend", default="default")
+    parser.add_argument(
+      "--backend",
+      default="default",
+      help="TASKS backend alias (default: default)",
+    )
 
   def handle(self, *args, **options):
     backend_alias = options["backend"]
-    database_alias = load_backend_config(backend_alias).database_alias
+    try:
+      database_alias = load_backend_config(backend_alias).database_alias
+    except ImproperlyConfigured as exc:
+      raise CommandError(str(exc)) from exc
     if database_capabilities(database_alias).backend_family != "postgresql":
       raise CommandError("dj_queue_postgres_autovacuum requires PostgreSQL")
 

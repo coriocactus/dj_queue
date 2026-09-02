@@ -341,6 +341,32 @@ def test_dj_queue_prune_command_deletes_old_finished_jobs(capsys):
   assert Job.objects.filter(pk=recent_job.pk).exists() is True
 
 
+@pytest.mark.parametrize(
+  ("option", "value", "message"),
+  (
+    ("--older-than", "-1", "--older-than must be non-negative"),
+    ("--failed-older-than", "-1", "--failed-older-than must be non-negative"),
+    ("--recurring-older-than", "-1", "--recurring-older-than must be non-negative"),
+    ("--batch-size", "0", "--batch-size must be positive"),
+  ),
+)
+def test_prune_command_rejects_invalid_limits(option, value, message):
+  with pytest.raises(CommandError, match=message):
+    call_command("dj_queue_prune", option, value)
+
+
+def test_prune_command_reports_when_batch_limit_is_reached(capsys):
+  make_finished_job()
+  make_finished_job()
+
+  call_command("dj_queue_prune", "--older-than", "0", "--batch-size", "1")
+
+  captured = capsys.readouterr()
+  assert "deleted 1 finished jobs" in captured.out
+  assert "batch limit reached; run dj_queue_prune again to check for more" in captured.out
+  assert Job.objects.count() == 1
+
+
 def test_prune_command_task_path_filter_limits_deletions(capsys):
   kept_job = make_finished_job(task_path="tests.tasks.other")
   pruned_job = make_finished_job(task_path="tests.tasks.echo")
@@ -493,8 +519,35 @@ def test_dj_queue_health_reports_live_and_dead_states():
 
   Process.objects.all().update(last_heartbeat_at=timezone.now() - timedelta(hours=1))
 
+  unhealthy_stderr = StringIO()
   with pytest.raises(SystemExit, match="1"):
-    call_command("dj_queue_health")
+    call_command("dj_queue_health", stderr=unhealthy_stderr)
+  assert unhealthy_stderr.getvalue().strip() == "unhealthy: no live dj_queue processes"
+
+
+def test_health_command_rejects_non_positive_max_age():
+  with pytest.raises(CommandError, match="--max-age must be positive"):
+    call_command("dj_queue_health", "--max-age", "0")
+
+
+@pytest.mark.parametrize(
+  "command_name",
+  ("dj_queue_health", "dj_queue_prune", "dj_queue_postgres_autovacuum"),
+)
+def test_operational_commands_report_configuration_errors_as_command_errors(
+  settings,
+  command_name,
+):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "QUEUES": [],
+      "OPTIONS": {"unknown_option": True},
+    }
+  }
+
+  with pytest.raises(CommandError, match="unknown_option"):
+    call_command(command_name)
 
 
 def test_postgres_autovacuum_command_prints_reviewable_sql(monkeypatch):

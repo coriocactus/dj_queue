@@ -40,7 +40,7 @@ DB_BACKEND=mariadb examples/ex01_basic_enqueue.py
 | `ex06_basic_bulk_enqueue.py` | `enqueue_all()` batch submission | five task results and five ready executions |
 | `ex07_basic_enqueue_on_commit.py` | safe enqueue inside a transaction | zero ready rows before commit, one after |
 | `ex08_basic_recurring.py` | static recurring tasks via settings | recurring rows with `static=True` |
-| `ex20_advanced_concurrency.py` | `concurrency_key`, `concurrency_limit`, `on_conflict` | one blocked job and a discarded singleton conflict |
+| `ex20_advanced_concurrency.py` | typed `@concurrency` limits and conflict policies | one blocked job and a discarded singleton conflict |
 | `ex21_advanced_queue_control.py` | `QueueInfo` pause, resume, clear, size, latency | paused queues refuse claims and clear removes ready jobs |
 | `ex22_advanced_dynamic_recurring.py` | runtime `schedule_recurring_task()` / `unschedule_recurring_task()` | one row updated in place, then deleted |
 | `ex23_advanced_error_handling.py` | failed job inspection, retry, discard | failed metadata, then a ready retry, then full discard |

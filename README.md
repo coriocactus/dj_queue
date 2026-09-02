@@ -48,6 +48,9 @@ Install the package:
 pip install dj-queue
 ```
 
+The package includes inline public API annotations and a `py.typed` marker for
+PEP 561-compatible type checkers.
+
 Optional extras:
 
 ```bash
@@ -420,29 +423,33 @@ Notes:
 
 Tasks can opt into database-backed concurrency limits.
 
-`django.tasks` has no standard way to pass backend-specific options through the
-`@task` decorator, so `dj_queue` reads them as attributes on the wrapped function:
+Use `dj_queue.api.concurrency` with Django's `@task` decorator:
 
 ```python
 from django.tasks import task
+from dj_queue.api import concurrency
 
 
 @task
+@concurrency(
+  key="account:{account_id}",
+  limit=1,
+  duration=60,
+  on_conflict="block",
+)
 def sync_account(account_id, action):
   return f"{account_id}:{action}"
-
-
-sync_account.func.concurrency_key = "account:{account_id}"
-sync_account.func.concurrency_limit = 1
-sync_account.func.concurrency_duration = 60
-sync_account.func.on_conflict = "block"
 ```
 
 With this configuration:
 
 - the first matching job can run immediately
 - later jobs for the same key can block until capacity is released
-- `on_conflict = "discard"` turns the same pattern into singleton-style work
+- `on_conflict="discard"` turns the same pattern into singleton-style work
+
+The concurrency key can be a format string or a callable. Both decorator orders
+are supported, but placing `@task` above `@concurrency` keeps backend-specific
+options next to the task function.
 
 Semaphore rows remain shared on the queue database. If you want per-backend
 isolation for a limit, express that in the `concurrency_key` itself rather than
@@ -488,10 +495,12 @@ Operational commands:
 
 ```bash
 python manage.py dj_queue_health
+python manage.py dj_queue_health --deep
 python manage.py dj_queue_health --max-age 120
 python manage.py dj_queue_prune --older-than 86400
 python manage.py dj_queue_prune --failed-older-than 604800
 python manage.py dj_queue_prune --recurring-older-than 2592000
+python manage.py dj_queue_prune --batch-size 500
 python manage.py dj_queue_prune --task-path myapp.tasks.cleanup
 python manage.py dj_queue_prune --task-key nightly_cleanup
 python manage.py dj_queue_postgres_autovacuum
@@ -499,9 +508,14 @@ python manage.py dj_queue_postgres_autovacuum
 
 The health, prune, and PostgreSQL autovacuum commands accept `--backend` to target a non-default backend alias.
 
+`dj_queue_health` exits with status `1` and prints a reason when no process is
+live. Add `--deep` to check persisted queue invariants after the process check.
+
 For `dj_queue_prune`, `--task-path` filters finished and failed job cleanup by
 task import path, while `--task-key` filters recurring execution cleanup by
-recurring task key.
+recurring task key. One invocation deletes at most `--batch-size` rows from
+each retained row type. Run it again when it reports that the batch limit was
+reached.
 
 ## Failed Jobs
 
@@ -869,6 +883,10 @@ Configuration precedence is explicit:
 - environment variables
 - TOML file pointed to by `DJ_QUEUE_CONFIG`
 - Django `TASKS` settings
+
+Unknown option names are rejected in Django settings and in the selected TOML
+overlay, including nested worker, dispatcher, scheduler, and recurring task
+options. The error identifies the exact configuration path and option name.
 
 ### TOML file config
 

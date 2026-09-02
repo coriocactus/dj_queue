@@ -10,25 +10,25 @@ import _settings  # noqa: F401
 from _example import result, status_name, step, takeaway, title
 from django.tasks import task
 
+from dj_queue.api import concurrency
 from dj_queue.models import BlockedExecution, Job, ReadyExecution, Semaphore
 
 
 @task
+@concurrency(key="account:{account_id}", limit=1, duration=60)
 def process_account(account_id, action):
   return f"{account_id}:{action}"
 
 
 @task
+@concurrency(key="singleton:{key}", limit=1, on_conflict="discard")
 def singleton_job(key):
   return key
 
 
 title("ex20", "apply concurrency limits and inspect blocked or discarded work")
 
-step(1, "configure a per-account semaphore and enqueue competing jobs")
-process_account.func.concurrency_key = "account:{account_id}"
-process_account.func.concurrency_limit = 1
-process_account.func.concurrency_duration = 60
+step(1, "enqueue competing jobs through a per-account semaphore")
 first = process_account.enqueue("42", "sync")
 second = process_account.enqueue("42", "export")
 third = process_account.enqueue("99", "sync")
@@ -46,9 +46,6 @@ for semaphore in Semaphore.objects.order_by("key"):
   )
 
 step(3, "switch to on_conflict=discard for singleton work")
-singleton_job.func.concurrency_key = "singleton:{key}"
-singleton_job.func.concurrency_limit = 1
-singleton_job.func.on_conflict = "discard"
 discarded_first = singleton_job.enqueue("report")
 discarded_second = singleton_job.enqueue("report")
 result(f"singleton_job_1_status={status_name(discarded_first.status)}")

@@ -70,13 +70,38 @@ class Command(BaseCommand):
   help = "Start the dj_queue supervisor"
 
   def add_arguments(self, parser):
-    parser.add_argument("--backend", default="default")
-    parser.add_argument("--config")
-    parser.add_argument("--mode", choices=("fork", "async"))
-    parser.add_argument("--only-work", action="store_true")
-    parser.add_argument("--only-dispatch", action="store_true")
-    parser.add_argument("--skip-recurring", action="store_true")
-    parser.add_argument("--migration-wait-timeout", type=float, default=MIGRATION_WAIT_TIMEOUT)
+    parser.add_argument(
+      "--backend",
+      default="default",
+      help="TASKS backend alias (default: default)",
+    )
+    parser.add_argument("--config", help="TOML configuration overlay path")
+    parser.add_argument(
+      "--mode",
+      choices=("fork", "async"),
+      help="standalone supervisor mode",
+    )
+    parser.add_argument(
+      "--only-work",
+      action="store_true",
+      help="start workers without dispatchers or scheduler",
+    )
+    parser.add_argument(
+      "--only-dispatch",
+      action="store_true",
+      help="start dispatchers without workers or scheduler",
+    )
+    parser.add_argument(
+      "--skip-recurring",
+      action="store_true",
+      help="start without the scheduler",
+    )
+    parser.add_argument(
+      "--migration-wait-timeout",
+      type=float,
+      default=MIGRATION_WAIT_TIMEOUT,
+      help="seconds to wait for pending queue migrations (default: 60)",
+    )
 
   def handle(self, *args, **options):
     cli_overrides = {
