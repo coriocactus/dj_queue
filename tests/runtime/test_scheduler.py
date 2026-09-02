@@ -4,13 +4,14 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from django.db import transaction
+from django.db import OperationalError, transaction
 from django.db.models.query import QuerySet
 from django.utils import timezone
 
 from dj_queue.api import schedule_recurring_task, unschedule_recurring_task
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import FailedExecution, Job, Process, RecurringExecution, RecurringTask
+from dj_queue.operations import recurring as recurring_operations
 from dj_queue.operations.recurring import fire_recurring_task
 from dj_queue.runtime.scheduler import Scheduler
 from tests.tasks import echo
@@ -623,6 +624,47 @@ def test_fire_recurring_task_uses_locked_current_definition():
   assert execution.job.payload == {"args": ["updated"], "kwargs": {}}
   assert execution.job.queue_name == "updated-queue"
   assert execution.job.priority == 5
+
+
+@pytest.mark.parametrize(
+  "stage_name",
+  [
+    "_reserve_recurring_task",
+    "_enqueue_reserved_recurring_task",
+    "_attach_reserved_recurring_job",
+  ],
+)
+def test_fire_recurring_task_retries_transient_database_error(monkeypatch, stage_name):
+  now = fixed_now()
+  recurring_task = RecurringTask.objects.create(
+    backend_alias="default",
+    key="dynamic-task",
+    task_path="tests.tasks.echo",
+    payload={"args": ["value"], "kwargs": {}},
+    schedule="* * * * *",
+    queue_name="default",
+    priority=0,
+    static=False,
+  )
+  original_stage = getattr(recurring_operations, stage_name)
+  calls = 0
+
+  def deadlock_once(*args, **kwargs):
+    nonlocal calls
+    calls += 1
+    if calls == 1:
+      raise OperationalError("deadlock found when trying to get lock")
+    return original_stage(*args, **kwargs)
+
+  monkeypatch.setattr(recurring_operations, stage_name, deadlock_once)
+
+  execution = fire_recurring_task(recurring_task, now.replace(second=0, microsecond=0))
+
+  assert calls == 2
+  assert execution is not None
+  assert execution.job_id is not None
+  assert RecurringExecution.objects.count() == 1
+  assert Job.objects.count() == 1
 
 
 def test_fire_recurring_task_skips_stale_run_after_schedule_change():
