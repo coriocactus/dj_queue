@@ -1195,6 +1195,31 @@ def test_claim_ready_jobs_uses_fixed_query_budget_for_successful_claim():
 
 
 @pytest.mark.skipif(
+  os.environ.get("DB_BACKEND", "sqlite") not in {"mysql", "mariadb"},
+  reason="requires DB_BACKEND=mysql or DB_BACKEND=mariadb",
+)
+@pytest.mark.django_db(transaction=True)
+def test_mysql_family_claim_deletes_only_selected_ready_rows():
+  job = make_job()
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias=job.backend_alias,
+    queue_name=job.queue_name,
+    priority=job.priority,
+  )
+
+  with CaptureQueriesContext(connection) as ctx:
+    claim_ready_jobs(limit=1)
+
+  deletes = [
+    query["sql"]
+    for query in ctx.captured_queries
+    if query["sql"].lstrip().startswith("DELETE") and "dj_queue_ready_executions" in query["sql"]
+  ]
+  assert any("STRAIGHT_JOIN `dj_queue_ready_executions` ready" in query for query in deletes)
+
+
+@pytest.mark.skipif(
   os.environ.get("DB_BACKEND", "sqlite") != "sqlite",
   reason="simulates SQLite's lack of row-level locks",
 )

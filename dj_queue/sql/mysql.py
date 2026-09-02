@@ -1,6 +1,6 @@
 from django.db import connections
 
-from dj_queue.models import Semaphore
+from dj_queue.models import ReadyExecution, Semaphore
 
 
 def create_ignore_conflicts(connection, model, *, columns, placeholders, params):
@@ -14,6 +14,24 @@ def create_ignore_conflicts(connection, model, *, columns, placeholders, params)
       params,
     )
     return cursor.lastrowid != 0
+
+
+def consume_ready_rows(alias, rows):
+  connection = connections[alias]
+  quote = connection.ops.quote_name
+  ready_table = quote(ReadyExecution._meta.db_table)
+  ready_pk_column = quote(ReadyExecution._meta.pk.column)
+  selected_rows_sql = " UNION ALL ".join(
+    ["SELECT %s AS selected_id", *["SELECT %s"] * (len(rows) - 1)]
+  )
+  with connection.cursor() as cursor:
+    cursor.execute(
+      f"DELETE ready FROM ({selected_rows_sql}) selected "
+      f"STRAIGHT_JOIN {ready_table} ready "
+      f"ON ready.{ready_pk_column} = selected.selected_id",
+      [row.pk for row in rows],
+    )
+  return rows
 
 
 def semaphore_acquire(alias, key, *, limit, expires_at, now):
