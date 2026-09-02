@@ -50,47 +50,54 @@ def test_phase_plan_preserves_ten_minute_rollout_order():
 
 
 def test_performance_results_accept_valid_rollout():
-  plan = prerelease.PhasePlan.for_duration(100)
+  plan = prerelease.PhasePlan.for_duration(30)
   samples = [
     {
-      "elapsed_seconds": 5,
-      "completed_x": 50,
+      "elapsed_seconds": 1.5,
+      "completed_x": 15,
       "completed_y": 0,
       "depth": 100,
       "deadlocks": 3,
     },
     {
-      "elapsed_seconds": 20,
-      "completed_x": 200,
+      "elapsed_seconds": 6,
+      "completed_x": 60,
       "completed_y": 0,
       "depth": 102,
       "deadlocks": 3,
     },
     {
-      "elapsed_seconds": 29,
-      "completed_x": 290,
+      "elapsed_seconds": 8,
+      "completed_x": 80,
       "completed_y": 0,
       "depth": 104,
       "deadlocks": 3,
     },
     {
-      "elapsed_seconds": 32,
-      "completed_x": 300,
+      "elapsed_seconds": 10,
+      "completed_x": 90,
+      "completed_y": 0,
+      "depth": 200,
+      "deadlocks": 3,
+    },
+    {
+      "elapsed_seconds": 16,
+      "completed_x": 90,
       "completed_y": 0,
       "depth": 110,
       "deadlocks": 3,
     },
     {
-      "elapsed_seconds": 65,
-      "completed_x": 300,
+      "elapsed_seconds": 20,
+      "completed_x": 90,
       "completed_y": 0,
       "depth": 100,
       "deadlocks": 3,
     },
     {
-      "elapsed_seconds": 79,
-      "completed_x": 300,
-      "completed_y": 126,
+      "elapsed_seconds": 23,
+      "completed_x": 90,
+      "completed_y": 27,
       "depth": 100,
       "deadlocks": 3,
     },
@@ -101,7 +108,7 @@ def test_performance_results_accept_valid_rollout():
     LatencyProbe([8, 10], [10, 12]),
     run_id="run",
     plan=plan,
-    migration_finished_at=31,
+    migration_finished_at=9.5,
   )
 
   assert result["healthy"] is True
@@ -109,7 +116,7 @@ def test_performance_results_accept_valid_rollout():
   assert result["y_throughput"] == pytest.approx(9)
   assert result["x_enqueue_p95_ms"] == 10
   assert result["y_enqueue_p95_ms"] == 12
-  assert result["queue_recovered_at_seconds"] == 32
+  assert result["queue_recovered_at_seconds"] == 16
 
 
 def test_performance_results_reject_regressions_and_collector_errors():

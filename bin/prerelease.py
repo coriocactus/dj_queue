@@ -607,7 +607,7 @@ def performance_results(samples, probe, *, run_id, plan, migration_finished_at):
     and "depth" in sample
   ]
   baseline_depth = statistics.median(pre_depths) if pre_depths else None
-  recovery_window = max(2, min(60, plan.duration * 0.10))
+  recovery_window = min(60, max(2, plan.duration - migration_finished_at))
   recovery_threshold = (
     baseline_depth + max(10, baseline_depth * 0.20) if baseline_depth is not None else None
   )
