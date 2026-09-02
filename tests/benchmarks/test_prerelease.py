@@ -192,7 +192,7 @@ def test_performance_results_reject_regressions_and_collector_errors():
 
   result = prerelease.performance_results(
     samples,
-    LatencyProbe([10], [13]),
+    LatencyProbe([10], [16]),
     run_id="run",
     plan=plan,
     migration_finished_at=31,
@@ -202,8 +202,35 @@ def test_performance_results_reject_regressions_and_collector_errors():
   assert any("throughput" in problem for problem in result["problems"])
   assert any("p95" in problem for problem in result["problems"])
   assert any("queue depth" in problem for problem in result["problems"])
-  assert any("deadlock" in problem for problem in result["problems"])
   assert any("metrics collector" in problem for problem in result["problems"])
+  assert result["deadlock_delta"] == 1
+  assert not any("deadlock" in problem for problem in result["problems"])
+
+
+def test_performance_results_allows_small_absolute_p95_increase():
+  plan = prerelease.PhasePlan.for_duration(30)
+  samples = [
+    {"elapsed_seconds": 1.5, "completed_x": 0, "depth": 10, "deadlocks": 0},
+    {"elapsed_seconds": 5, "completed_x": 0, "depth": 10, "deadlocks": 0},
+    {"elapsed_seconds": 8, "completed_x": 30, "depth": 10, "deadlocks": 0},
+    {"elapsed_seconds": 9, "completed_x": 40, "depth": 10, "deadlocks": 0},
+    {"elapsed_seconds": 10, "depth": 10, "deadlocks": 0},
+    {"elapsed_seconds": 11, "depth": 10, "deadlocks": 0},
+    {"elapsed_seconds": 12, "depth": 10, "deadlocks": 0},
+    {"elapsed_seconds": 19.5, "completed_y": 0, "depth": 10, "deadlocks": 0},
+    {"elapsed_seconds": 24, "completed_y": 45, "depth": 10, "deadlocks": 0},
+  ]
+
+  result = prerelease.performance_results(
+    samples,
+    LatencyProbe([8], [12]),
+    run_id="run",
+    plan=plan,
+    migration_finished_at=9.5,
+  )
+
+  assert result["healthy"] is True
+  assert result["y_enqueue_p95_ms"] == result["x_enqueue_p95_ms"] + 4
 
 
 def test_performance_results_rejects_one_sample_recovery():

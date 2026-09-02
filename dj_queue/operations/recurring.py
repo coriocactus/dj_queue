@@ -9,7 +9,7 @@ from django.utils.module_loading import import_string
 
 from dj_queue.config import load_backend_config
 from dj_queue.cron import is_valid_cron, latest_cron_run, next_cron_run
-from dj_queue.db import get_database_alias, locked_queryset
+from dj_queue.db import get_database_alias, locked_queryset, retry_transient_database_errors
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import Job, RecurringExecution, RecurringTask
 from dj_queue.operations._helpers import _normalize_payload
@@ -337,12 +337,27 @@ def fire_due_recurring_tasks(
 
 def fire_recurring_task(recurring_task, run_at, *, backend_alias="default"):
   alias = get_database_alias(backend_alias)
-  reservation = _reserve_recurring_task(recurring_task, run_at, backend_alias=backend_alias)
+  reservation = retry_transient_database_errors(
+    lambda: _reserve_recurring_task(recurring_task, run_at, backend_alias=backend_alias)
+  )
   if reservation is None:
     return None
 
-  job = _enqueue_reserved_recurring_task(reservation, using=alias, backend_alias=backend_alias)
-  return _attach_reserved_recurring_job(reservation, job, using=alias, backend_alias=backend_alias)
+  job = retry_transient_database_errors(
+    lambda: _enqueue_reserved_recurring_task(
+      reservation,
+      using=alias,
+      backend_alias=backend_alias,
+    )
+  )
+  return retry_transient_database_errors(
+    lambda: _attach_reserved_recurring_job(
+      reservation,
+      job,
+      using=alias,
+      backend_alias=backend_alias,
+    )
+  )
 
 
 def _reserve_recurring_task(recurring_task, run_at, *, backend_alias):

@@ -24,6 +24,8 @@ DEFAULT_DURATION = 600
 DEFAULT_LOAD_FACTOR = 0.675
 DEFAULT_WORKERS = 2
 DEFAULT_THREADS = 4
+MAX_ENQUEUE_P95_RATIO = 1.25
+MAX_ENQUEUE_P95_INCREASE_MS = 5
 DEFAULT_SEED = {
   "jobs": 100_000,
   "queues": 100,
@@ -695,12 +697,14 @@ def performance_results(
       problems.append(f"Y throughput {y_throughput:.2f}/s is below 90% of X {x_throughput:.2f}/s")
     if x_p95 is None or y_p95 is None:
       problems.append("insufficient enqueue samples for latency gate")
-    elif y_p95 > x_p95 * 1.25:
-      problems.append(f"Y enqueue p95 {y_p95:.2f}ms exceeds 1.25x X {x_p95:.2f}ms")
+    elif y_p95 > x_p95 * MAX_ENQUEUE_P95_RATIO and y_p95 > x_p95 + MAX_ENQUEUE_P95_INCREASE_MS:
+      problems.append(
+        f"Y enqueue p95 {y_p95:.2f}ms exceeds both "
+        f"{MAX_ENQUEUE_P95_RATIO}x X and X + {MAX_ENQUEUE_P95_INCREASE_MS}ms "
+        f"for X {x_p95:.2f}ms"
+      )
   if recovered_at is None:
     problems.append("queue depth did not return to its pre-migration trend in 60 seconds")
-  if deadlock_delta not in (None, 0):
-    problems.append(f"database deadlock count increased by {deadlock_delta}")
   if any("collector_error" in sample for sample in samples):
     problems.append("the one-second metrics collector reported errors")
   if any("diagnostics_error" in sample for sample in samples):

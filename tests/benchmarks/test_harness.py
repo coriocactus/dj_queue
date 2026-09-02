@@ -7,6 +7,7 @@ from benchmarks.harness import (
   assert_persistent_connection_budget,
   ensure_database_exists,
   parse_sizes,
+  revision,
 )
 
 
@@ -36,6 +37,19 @@ def test_assert_persistent_connection_budget_rejects_estimate_at_capacity():
       estimated_connections=97,
       available_connections=97,
     )
+
+
+def test_revision_reads_the_benchmarked_working_copy(monkeypatch):
+  calls = []
+
+  def run(command, **_kwargs):
+    calls.append(command)
+    return SimpleNamespace(stdout="abc123\n")
+
+  monkeypatch.setattr("benchmarks.harness.subprocess.run", run)
+
+  assert revision() == "abc123"
+  assert calls == [["jj", "log", "-r", "@", "--no-graph", "-T", "commit_id.short()"]]
 
 
 @pytest.mark.parametrize(

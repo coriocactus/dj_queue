@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 from django.db import connection, transaction
+from django.db.utils import OperationalError
 from django.tasks import TaskResultStatus
 from django.tasks.exceptions import TaskResultDoesNotExist
 from django.test.utils import CaptureQueriesContext
@@ -273,6 +274,29 @@ def test_enqueue_future_uses_scheduled_path():
 
 
 @pytest.mark.django_db
+def test_enqueue_retries_transient_database_deadlock(monkeypatch):
+  import dj_queue.operations.jobs as job_operations
+
+  original_dispatch_job = job_operations._dispatch_job
+  calls = 0
+
+  def dispatch_with_deadlock_once(*args, **kwargs):
+    nonlocal calls
+    calls += 1
+    if calls == 1:
+      raise OperationalError("deadlock found when trying to get lock")
+    return original_dispatch_job(*args, **kwargs)
+
+  monkeypatch.setattr(job_operations, "_dispatch_job", dispatch_with_deadlock_once)
+
+  result = echo.enqueue("retried")
+
+  assert calls == 2
+  assert Job.objects.filter(pk=result.id).count() == 1
+  assert ReadyExecution.objects.filter(job_id=result.id).count() == 1
+
+
+@pytest.mark.django_db
 def test_enqueue_bulk_immediate_matches_single_enqueue_semantics():
   backend = echo.get_backend()
 
@@ -304,6 +328,61 @@ def test_enqueue_bulk_immediate_query_budget_stays_batch_sized():
   assert len(ctx.captured_queries) <= 6
   assert len(results) == 100
   assert ReadyExecution.objects.count() == 100
+
+
+@pytest.mark.django_db
+def test_enqueue_bulk_retries_transient_database_deadlock(monkeypatch):
+  import dj_queue.operations.jobs as job_operations
+
+  original_create_ready = job_operations._bulk_create_ready_executions_locked
+  calls = 0
+
+  def create_ready_with_deadlock_once(*args, **kwargs):
+    nonlocal calls
+    calls += 1
+    if calls == 1:
+      raise OperationalError("deadlock found when trying to get lock")
+    return original_create_ready(*args, **kwargs)
+
+  monkeypatch.setattr(
+    job_operations,
+    "_bulk_create_ready_executions_locked",
+    create_ready_with_deadlock_once,
+  )
+
+  results = echo.get_backend().enqueue_all([(echo, (index,), {}) for index in range(3)])
+
+  assert calls == 2
+  assert Job.objects.filter(pk__in=[result.id for result in results]).count() == 3
+  assert ReadyExecution.objects.filter(job_id__in=[result.id for result in results]).count() == 3
+
+
+@pytest.mark.django_db
+def test_enqueue_bulk_mixed_retries_transient_database_deadlock(monkeypatch):
+  import dj_queue.operations.jobs as job_operations
+
+  original_bulk_create = job_operations._bulk_create
+  calls = 0
+
+  def create_scheduled_with_deadlock_once(alias, model, objects):
+    nonlocal calls
+    if model is ScheduledExecution:
+      calls += 1
+      if calls == 1:
+        raise OperationalError("deadlock found when trying to get lock")
+    return original_bulk_create(alias, model, objects)
+
+  monkeypatch.setattr(job_operations, "_bulk_create", create_scheduled_with_deadlock_once)
+  future = timezone.now() + timedelta(minutes=1)
+
+  results = echo.get_backend().enqueue_all(
+    [(echo, ("ready",), {}), (echo.using(run_after=future), ("scheduled",), {})]
+  )
+
+  assert calls == 2
+  assert Job.objects.filter(pk__in=[result.id for result in results]).count() == 2
+  assert ReadyExecution.objects.filter(job_id=results[0].id).count() == 1
+  assert ScheduledExecution.objects.filter(job_id=results[1].id).count() == 1
 
 
 @pytest.mark.django_db

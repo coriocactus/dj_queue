@@ -10,14 +10,19 @@ from django.utils import timezone
 from django.utils.module_loading import import_string
 
 from dj_queue.config import load_backend_config
-from dj_queue.db import database_capabilities, get_database_alias, locked_queryset
+from dj_queue.db import (
+  database_capabilities,
+  get_database_alias,
+  locked_queryset,
+  retry_transient_database_errors,
+)
 from dj_queue.exceptions import DispatchPolicyError, EnqueueError
 from dj_queue.log import log_event
 from dj_queue.models import (
   BlockedExecution,
   ClaimedExecution,
   FailedExecution,
-  ReadyExecution,
+  Job,
   Semaphore,
 )
 from dj_queue.operations._helpers import (
@@ -735,38 +740,35 @@ def _create_claimed_execution_after_blocked_consume(alias, *, job, process_id, c
 def cleanup_expired_semaphores(*, batch_size=500, backend_alias="default"):
   batch_size = _positive_int_option(batch_size, "batch_size")
   alias = get_database_alias(backend_alias)
-  now = timezone.now()
-  queryset = _expired_semaphore_cleanup_queryset(alias, now=now)
-  semaphore_ids = list(
-    queryset.order_by("expires_at", "key").values_list("pk", flat=True)[:batch_size]
-  )
-  if not semaphore_ids:
-    return 0
-  deleted, _ = (
-    _expired_semaphore_cleanup_queryset(alias, now=now).filter(pk__in=semaphore_ids).delete()
-  )
-  return deleted
+  use_skip_locked = load_backend_config(backend_alias).use_skip_locked
 
+  def cleanup_transition():
+    now = timezone.now()
+    with transaction.atomic(using=alias):
+      queryset = locked_queryset(
+        Semaphore.objects.using(alias).filter(expires_at__lte=now),
+        use_skip_locked=use_skip_locked,
+      )
+      semaphores = list(
+        queryset.order_by("expires_at", "key").values_list("pk", "key")[:batch_size]
+      )
+      if not semaphores:
+        return 0
+      semaphore_keys = [key for _semaphore_id, key in semaphores]
+      active_keys = set(
+        Job.objects.using(alias)
+        .filter(concurrency_key__in=semaphore_keys)
+        .filter(Q(claimed_execution__isnull=False) | Q(ready_execution__isnull=False))
+        .values_list("concurrency_key", flat=True)
+        .distinct()
+      )
+      semaphore_ids = [semaphore_id for semaphore_id, key in semaphores if key not in active_keys]
+      if not semaphore_ids:
+        return 0
+      deleted, _ = Semaphore.objects.using(alias).filter(pk__in=semaphore_ids).delete()
+      return deleted
 
-def _expired_semaphore_cleanup_queryset(alias, *, now):
-  claimed_concurrency_keys = (
-    ClaimedExecution.objects.using(alias)
-    .exclude(job__concurrency_key__isnull=True)
-    .exclude(job__concurrency_key="")
-    .values_list("job__concurrency_key", flat=True)
-  )
-  ready_concurrency_keys = (
-    ReadyExecution.objects.using(alias)
-    .exclude(job__concurrency_key__isnull=True)
-    .exclude(job__concurrency_key="")
-    .values_list("job__concurrency_key", flat=True)
-  )
-  return (
-    Semaphore.objects.using(alias)
-    .filter(expires_at__lte=now)
-    .exclude(key__in=claimed_concurrency_keys)
-    .exclude(key__in=ready_concurrency_keys)
-  )
+  return retry_transient_database_errors(cleanup_transition)
 
 
 def promote_expired_blocked_jobs(*, batch_size=500, backend_alias="default", use_skip_locked=None):

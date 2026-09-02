@@ -266,7 +266,7 @@ def package_version(package_name):
 
 def revision():
   for command in (
-    ["jj", "log", "-r", "@-", "--no-graph", "-T", "commit_id.short()"],
+    ["jj", "log", "-r", "@", "--no-graph", "-T", "commit_id.short()"],
     ["git", "rev-parse", "--short", "HEAD"],
   ):
     try:

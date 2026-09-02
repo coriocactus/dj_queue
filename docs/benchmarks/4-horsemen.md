@@ -2,7 +2,7 @@
 
 > Median key metric on the 10k workload across PostgreSQL, MariaDB, MySQL, and SQLite.
 
-Generated: 2026-06-09T14:57:23.449728+00:00
+Generated: 2026-09-02T22:25:20.330216+00:00
 
 ## Metadata
 
@@ -10,13 +10,13 @@ Generated: 2026-06-09T14:57:23.449728+00:00
 |---|---|---|---|---|
 | database | `postgresql` | `mysql` | `mysql` | `sqlite` |
 | database name | `dj_queue_benchmark` | `dj_queue_benchmark` | `dj_queue_benchmark` | `benchmark-results/dj_queue_benchmark.sqlite3` |
-| database version | `PostgreSQL 17.9 (Debian 17.9-1.pgdg13+1) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit` | `10.6.25-MariaDB-ubu2204` | `8.4.8` | `3.50.4` |
+| database version | `PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit` | `12.3.3-MariaDB-ubu2404` | `9.7.2` | `3.50.4` |
 | Python | `3.14.5` | `3.14.5` | `3.14.5` | `3.14.5` |
-| Django | `6.0.5` | `6.0.5` | `6.0.5` | `6.0.5` |
-| dj_queue | `0.12.0` | `0.12.0` | `0.12.0` | `0.12.0` |
-| platform | `macOS-26.5.1-arm64-arm-64bit-Mach-O` | `macOS-26.5.1-arm64-arm-64bit-Mach-O` | `macOS-26.5.1-arm64-arm-64bit-Mach-O` | `macOS-26.5.1-arm64-arm-64bit-Mach-O` |
+| Django | `6.1` | `6.1` | `6.1` | `6.1` |
+| dj_queue | `0.14.0` | `0.14.0` | `0.14.0` | `0.14.0` |
+| platform | `macOS-26.6.2-arm64-arm-64bit-Mach-O` | `macOS-26.6.2-arm64-arm-64bit-Mach-O` | `macOS-26.6.2-arm64-arm-64bit-Mach-O` | `macOS-26.6.2-arm64-arm-64bit-Mach-O` |
 | machine | `arm64` | `arm64` | `arm64` | `arm64` |
-| revision | `cef37cdd23be` | `cef37cdd23be` | `cef37cdd23be` | `cef37cdd23be` |
+| revision | `2ae301b9176e` | `2ae301b9176e` | `2ae301b9176e` | `2ae301b9176e` |
 | workers | `4` | `4` | `4` | `1` |
 | worker threads | `8` | `8` | `8` | `1` |
 | preserve finished jobs | `True` | `True` | `True` | `True` |
@@ -40,12 +40,12 @@ Generated: 2026-06-09T14:57:23.449728+00:00
 
 | scenario | key metric | postgres | mariadb | mysql | sqlite |
 |---|---|---|---|---|---|
-| `single-enqueue` | `latency_p95_ms` | 6.982 | 3.935 | 6.860 | 1.234 |
-| `bulk-enqueue` | `jobs_per_second` | 13670.405 | 7988.947 | 6473.333 | 14513.489 |
-| `scheduled-promotion` | `rows_per_second` | 11248.012 | 10667.487 | 8758.129 | 10049.965 |
-| `recurring-scale` | `duration_seconds` | 0.001 | 0.001 | 0.001 | 0.001 |
-| `worker-drain` | `jobs_per_second` | 746.798 | 1001.751 | 998.215 | 403.126 |
-| `held-xmin-worker-drain` | `jobs_per_second` | 788.053 | not supported | not supported | not supported |
-| `concurrency-contention` | `drain_jobs_per_second` | 99.667 | 40.254 | 63.650 | not supported |
-| `runtime-hot-key-contention` | `drain_jobs_per_second` | 160.238 | 87.096 | 112.472 | not supported |
-| `ordered-selector-claim` | `jobs_per_second` | 189.526 | 251.004 | 153.191 | not supported |
+| `single-enqueue` | `latency_p95_ms` | 5.216 | 3.146 | 6.350 | 1.282 |
+| `bulk-enqueue` | `jobs_per_second` | 12490.362 | 8158.447 | 6996.658 | 13032.834 |
+| `scheduled-promotion` | `rows_per_second` | 8925.698 | 10584.954 | 9336.504 | 9663.570 |
+| `recurring-scale` | `duration_seconds` | 0.002 | 0.008 | 0.011 | 0.003 |
+| `worker-drain` | `jobs_per_second` | 811.862 | 1035.240 | 1070.261 | 437.047 |
+| `held-xmin-worker-drain` | `jobs_per_second` | 796.739 | not supported | not supported | not supported |
+| `concurrency-contention` | `drain_jobs_per_second` | 91.289 | 64.127 | 61.577 | not supported |
+| `runtime-hot-key-contention` | `drain_jobs_per_second` | 157.248 | 131.654 | 128.685 | not supported |
+| `ordered-selector-claim` | `jobs_per_second` | 182.025 | 153.443 | 198.250 | not supported |
