@@ -40,7 +40,10 @@ step(2, "inspect the queue and semaphore state")
 result(f"ready_executions={ReadyExecution.objects.count()}")
 result(f"blocked_executions={BlockedExecution.objects.count()}")
 for semaphore in Semaphore.objects.order_by("key"):
-  result(f"semaphore key={semaphore.key} value={semaphore.value} limit={semaphore.limit}")
+  result(
+    f"semaphore key={semaphore.key} active={semaphore.active_count} "
+    f"available={semaphore.available_count} limit={semaphore.limit}"
+  )
 
 step(3, "switch to on_conflict=discard for singleton work")
 singleton_job.func.concurrency_key = "singleton:{key}"

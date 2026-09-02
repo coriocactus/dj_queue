@@ -219,6 +219,7 @@ def test_dispatcher_cleans_expired_semaphores():
   Semaphore.objects.create(
     key="expired",
     value=0,
+    active_count=1,
     limit=1,
     expires_at=timezone.now() - timedelta(seconds=1),
   )
@@ -237,6 +238,7 @@ def test_dispatcher_cleans_expired_semaphores_in_batches():
     Semaphore.objects.create(
       key=f"expired:{index}",
       value=0,
+      active_count=1,
       limit=1,
       expires_at=now - timedelta(seconds=1),
     )

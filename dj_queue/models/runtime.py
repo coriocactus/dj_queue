@@ -5,6 +5,7 @@ from django.db.models.functions import Coalesce
 class Semaphore(models.Model):
   key = models.CharField(max_length=255, unique=True)
   value = models.IntegerField()
+  active_count = models.IntegerField(default=0)
   limit = models.IntegerField()
   expires_at = models.DateTimeField()
   created_at = models.DateTimeField(auto_now_add=True)
@@ -12,10 +13,24 @@ class Semaphore(models.Model):
 
   class Meta:
     db_table = "dj_queue_semaphores"
+    constraints = [
+      models.CheckConstraint(
+        condition=models.Q(active_count__gte=0),
+        name="djq_se_active_nonnegative",
+      ),
+      models.CheckConstraint(
+        condition=models.Q(limit__gte=1),
+        name="djq_se_limit_positive",
+      ),
+    ]
     indexes = [
       models.Index(fields=["key", "value"]),
       models.Index(fields=["expires_at"]),
     ]
+
+  @property
+  def available_count(self):
+    return max(0, self.limit - self.active_count)
 
 
 class Process(models.Model):

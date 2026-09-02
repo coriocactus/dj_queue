@@ -81,6 +81,7 @@ def test_stats_endpoint_returns_all_backend_snapshots(client, settings):
   Semaphore.objects.create(
     key="account:1",
     value=1,
+    active_count=1,
     limit=2,
     expires_at=now,
   )

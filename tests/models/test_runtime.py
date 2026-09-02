@@ -24,6 +24,7 @@ def test_runtime_control_models_support_crud():
   semaphore = Semaphore.objects.create(
     key="account:1",
     value=1,
+    active_count=1,
     limit=2,
     expires_at=timezone.now(),
   )
@@ -31,11 +32,14 @@ def test_runtime_control_models_support_crud():
   process = make_process(metadata={"queues": ["default"], "threads": 3})
 
   semaphore.value = 0
-  semaphore.save(update_fields=["value", "updated_at"])
+  semaphore.active_count = 2
+  semaphore.save(update_fields=["value", "active_count", "updated_at"])
   process.metadata = {"queues": ["emails"], "threads": 5}
   process.save(update_fields=["metadata"])
 
-  assert Semaphore.objects.get(pk=semaphore.pk).value == 0
+  semaphore.refresh_from_db()
+  assert semaphore.active_count == 2
+  assert semaphore.available_count == semaphore.value == 0
   assert Pause.objects.get(pk=pause.pk).queue_name == "emails"
   assert Process.objects.get(pk=process.pk).metadata == {
     "queues": ["emails"],
@@ -80,7 +84,32 @@ def test_semaphore_key_unique():
     Semaphore.objects.create(
       key="account:1",
       value=0,
+      active_count=1,
       limit=1,
+      expires_at=timezone.now(),
+    )
+
+
+@pytest.mark.django_db
+def test_semaphore_active_count_cannot_be_negative():
+  with pytest.raises(IntegrityError), transaction.atomic():
+    Semaphore.objects.create(
+      key="account:1",
+      value=1,
+      active_count=-1,
+      limit=1,
+      expires_at=timezone.now(),
+    )
+
+
+@pytest.mark.django_db
+def test_semaphore_limit_must_be_positive():
+  with pytest.raises(IntegrityError), transaction.atomic():
+    Semaphore.objects.create(
+      key="account:1",
+      value=0,
+      active_count=1,
+      limit=0,
       expires_at=timezone.now(),
     )
 

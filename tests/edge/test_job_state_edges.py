@@ -70,6 +70,7 @@ def test_discard_blocked_job_does_not_change_semaphore_value():
   Semaphore.objects.create(
     key="account:1",
     value=0,
+    active_count=1,
     limit=1,
     expires_at=timezone.now() + timedelta(minutes=1),
   )

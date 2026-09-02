@@ -816,6 +816,7 @@ def test_discard_scheduled_job_does_not_release_semaphore_slot():
   Semaphore.objects.create(
     key="account:1",
     value=0,
+    active_count=1,
     limit=1,
     expires_at=timezone.now() + timedelta(minutes=1),
   )

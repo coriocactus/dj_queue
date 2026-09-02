@@ -191,6 +191,7 @@ def seed_profile_data(shape):
       Semaphore(
         key=semaphore_key(index),
         value=index % 5,
+        active_count=5 - (index % 5),
         limit=5,
         expires_at=now + timedelta(days=1, minutes=index % 60),
         created_at=now,

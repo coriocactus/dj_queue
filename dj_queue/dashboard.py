@@ -115,6 +115,7 @@ OVERVIEW_SORTS = {
     "default": "key",
     "fields": {
       "key": {"label": "key", "key": "key", "default_desc": False, "css_class": "djq-col-name"},
+      "active": {"label": "active", "key": "active_count", "default_desc": True},
       "available": {"label": "available", "key": "available_slots", "default_desc": True},
       "limit": {"label": "limit", "key": "limit", "default_desc": True},
       "blocked_waiters": {
@@ -760,7 +761,7 @@ def _semaphore_overview_page(*, backend_alias, page_size, page_number, sort):
       *_overview_queryset_ordering(
         section="semaphores",
         sort=sort,
-        field_map={"available_slots": "value"},
+        field_map={"available_slots": "value", "active_count": "active_count"},
         tie_breaker="key",
       )
     )
@@ -828,7 +829,8 @@ def _semaphore_rows(semaphores, *, backend_alias, alias):
         "scope": "queue_database",
         "queue_database_alias": alias,
         "key": semaphore.key,
-        "available_slots": semaphore.value,
+        "active_count": semaphore.active_count,
+        "available_slots": semaphore.available_count,
         "limit": semaphore.limit,
         "blocked_waiters": semaphore.blocked_waiters,
         "expires_at": semaphore.expires_at,

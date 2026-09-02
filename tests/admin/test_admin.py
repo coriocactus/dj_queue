@@ -999,12 +999,14 @@ def test_semaphore_admin_blocked_waiters_sort(admin_client):
   high = Semaphore.objects.create(
     key="acct:high",
     value=1,
+    active_count=1,
     limit=2,
     expires_at=timezone.now(),
   )
   low = Semaphore.objects.create(
     key="acct:low",
     value=1,
+    active_count=1,
     limit=2,
     expires_at=timezone.now(),
   )
@@ -1032,7 +1034,7 @@ def test_semaphore_admin_blocked_waiters_sort(admin_client):
 
   response = admin_client.get(
     reverse("admin:dj_queue_semaphore_changelist"),
-    {"o": "4"},
+    {"o": "5"},
   )
 
   assert response.status_code == 200

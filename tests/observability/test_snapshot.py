@@ -313,6 +313,7 @@ def test_backend_snapshot_scopes_pause_and_recurring_rows_to_backend(settings):
   Semaphore.objects.create(
     key="account:1",
     value=1,
+    active_count=1,
     limit=2,
     expires_at=now + timedelta(minutes=5),
   )
@@ -325,6 +326,22 @@ def test_backend_snapshot_scopes_pause_and_recurring_rows_to_backend(settings):
   assert [row["key"] for row in snapshot.semaphore_rows] == ["account:1"]
   assert snapshot.semaphore_rows[0]["scope"] == "queue_database"
   assert snapshot.semaphore_rows[0]["queue_database_alias"] == "default"
+  assert snapshot.semaphore_rows[0]["active_count"] == 1
+  assert snapshot.semaphore_rows[0]["available_slots"] == 1
+
+
+def test_deep_health_allows_semaphore_occupancy_above_a_reduced_limit():
+  Semaphore.objects.create(
+    key="account:1",
+    value=0,
+    active_count=2,
+    limit=1,
+    expires_at=timezone.now() + timedelta(minutes=5),
+  )
+
+  problems = observability.deep_health_problems(backend_alias="default")
+
+  assert not any("semaphores have impossible slot counts" in problem for problem in problems)
 
 
 def test_configured_backend_aliases_ignore_non_dj_queue_backends(settings):

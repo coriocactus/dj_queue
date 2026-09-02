@@ -1,6 +1,7 @@
 {% for semaphore in section.rows %}
   <tr class="{% cycle 'row1' 'row2' %}">
     <th class="djq-col-name"><a href="{{ semaphore.jobs_url }}">{{ semaphore.key }}</a></th>
+    <td>{{ semaphore.active_count }}</td>
     <td>{{ semaphore.available_slots }}</td>
     <td>{{ semaphore.limit }}</td>
     <td>{{ semaphore.blocked_waiters }}</td>
