@@ -6,8 +6,6 @@ from collections import Counter
 
 import pytest
 
-from dj_queue.models import ClaimedExecution, ReadyExecution
-
 logger = logging.getLogger("dj_queue.stress")
 
 
@@ -98,6 +96,8 @@ def _join_children(children, timeout):
 
 
 def _wait_for_fork_drain(task_count, *, timeout, children_by_pid):
+  from dj_queue.models import ClaimedExecution, ReadyExecution
+
   deadline = time.monotonic() + timeout
   next_log_at = time.monotonic()
   while time.monotonic() < deadline:
@@ -145,7 +145,7 @@ def test_10k_tasks_fork_mode_no_duplicates(tmp_path, queue_test_settings):
   from django.tasks import TaskResultStatus
   from django.utils import timezone
 
-  from dj_queue.models import FailedExecution, Job, Process
+  from dj_queue.models import ClaimedExecution, FailedExecution, Job, Process, ReadyExecution
   from dj_queue.runtime.supervisor import ForkSupervisor
   from tests.tasks import record_once
 
