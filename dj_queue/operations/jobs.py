@@ -1,10 +1,12 @@
 import inspect
 import time
 import traceback
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from enum import StrEnum
 from functools import lru_cache
+from uuid import UUID
 
 from django.db import transaction
 from django.db.models import Case, IntegerField, Value, When
@@ -110,9 +112,9 @@ class DispatchOutcome(StrEnum):
 @dataclass(frozen=True)
 class ClaimedJob:
   job: Job
-  claimed_at: object
+  claimed_at: datetime
   worker_ids: tuple[str, ...]
-  process_id: object = None
+  process_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -460,12 +462,12 @@ def _dispatch_bulk_concurrency_entries(
 
 def claim_ready_jobs(
   *,
-  limit,
-  queues=None,
-  process=None,
-  backend_alias="default",
-  use_skip_locked=None,
-):
+  limit: int,
+  queues: str | Sequence[str] | None = None,
+  process: Process | None = None,
+  backend_alias: str = "default",
+  use_skip_locked: bool | None = None,
+) -> list[ClaimedJob]:
   if limit <= 0:
     return []
 
@@ -596,7 +598,11 @@ def _claim_ready_jobs_once(
   ]
 
 
-def execute_claimed_job(job, *, backend_alias="default"):
+def execute_claimed_job(
+  job: ClaimedJob | Job | UUID | str,
+  *,
+  backend_alias: str = "default",
+) -> Job:
   while True:
     outcome = _execute_claimed_job_once(job, backend_alias=backend_alias)
     if not isinstance(outcome, ExecutionOutcome):
@@ -1034,7 +1040,12 @@ def dispatch_scheduled_job_now(job_id, *, backend_alias="default"):
   return job, dispatch_outcome
 
 
-def schedule_failed_job_retry(job_id, *, retry_at, backend_alias="default"):
+def schedule_failed_job_retry(
+  job_id: UUID | str,
+  *,
+  retry_at: datetime,
+  backend_alias: str = "default",
+) -> Job:
   if retry_at is None:
     raise EnqueueError("retry_at is required")
   alias = get_database_alias(backend_alias)
@@ -1051,7 +1062,7 @@ def schedule_failed_job_retry(job_id, *, retry_at, backend_alias="default"):
     return failed.job
 
 
-def retry_failed_job(job_id, *, backend_alias="default"):
+def retry_failed_job(job_id: UUID | str, *, backend_alias: str = "default") -> Job:
   alias = get_database_alias(backend_alias)
 
   with transaction.atomic(using=alias):
@@ -1078,7 +1089,12 @@ def retry_failed_job(job_id, *, backend_alias="default"):
   return job
 
 
-def retry_failed_jobs(*, job_ids=None, batch_size=500, backend_alias="default"):
+def retry_failed_jobs(
+  *,
+  job_ids: Iterable[UUID | str] | None = None,
+  batch_size: int = 500,
+  backend_alias: str = "default",
+) -> int:
   alias = get_database_alias(backend_alias)
   config = load_backend_config(backend_alias)
 
@@ -1352,7 +1368,12 @@ def _discard_state_jobs(
   return len(jobs)
 
 
-def discard_failed_jobs(*, job_ids=None, batch_size=500, backend_alias="default"):
+def discard_failed_jobs(
+  *,
+  job_ids: Iterable[UUID | str] | None = None,
+  batch_size: int = 500,
+  backend_alias: str = "default",
+) -> int:
   return _discard_state_jobs(
     FailedExecution,
     "failed",
@@ -1362,11 +1383,16 @@ def discard_failed_jobs(*, job_ids=None, batch_size=500, backend_alias="default"
   )
 
 
-def discard_failed_job(job_id, *, backend_alias="default"):
+def discard_failed_job(job_id: UUID | str, *, backend_alias: str = "default") -> int:
   return discard_failed_jobs(job_ids=[job_id], batch_size=1, backend_alias=backend_alias)
 
 
-def discard_ready_jobs(*, job_ids=None, batch_size=500, backend_alias="default"):
+def discard_ready_jobs(
+  *,
+  job_ids: Iterable[UUID | str] | None = None,
+  batch_size: int = 500,
+  backend_alias: str = "default",
+) -> int:
   return _discard_state_jobs(
     ReadyExecution,
     "ready",
@@ -1388,7 +1414,12 @@ def discard_ready_jobs_for_queue(queue_name, *, batch_size=500, backend_alias="d
   )
 
 
-def discard_scheduled_jobs(*, job_ids=None, batch_size=500, backend_alias="default"):
+def discard_scheduled_jobs(
+  *,
+  job_ids: Iterable[UUID | str] | None = None,
+  batch_size: int = 500,
+  backend_alias: str = "default",
+) -> int:
   return _discard_state_jobs(
     ScheduledExecution,
     "scheduled",
@@ -1398,7 +1429,12 @@ def discard_scheduled_jobs(*, job_ids=None, batch_size=500, backend_alias="defau
   )
 
 
-def discard_blocked_jobs(*, job_ids=None, batch_size=500, backend_alias="default"):
+def discard_blocked_jobs(
+  *,
+  job_ids: Iterable[UUID | str] | None = None,
+  batch_size: int = 500,
+  backend_alias: str = "default",
+) -> int:
   return _discard_state_jobs(
     BlockedExecution,
     "blocked",

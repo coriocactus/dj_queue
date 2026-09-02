@@ -1,4 +1,6 @@
+from collections.abc import Mapping, Sequence
 from datetime import timedelta
+from typing import Any
 from uuid import uuid4
 
 from django.db import IntegrityError, transaction
@@ -168,16 +170,16 @@ def _apply_static_recurring_tasks(
 
 def schedule_recurring_task(
   *,
-  key,
-  task_path,
-  schedule,
-  args=(),
-  kwargs=None,
-  queue_name="default",
-  priority=0,
-  description="",
-  backend_alias="default",
-):
+  key: str,
+  task_path: str,
+  schedule: str,
+  args: Sequence[Any] = (),
+  kwargs: Mapping[str, Any] | None = None,
+  queue_name: str = "default",
+  priority: int = 0,
+  description: str = "",
+  backend_alias: str = "default",
+) -> RecurringTask:
   alias = get_database_alias(backend_alias)
   if kwargs is None:
     kwargs = {}
@@ -244,7 +246,7 @@ def schedule_recurring_task(
     return recurring_task
 
 
-def unschedule_recurring_task(key, *, backend_alias="default"):
+def unschedule_recurring_task(key: str, *, backend_alias: str = "default") -> int:
   alias = get_database_alias(backend_alias)
   queryset = RecurringTask.objects.using(alias).filter(
     backend_alias=backend_alias,

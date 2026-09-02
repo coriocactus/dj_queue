@@ -1,10 +1,12 @@
 from datetime import timedelta
 
 import pytest
+from django.tasks import task
 from django.utils import timezone
 
 from dj_queue.api import (
   QueueInfo,
+  concurrency,
   discard_failed_jobs,
   retry_failed_jobs,
   schedule_failed_job_retry,
@@ -23,7 +25,39 @@ from tests.factories import (
   make_scheduled_job,
 )
 
+
+@task
+@concurrency(
+  key="account:{account_id}",
+  limit=2,
+  duration=60,
+  on_conflict="discard",
+)
+def decorated_sync_account(account_id):
+  return account_id
+
+
+@concurrency(key=lambda account_id: f"account:{account_id}", limit=1)
+@task
+def wrapped_sync_account(account_id):
+  return account_id
+
+
 pytestmark = pytest.mark.django_db(transaction=True)
+
+
+def test_concurrency_decorator_configures_task_function():
+  assert decorated_sync_account.func.concurrency_key == "account:{account_id}"
+  assert decorated_sync_account.func.concurrency_limit == 2
+  assert decorated_sync_account.func.concurrency_duration == 60
+  assert decorated_sync_account.func.on_conflict == "discard"
+
+
+def test_concurrency_decorator_supports_wrapped_task():
+  assert wrapped_sync_account.func.concurrency_key(42) == "account:42"
+  assert wrapped_sync_account.func.concurrency_limit == 1
+  assert hasattr(wrapped_sync_account.func, "concurrency_duration") is False
+  assert wrapped_sync_account.func.on_conflict == "block"
 
 
 def test_queue_info_size():

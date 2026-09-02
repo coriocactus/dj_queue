@@ -1,5 +1,6 @@
 import importlib
 import pkgutil
+from pathlib import Path
 
 import django
 from django.apps import apps
@@ -7,6 +8,8 @@ from django.conf import settings
 from django.core.management import get_commands
 
 import dj_queue
+
+assert Path(dj_queue.__file__).with_name("py.typed").is_file()
 
 if not settings.configured:
   settings.configure(
