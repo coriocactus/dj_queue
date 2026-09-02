@@ -13,7 +13,7 @@ It keeps the queue, live execution state, runtime metadata, and task results in 
 
 - no Redis, RabbitMQ, or separate result store
 - PostgreSQL is the first-class production backend
-- MySQL 8+, MariaDB 10.6+, and SQLite are supported
+- MySQL, MariaDB, and SQLite are supported at Django's version floors
 - immediate, scheduled, recurring, and concurrency-limited work
 
 `dj_queue` is inspired by Rails' [Solid Queue](https://github.com/rails/solid_queue),
@@ -40,7 +40,7 @@ see [docs/benchmarks/](docs/benchmarks/) for the latest published reports.
 
 ## Installation
 
-`dj_queue` requires Python 3.12+ and Django 6.0+.
+`dj_queue` requires Python 3.12+ and supports Django 6.0 and 6.1.
 
 Install the package:
 
@@ -330,9 +330,20 @@ If you need to pass model instances, files, or custom objects, store them elsewh
 | Backend | Support level | Notes |
 |---|---|---|
 | PostgreSQL | first-class | polling, `SKIP LOCKED`, and optional `LISTEN/NOTIFY` |
-| MySQL 8+ | supported | polling plus `SKIP LOCKED` |
-| MariaDB 10.6+ | supported | polling plus `SKIP LOCKED` |
+| MySQL | supported | polling plus `SKIP LOCKED` |
+| MariaDB | supported | polling plus `SKIP LOCKED` |
 | SQLite | supported with limits | polling only, serialized writes, no `SKIP LOCKED`, no `LISTEN/NOTIFY`; practical for development, CI, and smaller deployments |
+
+The database floor follows the selected Django release:
+
+| Django | PostgreSQL | MySQL | MariaDB | SQLite |
+|---|---|---|---|---|
+| 6.0 | 14+ | 8.0.11+ | 10.6+ | 3.31+ |
+| 6.1 | 15+ | 8.4+ | 10.11+ | 3.37+ |
+
+CI keeps the floors on Django 6.0 and tests newer database lines through
+PostgreSQL 18, MySQL 9.7 and 26.7, and MariaDB 12.3. Django 6.1 only runs with
+database versions that it supports.
 
 For MySQL or MariaDB, install and configure a Django-compatible driver following Django's database docs.
 
