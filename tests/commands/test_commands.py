@@ -19,6 +19,7 @@ from dj_queue.models import (
   RecurringExecution,
   Semaphore,
 )
+from dj_queue.runtime.base import DJ_QUEUE_VERSION, ROLLOUT_PROTOCOL_VERSION
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -40,13 +41,17 @@ def make_finished_job(**overrides):
 
 
 def make_process(**overrides):
+  metadata = {
+    "dj_queue_version": DJ_QUEUE_VERSION,
+    "rollout_protocol": ROLLOUT_PROTOCOL_VERSION,
+  }
   return Process.objects.create(
     backend_alias=overrides.pop("backend_alias", "default"),
     kind=overrides.pop("kind", "Worker"),
     pid=overrides.pop("pid", 12345),
     hostname=overrides.pop("hostname", "localhost"),
     name=overrides.pop("name", "worker-1"),
-    metadata=overrides.pop("metadata", {}),
+    metadata=overrides.pop("metadata", metadata),
     supervisor=overrides.pop("supervisor", None),
     last_heartbeat_at=overrides.pop("last_heartbeat_at", timezone.now()),
     **overrides,
@@ -524,6 +529,23 @@ def test_dj_queue_health_reports_live_and_dead_states():
   with pytest.raises(SystemExit, match="1"):
     call_command("dj_queue_health", stderr=unhealthy_stderr)
   assert unhealthy_stderr.getvalue().strip() == "unhealthy: no live dj_queue processes"
+
+
+def test_health_command_can_require_one_process_version(capsys):
+  make_process(
+    metadata={
+      "dj_queue_version": "0.12.0",
+      "rollout_protocol": ROLLOUT_PROTOCOL_VERSION,
+    }
+  )
+
+  with pytest.raises(SystemExit, match="1"):
+    call_command("dj_queue_health", "--require-version", DJ_QUEUE_VERSION)
+
+  assert (
+    f"1 live processes do not run required dj_queue version {DJ_QUEUE_VERSION}"
+    in capsys.readouterr().err
+  )
 
 
 def test_health_command_rejects_non_positive_max_age():

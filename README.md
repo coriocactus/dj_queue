@@ -370,10 +370,16 @@ the behavior of a process that is still running N−1.
 Use this deployment order:
 
 1. Upgrade all application and queue processes to the minimum compatible N−1 patch.
-2. Confirm that no older N−1 process remains in your deployment platform.
+2. Run `python manage.py dj_queue_health --deep` and confirm that no older application process remains in your deployment platform.
 3. Apply release N migrations once.
 4. Roll application producers and queue processes from N−1 to N.
-5. Check `python manage.py dj_queue_health` and confirm no N−1 process remains.
+5. Run `python manage.py dj_queue_health --deep --require-version <N version>` and confirm that no N−1 application process remains.
+
+Each registered queue process stores its exact `dj_queue` version and rollout
+protocol generation. Deep health rejects a missing or incompatible protocol.
+`--require-version` also rejects a live queue process on another package
+version. Application producers do not register process rows, so check those in
+your deployment platform.
 
 A code rollback from N to N−1 keeps the expanded schema in place. Do not reverse
 the database migration during a live rollback. N−2 processes and skipped bridge
@@ -559,6 +565,7 @@ Operational commands:
 python manage.py dj_queue_health
 python manage.py dj_queue_health --deep
 python manage.py dj_queue_health --max-age 120
+python manage.py dj_queue_health --deep --require-version 0.13.0
 python manage.py dj_queue_prune --older-than 86400
 python manage.py dj_queue_prune --failed-older-than 604800
 python manage.py dj_queue_prune --recurring-older-than 2592000
@@ -571,7 +578,9 @@ python manage.py dj_queue_postgres_autovacuum
 The health, prune, and PostgreSQL autovacuum commands accept `--backend` to target a non-default backend alias.
 
 `dj_queue_health` exits with status `1` and prints a reason when no process is
-live. Add `--deep` to check persisted queue invariants after the process check.
+live. Add `--deep` to check persisted queue invariants and live process rollout
+protocols. Add `--require-version` to require one exact package version across
+all live queue processes.
 
 For `dj_queue_prune`, `--task-path` filters finished and failed job cleanup by
 task import path, while `--task-key` filters recurring execution cleanup by

@@ -1,6 +1,7 @@
 import threading
 import time
 from contextlib import contextmanager
+from importlib.metadata import version
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -278,7 +279,9 @@ def test_runner_registers_backend_alias_on_process():
 
   assert process.backend_alias == "default"
   assert process.metadata == {
+    "dj_queue_version": version("dj-queue"),
     "polling_interval": runner.config.polling_interval,
+    "rollout_protocol": 1,
   }
   runner.stop()
 

@@ -45,6 +45,7 @@ from dj_queue.queue_state import (
   queue_state_summaries_by_queue,
   queue_state_summary,
 )
+from dj_queue.runtime.base import ROLLOUT_PROTOCOL_VERSION
 
 _NOT_PROVIDED = object()
 POSTGRES_DEAD_TUPLE_WARNING_COUNT = 10_000
@@ -481,12 +482,47 @@ def has_live_processes(*, backend_alias, max_age=None, now=None):
   ).exists()
 
 
-def deep_health_problems(*, backend_alias, max_age=None, now=None):
+def deep_health_problems(
+  *,
+  backend_alias,
+  max_age=None,
+  now=None,
+  required_process_version=None,
+):
   if now is None:
     now = timezone.now()
   alias = get_database_alias(backend_alias)
   process_cutoff = process_cutoff_for_backend(backend_alias, now=now, max_age=max_age)
   problems = []
+
+  live_process_metadata = (
+    Process.objects.using(alias)
+    .filter(
+      backend_alias=backend_alias,
+      last_heartbeat_at__gte=process_cutoff,
+    )
+    .values_list("metadata", flat=True)
+  )
+  incompatible_processes = sum(
+    not isinstance(metadata, dict) or metadata.get("rollout_protocol") != ROLLOUT_PROTOCOL_VERSION
+    for metadata in live_process_metadata
+  )
+  if incompatible_processes:
+    problems.append(
+      f"{incompatible_processes} live processes use an incompatible rollout protocol; "
+      f"expected {ROLLOUT_PROTOCOL_VERSION}"
+    )
+  if required_process_version is not None:
+    wrong_version_processes = sum(
+      not isinstance(metadata, dict)
+      or metadata.get("dj_queue_version") != required_process_version
+      for metadata in live_process_metadata
+    )
+    if wrong_version_processes:
+      problems.append(
+        f"{wrong_version_processes} live processes do not run required dj_queue version "
+        f"{required_process_version}"
+      )
 
   invalid_jobs = (
     Job.objects.using(alias).filter(backend_alias=backend_alias).invalid_execution_state().count()

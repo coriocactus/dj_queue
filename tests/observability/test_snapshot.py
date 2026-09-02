@@ -359,6 +359,22 @@ def test_deep_health_reports_invalid_job_concurrency_policy():
   assert "1 jobs have invalid concurrency policy" in problems
 
 
+def test_deep_health_reports_incompatible_live_rollout_protocol():
+  Process.objects.create(
+    backend_alias="default",
+    kind="Worker",
+    pid=12345,
+    hostname="localhost",
+    name="old-worker",
+    metadata={"dj_queue_version": "0.12.0", "rollout_protocol": 0},
+    last_heartbeat_at=timezone.now(),
+  )
+
+  problems = observability.deep_health_problems(backend_alias="default")
+
+  assert "1 live processes use an incompatible rollout protocol; expected 1" in problems
+
+
 def test_backend_snapshot_derives_active_count_from_authoritative_value():
   Semaphore.objects.create(
     key="account:mixed-version",
