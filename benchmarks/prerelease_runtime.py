@@ -1,4 +1,5 @@
 import argparse
+import importlib
 import json
 import logging
 import os
@@ -6,6 +7,7 @@ import signal
 import sys
 import time
 from datetime import timedelta
+from importlib.metadata import version
 from pathlib import Path
 from threading import Event
 
@@ -26,6 +28,7 @@ def parse_args(argv):
   subparsers.add_parser("create-database")
   subparsers.add_parser("drop-database")
   subparsers.add_parser("migrate")
+  subparsers.add_parser("compatibility")
 
   seed = subparsers.add_parser("seed")
   seed.add_argument("--jobs", type=int, required=True)
@@ -44,6 +47,7 @@ def parse_args(argv):
   produce = subparsers.add_parser("produce")
   produce.add_argument("--run-id", required=True)
   produce.add_argument("--rate", type=float, required=True)
+  produce.add_argument("--run-started-at", type=float, required=True)
   produce.add_argument("--duration", type=float)
 
   retry = subparsers.add_parser("retry")
@@ -99,7 +103,8 @@ def create_database():
   if backend == "sqlite":
     path = Path(name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.unlink(missing_ok=True)
+    if path.exists():
+      raise RuntimeError(f"pre-release database already exists: {path}")
     return
   if backend == "postgres":
     import psycopg
@@ -117,8 +122,9 @@ def create_database():
       connection.cursor() as cursor,
     ):
       cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s", [name])
-      if cursor.fetchone() is None:
-        cursor.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+      if cursor.fetchone() is not None:
+        raise RuntimeError(f"pre-release database already exists: {name}")
+      cursor.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
     return
 
   import pymysql
@@ -193,10 +199,7 @@ def migrate():
   deadline = time.monotonic() + float(os.environ.get("PRERELEASE_MIGRATION_TIMEOUT", "60"))
   while True:
     try:
-      if connection.vendor == "mysql":
-        with connection.cursor() as cursor:
-          cursor.execute("SET SESSION lock_wait_timeout = 2")
-          cursor.execute("SET SESSION innodb_lock_wait_timeout = 2")
+      _set_migration_lock_timeout(connection)
       call_command("migrate", verbosity=1, interactive=False)
       return
     except OperationalError as error:
@@ -207,12 +210,38 @@ def migrate():
       time.sleep(0.25)
 
 
+def _set_migration_lock_timeout(connection):
+  if connection.vendor == "postgresql":
+    with connection.cursor() as cursor:
+      cursor.execute("SET SESSION lock_timeout = '2s'")
+  elif connection.vendor == "mysql":
+    with connection.cursor() as cursor:
+      cursor.execute("SET SESSION lock_wait_timeout = 2")
+      cursor.execute("SET SESSION innodb_lock_wait_timeout = 2")
+
+
 def _is_transient_migration_error(error):
-  while error is not None:
+  seen = set()
+  while error is not None and id(error) not in seen:
+    seen.add(id(error))
+    if getattr(error, "pgcode", None) in {"40001", "40P01", "55P03"}:
+      return True
+    if getattr(error, "sqlstate", None) in {"40001", "40P01", "55P03"}:
+      return True
     if error.args and error.args[0] in {1205, 1213}:
       return True
     error = error.__cause__ or error.__context__
   return False
+
+
+def rollout_compatibility():
+  runtime = importlib.import_module("dj_queue.runtime.base")
+  print_json(
+    {
+      "dj_queue_version": version("dj-queue"),
+      "rollout_protocol": getattr(runtime, "ROLLOUT_PROTOCOL_VERSION", None),
+    }
+  )
 
 
 def create_control_tables():
@@ -241,6 +270,7 @@ def create_control_tables():
         category {category_type} NOT NULL,
         producer_version {label_type} NOT NULL,
         enqueue_ms {float_type} NOT NULL,
+        elapsed_seconds {float_type} NOT NULL,
         accepted_at {timestamp_type} NOT NULL
       )
       """
@@ -382,7 +412,7 @@ def calibrate(*, run_id, jobs, timeout):
   )
 
 
-def produce(*, run_id, rate, duration=None):
+def produce(*, run_id, rate, run_started_at, duration=None):
   from django.db import connection
   from django.utils import timezone
   from prerelease_tasks import fail_once, record, record_limited
@@ -436,6 +466,7 @@ def produce(*, run_id, rate, duration=None):
           category,
           runtime_label,
           started,
+          run_started_at=run_started_at,
           accepted_at=timezone.now(),
         )
       elif category == "concurrency":
@@ -446,6 +477,7 @@ def produce(*, run_id, rate, duration=None):
           category,
           runtime_label,
           started,
+          run_started_at=run_started_at,
           accepted_at=timezone.now(),
         )
       elif category == "scheduled":
@@ -459,6 +491,7 @@ def produce(*, run_id, rate, duration=None):
           category,
           runtime_label,
           started,
+          run_started_at=run_started_at,
           accepted_at=timezone.now(),
         )
       elif category == "failure":
@@ -469,6 +502,7 @@ def produce(*, run_id, rate, duration=None):
           category,
           runtime_label,
           started,
+          run_started_at=run_started_at,
           accepted_at=timezone.now(),
         )
       else:
@@ -491,24 +525,35 @@ def produce(*, run_id, rate, duration=None):
           "bulk",
           runtime_label,
           bulk_started,
+          run_started_at=run_started_at,
           accepted_at=accepted_at,
         )
 
   LOGGER.info("producer stopped accepted_sequence=%s", sequence)
 
 
-def record_accepted(table, token, category, runtime_label, started, *, accepted_at):
+def record_accepted(
+  table,
+  token,
+  category,
+  runtime_label,
+  started,
+  *,
+  run_started_at,
+  accepted_at,
+):
   from django.db import connection
 
   enqueue_ms = (time.perf_counter() - started) * 1000
+  elapsed_seconds = time.monotonic() - run_started_at
   with connection.cursor() as cursor:
     cursor.execute(
       f"""
       INSERT INTO {table} (
-        token, category, producer_version, enqueue_ms, accepted_at
-      ) VALUES (%s, %s, %s, %s, %s)
+        token, category, producer_version, enqueue_ms, elapsed_seconds, accepted_at
+      ) VALUES (%s, %s, %s, %s, %s, %s)
       """,
-      [token, category, runtime_label, enqueue_ms, accepted_at],
+      [token, category, runtime_label, enqueue_ms, elapsed_seconds, accepted_at],
     )
 
 
@@ -709,7 +754,9 @@ def main(argv):
     return 0
 
   setup_django()
-  if args.command == "migrate":
+  if args.command == "compatibility":
+    rollout_compatibility()
+  elif args.command == "migrate":
     migrate()
   elif args.command == "seed":
     seed_database(
@@ -723,7 +770,12 @@ def main(argv):
   elif args.command == "calibrate":
     calibrate(run_id=args.run_id, jobs=args.jobs, timeout=args.timeout)
   elif args.command == "produce":
-    produce(run_id=args.run_id, rate=args.rate, duration=args.duration)
+    produce(
+      run_id=args.run_id,
+      rate=args.rate,
+      run_started_at=args.run_started_at,
+      duration=args.duration,
+    )
   elif args.command == "retry":
     retry_expected_failures(interval=args.interval, duration=args.duration)
   elif args.command == "stop-recurring":

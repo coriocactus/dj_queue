@@ -236,13 +236,14 @@ class DatabaseProbe:
     except Exception as error:  # noqa: BLE001
       return {"diagnostics_error": str(error)}
 
-  def enqueue_latencies(self, run_id, label):
+  def enqueue_latencies(self, run_id, label, *, start, end):
     return [
       float(row[0])
       for row in self.rows(
         "SELECT enqueue_ms FROM dj_queue_prerelease_accepted "
-        f"WHERE token LIKE {self.placeholder} AND producer_version = {self.placeholder}",
-        [f"{run_id}:%", label],
+        f"WHERE token LIKE {self.placeholder} AND producer_version = {self.placeholder} "
+        f"AND elapsed_seconds >= {self.placeholder} AND elapsed_seconds <= {self.placeholder}",
+        [f"{run_id}:%", label, start, end],
       )
     ]
 
@@ -376,7 +377,7 @@ def apply_defaults(args, argv):
     if args.backend == "sqlite":
       args.database_name = str(Path(args.result_dir) / "dj_queue_prerelease.sqlite3")
     else:
-      args.database_name = f"dj_queue_prerelease_{timestamp.lower()}"
+      args.database_name = f"dj_queue_prerelease_{timestamp.lower()}_{os.getpid()}"
 
 
 def validate_args(args):
@@ -412,6 +413,22 @@ def resolve_revisions(from_ref, to_ref):
   if ancestry.returncode != 0:
     raise ValueError(f"from revision {from_ref!r} is not an ancestor of {to_ref!r}")
   return from_revision, to_revision
+
+
+def validate_rollout_compatibility(runtime_x, runtime_y):
+  protocol_x = runtime_x.get("rollout_protocol")
+  protocol_y = runtime_y.get("rollout_protocol")
+  if not isinstance(protocol_x, int) or isinstance(protocol_x, bool):
+    raise TypeError("revision X does not publish a rollout protocol")
+  if not isinstance(protocol_y, int) or isinstance(protocol_y, bool):
+    raise TypeError("revision Y does not publish a rollout protocol")
+  if protocol_x != protocol_y:
+    raise RuntimeError(f"incompatible rollout protocols: X={protocol_x}, Y={protocol_y}")
+  return {
+    "rollout_protocol": protocol_x,
+    "x": runtime_x,
+    "y": runtime_y,
+  }
 
 
 def git_output(*args):
@@ -596,8 +613,19 @@ def performance_results(samples, probe, *, run_id, plan, migration_finished_at):
     plan.x_stop_at + warmup,
     plan.producer_stop_at,
   )
-  x_p95 = percentile(probe.enqueue_latencies(run_id, "X"), 95)
-  y_p95 = percentile(probe.enqueue_latencies(run_id, "Y"), 95)
+  x_p95 = percentile(
+    probe.enqueue_latencies(run_id, "X", start=warmup, end=plan.migration_at),
+    95,
+  )
+  y_p95 = percentile(
+    probe.enqueue_latencies(
+      run_id,
+      "Y",
+      start=plan.x_stop_at + warmup,
+      end=plan.producer_stop_at,
+    ),
+    95,
+  )
 
   pre_window = max(2, min(60, plan.duration * 0.10))
   pre_depths = [
@@ -611,18 +639,21 @@ def performance_results(samples, probe, *, run_id, plan, migration_finished_at):
   recovery_threshold = (
     baseline_depth + max(10, baseline_depth * 0.20) if baseline_depth is not None else None
   )
-  recovered_at = next(
-    (
-      sample["elapsed_seconds"]
-      for sample in samples
-      if migration_finished_at
-      <= sample.get("elapsed_seconds", -1)
-      <= migration_finished_at + recovery_window
-      and recovery_threshold is not None
-      and sample.get("depth", recovery_threshold + 1) <= recovery_threshold
-    ),
-    None,
-  )
+  recovery_samples = [
+    sample
+    for sample in samples
+    if migration_finished_at
+    <= sample.get("elapsed_seconds", -1)
+    <= migration_finished_at + recovery_window
+    and "depth" in sample
+  ]
+  recovered_at = None
+  if recovery_threshold is not None:
+    for index in range(len(recovery_samples) - 2):
+      stable_samples = recovery_samples[index : index + 3]
+      if all(sample["depth"] <= recovery_threshold for sample in stable_samples):
+        recovered_at = stable_samples[0]["elapsed_seconds"]
+        break
   deadlock_values = [sample["deadlocks"] for sample in samples if "deadlocks" in sample]
   deadlock_delta = deadlock_values[-1] - deadlock_values[0] if len(deadlock_values) >= 2 else None
 
@@ -720,6 +751,10 @@ def run(args):
         work_dir=work_dir,
       )
       outcome["artifacts"] = [artifact_metadata(runtime_x), artifact_metadata(runtime_y)]
+      outcome["compatibility"] = validate_rollout_compatibility(
+        runtime_json(runtime_x, args, "compatibility", log_name="compatibility-x.log"),
+        runtime_json(runtime_y, args, "compatibility", log_name="compatibility-y.log"),
+      )
       write_manifest(manifest_path, outcome)
 
       run_runtime(runtime_x, args, "create-database", log_name="create-database.log")
@@ -777,6 +812,8 @@ def run(args):
         run_id,
         "--rate",
         target_rate,
+        "--run-started-at",
+        started_at,
       )
       processes.append(x_producer)
 
@@ -804,6 +841,8 @@ def run(args):
         run_id,
         "--rate",
         target_rate,
+        "--run-started-at",
+        started_at,
       )
       processes.append(y_producer)
       x_producer.stop()
@@ -889,6 +928,12 @@ def run(args):
       if problems:
         raise RuntimeError("; ".join(problems))
 
+      if args.keep_database:
+        outcome["database_cleanup"] = "retained"
+      else:
+        run_runtime(runtime_y, args, "drop-database", log_name="drop-database.log")
+        database_created = False
+        outcome["database_cleanup"] = "dropped"
       outcome.update(
         {
           "status": "passed",

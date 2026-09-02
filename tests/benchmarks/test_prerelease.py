@@ -8,8 +8,10 @@ from bin import prerelease
 class LatencyProbe:
   def __init__(self, x, y):
     self.values = {"X": x, "Y": y}
+    self.windows = []
 
-  def enqueue_latencies(self, _run_id, label):
+  def enqueue_latencies(self, _run_id, label, *, start, end):
+    self.windows.append((label, start, end))
     return self.values[label]
 
 
@@ -76,6 +78,7 @@ def test_mariadb_diagnostics_use_information_schema_lock_waits():
 
 def test_performance_results_accept_valid_rollout():
   plan = prerelease.PhasePlan.for_duration(30)
+  probe = LatencyProbe([8, 10], [10, 12])
   samples = [
     {
       "elapsed_seconds": 1.5,
@@ -130,7 +133,7 @@ def test_performance_results_accept_valid_rollout():
 
   result = prerelease.performance_results(
     samples,
-    LatencyProbe([8, 10], [10, 12]),
+    probe,
     run_id="run",
     plan=plan,
     migration_finished_at=9.5,
@@ -142,6 +145,7 @@ def test_performance_results_accept_valid_rollout():
   assert result["x_enqueue_p95_ms"] == 10
   assert result["y_enqueue_p95_ms"] == 12
   assert result["queue_recovered_at_seconds"] == 16
+  assert probe.windows == [("X", 1.5, 9), ("Y", 19.5, 24)]
 
 
 def test_performance_results_reject_regressions_and_collector_errors():
@@ -171,6 +175,29 @@ def test_performance_results_reject_regressions_and_collector_errors():
   assert any("metrics collector" in problem for problem in result["problems"])
 
 
+def test_performance_results_rejects_one_sample_recovery():
+  plan = prerelease.PhasePlan.for_duration(100)
+  samples = [
+    {"elapsed_seconds": 5, "completed_x": 0, "depth": 10, "deadlocks": 0},
+    {"elapsed_seconds": 29, "completed_x": 240, "depth": 10, "deadlocks": 0},
+    {"elapsed_seconds": 31, "depth": 10, "deadlocks": 0},
+    {"elapsed_seconds": 32, "depth": 100, "deadlocks": 0},
+    {"elapsed_seconds": 65, "completed_y": 0, "depth": 100, "deadlocks": 0},
+    {"elapsed_seconds": 79, "completed_y": 140, "depth": 100, "deadlocks": 0},
+  ]
+
+  result = prerelease.performance_results(
+    samples,
+    LatencyProbe([10], [10]),
+    run_id="run",
+    plan=plan,
+    migration_finished_at=30,
+  )
+
+  assert result["queue_recovered_at_seconds"] is None
+  assert any("queue depth" in problem for problem in result["problems"])
+
+
 def test_resolve_revisions_rejects_unrelated_revisions(monkeypatch):
   revisions = iter(("a" * 40, "b" * 40))
   monkeypatch.setattr(prerelease, "git_output", lambda *_args: next(revisions))
@@ -182,6 +209,25 @@ def test_resolve_revisions_rejects_unrelated_revisions(monkeypatch):
 
   with pytest.raises(ValueError, match="is not an ancestor"):
     prerelease.resolve_revisions("old", "new")
+
+
+def test_rollout_compatibility_requires_one_shared_protocol():
+  compatible = prerelease.validate_rollout_compatibility(
+    {"dj_queue_version": "0.13.1", "rollout_protocol": 1},
+    {"dj_queue_version": "0.14.0", "rollout_protocol": 1},
+  )
+
+  assert compatible["rollout_protocol"] == 1
+  with pytest.raises(TypeError, match="X does not publish"):
+    prerelease.validate_rollout_compatibility(
+      {"dj_queue_version": "0.13.0", "rollout_protocol": None},
+      {"dj_queue_version": "0.14.0", "rollout_protocol": 1},
+    )
+  with pytest.raises(RuntimeError, match="incompatible rollout protocols"):
+    prerelease.validate_rollout_compatibility(
+      {"dj_queue_version": "0.13.1", "rollout_protocol": 1},
+      {"dj_queue_version": "0.15.0", "rollout_protocol": 2},
+    )
 
 
 def test_manifest_and_metrics_are_machine_readable(tmp_path):

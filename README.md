@@ -370,10 +370,14 @@ the behavior of a process that is still running N−1.
 Use this deployment order:
 
 1. Upgrade all application and queue processes to the minimum compatible N−1 patch.
-2. Run `python manage.py dj_queue_health --deep` and confirm that no older application process remains in your deployment platform.
+2. Run `python manage.py dj_queue_health --deep` for queue processes and
+   invariants. Use your deployment platform to confirm that no older application
+   producer remains.
 3. Apply release N migrations once.
 4. Roll application producers and queue processes from N−1 to N.
-5. Run `python manage.py dj_queue_health --deep --require-version <N version>` and confirm that no N−1 application process remains.
+5. Run `python manage.py dj_queue_health --deep --require-version <N version>` for
+   queue processes. Use your deployment platform to confirm that no N−1
+   application producer remains.
 
 Each registered queue process stores its exact `dj_queue` version and rollout
 protocol generation. Deep health rejects a missing or incompatible protocol.
@@ -406,9 +410,10 @@ bin/prerelease.py \
 
 The command calibrates release N−1, applies release N migrations under live
 writes, runs both versions together, drains with release N, and verifies queue
-state and side effects. It writes wheel hashes, one-second metrics, logs, and a
-result manifest under `benchmark-results/`. The **Pre-release migration load**
-workflow runs the database floor and current-version lanes.
+state and side effects. It rejects revisions that do not publish one shared
+rollout protocol. It writes wheel hashes, one-second metrics, logs, and a result
+manifest under `benchmark-results/`. The **Pre-release migration load** workflow
+runs the database floor and current-version lanes.
 
 ## Recurring Tasks
 
