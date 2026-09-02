@@ -34,24 +34,13 @@ class BackendProgress:
 
 
 def start_services():
-  needed = []
-  for svc in DB_SERVICES:
-    result = subprocess.run(
-      ["docker", "compose", "ps", svc, "--format", "{{.Health}}"],
-      check=False,
-      capture_output=True,
-      text=True,
-    )
-    if result.stdout.strip().lower() != "healthy":
-      needed.append(svc)
-  if needed:
-    print(f"Starting {', '.join(needed)}...")
-    subprocess.run(
-      ["docker", "compose", "up", "-d", *needed],
-      check=True,
-      stdout=subprocess.DEVNULL,
-      stderr=subprocess.DEVNULL,
-    )
+  print(f"Ensuring {', '.join(DB_SERVICES)} match compose.yml...")
+  subprocess.run(
+    ["docker", "compose", "up", "-d", *DB_SERVICES],
+    check=True,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+  )
 
 
 def wait_for_healthy(timeout=60):

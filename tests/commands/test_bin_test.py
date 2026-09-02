@@ -1,6 +1,7 @@
 import importlib.util
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def load_test_bin_module():
@@ -20,6 +21,30 @@ def test_parse_collected_total_reads_pytest_summary():
   assert module.parse_collected_total("172 tests collected in 1.23s\n") == 172
   assert module.parse_collected_total("1 test collected in 0.01s\n") == 1
   assert module.parse_collected_total("collecting ...\n") is None
+
+
+def test_start_services_reconciles_compose_configuration(monkeypatch):
+  module = load_test_bin_module()
+  calls = []
+
+  monkeypatch.setattr(
+    module.subprocess,
+    "run",
+    lambda command, **kwargs: calls.append((command, kwargs)) or SimpleNamespace(),
+  )
+
+  module.start_services()
+
+  assert calls == [
+    (
+      ["docker", "compose", "up", "-d", "mysql", "mariadb", "postgres"],
+      {
+        "check": True,
+        "stdout": module.subprocess.DEVNULL,
+        "stderr": module.subprocess.DEVNULL,
+      },
+    )
+  ]
 
 
 def test_note_result_char_counts_ansi_wrapped_progress_only_up_to_total():
