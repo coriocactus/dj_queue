@@ -30,7 +30,7 @@ def make_job(**overrides):
 
 
 @pytest.mark.django_db
-def test_recurring_execution_allows_null_job_during_reservation():
+def test_recurring_execution_allows_null_job_during_recoverable_reservation():
   task = RecurringTask.objects.create(
     backend_alias="default",
     key="every-minute",
@@ -38,15 +38,17 @@ def test_recurring_execution_allows_null_job_during_reservation():
     schedule="* * * * *",
   )
   run_at = timezone.now().replace(second=0, microsecond=0) + timedelta(minutes=1)
+  intended_job_id = uuid4()
 
   execution = RecurringExecution.objects.create(
     backend_alias="default",
     task_key=task.key,
     run_at=run_at,
+    intended_job_id=intended_job_id,
   )
 
   assert execution.job is None
-  assert execution.intended_job_id is not None
+  assert execution.intended_job_id == intended_job_id
 
   job = make_job(id=execution.intended_job_id, task_path=task.task_path)
   execution.job = job
@@ -56,17 +58,18 @@ def test_recurring_execution_allows_null_job_during_reservation():
 
 
 @pytest.mark.django_db
-def test_recurring_execution_job_matches_intended_job():
+def test_recurring_execution_allows_legacy_job_without_intended_id():
+  job = make_job()
   execution = RecurringExecution.objects.create(
     backend_alias="default",
     task_key="every-minute",
     run_at=timezone.now(),
+    intended_job_id=None,
+    job=job,
   )
-  other_job = make_job(id=uuid4())
 
-  execution.job = other_job
-  with pytest.raises(IntegrityError), transaction.atomic():
-    execution.save(update_fields=["job"])
+  assert execution.intended_job_id is None
+  assert execution.job == job
 
 
 @pytest.mark.django_db

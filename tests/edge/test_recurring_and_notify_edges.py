@@ -170,6 +170,40 @@ def test_recurring_reservation_without_job_backfill_recovers_intended_job():
   scheduler.stop()
 
 
+def test_legacy_recurring_reservation_without_intended_job_is_not_recovered():
+  now = fixed_now()
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      recurring={
+        "static-task": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "* * * * *",
+        }
+      }
+    )
+  )
+  scheduler.sync_static_tasks()
+  recurring_task = RecurringTask.objects.get(backend_alias="default", key="static-task")
+  run_at = latest_cron_run(recurring_task.schedule, now)
+  recurring_task.next_run_at = run_at + timedelta(minutes=1)
+  recurring_task.save(update_fields=["next_run_at"])
+  execution = RecurringExecution.objects.create(
+    backend_alias="default",
+    task_key=recurring_task.key,
+    run_at=run_at,
+    job=None,
+    intended_job_id=None,
+  )
+
+  assert scheduler.poll_once(now=now) == []
+  assert scheduler.poll_once(now=now) == []
+
+  execution.refresh_from_db()
+  assert execution.job_id is None
+  assert Job.objects.count() == 0
+  scheduler.stop()
+
+
 def test_recurring_reservation_attaches_existing_intended_job_without_enqueue(monkeypatch):
   now = fixed_now()
   scheduler = build_scheduler(
@@ -374,10 +408,12 @@ def test_recurring_recovery_respects_scheduler_batch_size(monkeypatch):
     run_at = latest_cron_run(recurring_task.schedule, now)
     recurring_task.next_run_at = run_at + timedelta(minutes=1)
     recurring_task.save(update_fields=["next_run_at"])
+    intended_job_id = uuid4()
     execution = RecurringExecution.objects.create(
       backend_alias="default",
       task_key=recurring_task.key,
       run_at=run_at,
+      intended_job_id=intended_job_id,
     )
     intended_job_ids.append(execution.intended_job_id)
   monkeypatch.setattr("dj_queue.runtime.scheduler.RECURRING_BATCH_SIZE", 1)

@@ -269,6 +269,7 @@ def fire_due_recurring_tasks(
     backend_alias=backend_alias,
     task_key=OuterRef("key"),
     job__isnull=True,
+    intended_job_id__isnull=False,
   )
   queryset = (
     RecurringTask.objects.using(alias)
@@ -295,6 +296,7 @@ def fire_due_recurring_tasks(
         backend_alias=backend_alias,
         task_key__in=[task.key for task in recurring_tasks],
         job__isnull=True,
+        intended_job_id__isnull=False,
       )
       .order_by("run_at", "id")
     )
@@ -367,7 +369,7 @@ def _reserve_recurring_task(recurring_task, run_at, *, backend_alias):
         )
         .first()
       )
-      if execution is None or execution.job_id is not None:
+      if execution is None or execution.job_id is not None or execution.intended_job_id is None:
         return None
       return _recurring_reservation(execution, recurring_task, next_run_at)
 
@@ -387,7 +389,7 @@ def _reserve_recurring_task(recurring_task, run_at, *, backend_alias):
       run_at=run_at,
     )
     _advance_next_run_at(recurring_task, next_run_at, using=alias)
-    if not created and execution.job_id is not None:
+    if not created and (execution.job_id is not None or execution.intended_job_id is None):
       return None
     return _recurring_reservation(execution, recurring_task, next_run_at)
 

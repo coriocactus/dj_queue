@@ -10,6 +10,7 @@ from dj_queue.models import (
   Pause,
   Process,
   ReadyExecution,
+  RecurringExecution,
   RecurringTask,
   Semaphore,
 )
@@ -342,6 +343,20 @@ def test_deep_health_allows_semaphore_occupancy_above_a_reduced_limit():
   problems = observability.deep_health_problems(backend_alias="default")
 
   assert not any("semaphores have impossible slot counts" in problem for problem in problems)
+
+
+def test_deep_health_allows_unresolved_legacy_recurring_reservation():
+  RecurringExecution.objects.create(
+    backend_alias="default",
+    task_key="legacy",
+    run_at=timezone.now(),
+    intended_job_id=None,
+    job=None,
+  )
+
+  problems = observability.deep_health_problems(backend_alias="default")
+
+  assert not any("recurring execution reservations have no job" in problem for problem in problems)
 
 
 def test_configured_backend_aliases_ignore_non_dj_queue_backends(settings):

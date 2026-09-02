@@ -1,6 +1,7 @@
 from datetime import timedelta
 from io import StringIO
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from django.core.management import call_command
@@ -665,6 +666,7 @@ def test_health_command_deep_reports_runtime_integrity_problems(capsys):
     task_key="nightly",
     run_at=timezone.now(),
     job=None,
+    intended_job_id=uuid4(),
   )
   Semaphore.objects.create(
     key="account:1",

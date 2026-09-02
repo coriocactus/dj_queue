@@ -515,7 +515,11 @@ def deep_health_problems(*, backend_alias, max_age=None, now=None):
 
   recurring_without_jobs = (
     RecurringExecution.objects.using(alias)
-    .filter(backend_alias=backend_alias, job__isnull=True)
+    .filter(
+      backend_alias=backend_alias,
+      intended_job_id__isnull=False,
+      job__isnull=True,
+    )
     .count()
   )
   if recurring_without_jobs:
