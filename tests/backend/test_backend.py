@@ -660,6 +660,61 @@ def test_retry_failed_job_reuses_normal_dispatch_path():
 
 
 @pytest.mark.django_db
+def test_bulk_retry_query_growth_is_limited_to_state_consumption():
+  def retry_query_count(size):
+    for index in range(size):
+      job = make_job(args=[index])
+      FailedExecution.objects.create(
+        job=job,
+        exception_class="builtins.ValueError",
+        message="boom",
+        traceback="traceback",
+      )
+    with CaptureQueriesContext(connection) as queries:
+      assert retry_failed_jobs(batch_size=size) == size
+    return len(queries)
+
+  single_query_count = retry_query_count(1)
+  batch_query_count = retry_query_count(5)
+
+  assert batch_query_count <= single_query_count + 4
+
+
+@pytest.mark.django_db
+def test_bulk_retry_groups_jobs_with_the_same_concurrency_policy():
+  jobs = [
+    make_job(
+      args=[index],
+      concurrency_key="account:1",
+      concurrency_limit=2,
+      concurrency_duration=60,
+      concurrency_on_conflict="block",
+    )
+    for index in range(3)
+  ]
+  FailedExecution.objects.bulk_create(
+    [
+      FailedExecution(
+        job=job,
+        exception_class="builtins.ValueError",
+        message="boom",
+        traceback="traceback",
+      )
+      for job in jobs
+    ]
+  )
+
+  retried = retry_failed_jobs(batch_size=3)
+
+  assert retried == 3
+  assert ReadyExecution.objects.filter(job__in=jobs).count() == 2
+  assert BlockedExecution.objects.filter(job__in=jobs).count() == 1
+  semaphore = Semaphore.objects.get(key="account:1")
+  assert semaphore.active_count == 2
+  assert semaphore.limit == 2
+
+
+@pytest.mark.django_db
 def test_schedule_failed_job_retry_sets_retry_at_without_dispatching():
   retry_at = timezone.now() + timedelta(minutes=5)
   job = make_job(args=["retry later"])

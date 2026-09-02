@@ -285,55 +285,15 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
 
     return [(entry.job, entry.task, DispatchOutcome.READY) for entry in prepared]
 
-  ready_rows = []
-  scheduled_rows = []
-  blocked_rows = []
-  discarded_jobs = []
-  concurrency_entries = []
-  ready_queue_names = []
-
   with transaction.atomic(using=alias):
     jobs = [entry.job for entry in prepared]
     _bulk_create(alias, Job, jobs)
-
-    for entry in prepared:
-      job = entry.job
-      decision = entry.dispatch_decision
-      if decision.outcome is DispatchOutcome.SCHEDULED:
-        scheduled_rows.append(
-          _scheduled_execution_row(
-            job=job,
-            backend_alias=backend_alias,
-            scheduled_at=job.scheduled_at,
-            created_at=job.created_at,
-          )
-        )
-        entry.dispatch_outcome = DispatchOutcome.SCHEDULED
-        continue
-
-      if decision.outcome is DispatchOutcome.READY:
-        ready_rows.append(
-          _ready_execution_row(
-            job=job,
-            backend_alias=backend_alias,
-            created_at=job.created_at,
-            ready_at=job.created_at,
-          )
-        )
-        ready_queue_names.append(job.queue_name)
-        entry.dispatch_outcome = DispatchOutcome.READY
-        continue
-
-      concurrency_entries.append(entry)
-
-    _dispatch_bulk_concurrency_entries(
-      concurrency_entries,
-      ready_rows=ready_rows,
-      blocked_rows=blocked_rows,
-      discarded_jobs=discarded_jobs,
-      ready_queue_names=ready_queue_names,
-      backend_alias=backend_alias,
-      now=now,
+    ready_rows, scheduled_rows, blocked_rows, discarded_jobs, ready_queue_names = (
+      _bulk_dispatch_rows(
+        prepared,
+        backend_alias=backend_alias,
+        now=now,
+      )
     )
 
     _bulk_create_ready_executions_locked(
@@ -362,6 +322,54 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
   )
 
   return [(entry.job, entry.task, entry.dispatch_outcome) for entry in prepared]
+
+
+def _bulk_dispatch_rows(prepared, *, backend_alias, now):
+  ready_rows = []
+  scheduled_rows = []
+  blocked_rows = []
+  discarded_jobs = []
+  ready_queue_names = []
+  concurrency_entries = []
+
+  for entry in prepared:
+    job = entry.job
+    decision = entry.dispatch_decision
+    if decision.outcome is DispatchOutcome.SCHEDULED:
+      scheduled_rows.append(
+        _scheduled_execution_row(
+          job,
+          backend_alias=backend_alias,
+          scheduled_at=job.scheduled_at,
+          created_at=now,
+        )
+      )
+      entry.dispatch_outcome = DispatchOutcome.SCHEDULED
+      continue
+    if decision.outcome is DispatchOutcome.READY:
+      ready_rows.append(
+        _ready_execution_row(
+          job,
+          backend_alias=backend_alias,
+          ready_at=now,
+          created_at=now,
+        )
+      )
+      ready_queue_names.append(job.queue_name)
+      entry.dispatch_outcome = DispatchOutcome.READY
+      continue
+    concurrency_entries.append(entry)
+
+  _dispatch_bulk_concurrency_entries(
+    concurrency_entries,
+    ready_rows=ready_rows,
+    blocked_rows=blocked_rows,
+    discarded_jobs=discarded_jobs,
+    ready_queue_names=ready_queue_names,
+    backend_alias=backend_alias,
+    now=now,
+  )
+  return ready_rows, scheduled_rows, blocked_rows, discarded_jobs, ready_queue_names
 
 
 def _log_bulk_enqueued(outcomes, *, backend_alias):
@@ -420,7 +428,7 @@ def _dispatch_bulk_concurrency_entries(
           _ready_execution_row(
             job=job,
             backend_alias=backend_alias,
-            created_at=job.created_at,
+            created_at=now,
             ready_at=now,
           )
         )
@@ -444,6 +452,7 @@ def _dispatch_bulk_concurrency_entries(
           priority=job.priority,
           concurrency_key=concurrency_key,
           expires_at=now + timedelta(seconds=duration_seconds),
+          created_at=now,
         )
       )
       entry.dispatch_outcome = dispatch_outcome
@@ -1145,26 +1154,65 @@ def _dispatch_consumed_failed_rows(
   backend_alias,
   isolate_policy_errors=False,
 ):
-  jobs = []
-  ready_queue_names = []
+  now = timezone.now()
+  failed_jobs = [failed.job for failed in failed_rows]
+  _ensure_job_ids_have_no_other_execution_state(alias, [job.id for job in failed_jobs])
+
+  prepared = []
   policy_failures = []
-  for failed in failed_rows:
-    job = failed.job
+  for job in failed_jobs:
     job.return_value = None
     job.finished_at = None
-    job.save(using=alias, update_fields=["return_value", "finished_at", "updated_at"])
+    job.updated_at = now
+    entry = _PreparedJob(task=None, job=job)
     try:
-      dispatch_outcome = _dispatch_existing_job(job)
+      entry.dispatch_decision = _dispatch_decision(
+        job,
+        backend_alias=backend_alias,
+        now=now,
+      )
     except DispatchPolicyError as error:
       if not isolate_policy_errors:
         raise
-      _record_dispatch_policy_failure(alias, job, error)
       policy_failures.append((job, error))
       continue
-    jobs.append(job)
-    if dispatch_outcome.should_notify:
-      ready_queue_names.append(job.queue_name)
-  return jobs, ready_queue_names, policy_failures
+    prepared.append(entry)
+
+  ready_rows, scheduled_rows, blocked_rows, _discarded_jobs, ready_queue_names = (
+    _bulk_dispatch_rows(
+      prepared,
+      backend_alias=backend_alias,
+      now=now,
+    )
+  )
+
+  Job.objects.using(alias).bulk_update(
+    failed_jobs,
+    ["return_value", "finished_at", "updated_at"],
+  )
+  _bulk_create_ready_executions_locked(
+    alias,
+    ready_rows,
+    backend_alias=backend_alias,
+    check_conflicts=False,
+  )
+  _bulk_create(alias, ScheduledExecution, scheduled_rows)
+  _bulk_create(alias, BlockedExecution, blocked_rows)
+  _bulk_create(
+    alias,
+    FailedExecution,
+    [
+      FailedExecution(
+        job_id=job.id,
+        exception_class=_exception_path(error),
+        message=str(error),
+        traceback="",
+      )
+      for job, error in policy_failures
+    ],
+  )
+
+  return [entry.job for entry in prepared], ready_queue_names, policy_failures
 
 
 def _log_jobs_retried(jobs, *, backend_alias):
