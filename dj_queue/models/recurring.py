@@ -1,3 +1,5 @@
+import uuid
+
 from django.db import models
 
 
@@ -34,6 +36,7 @@ class RecurringTask(models.Model):
 
 class RecurringExecution(models.Model):
   backend_alias = models.CharField(max_length=64, default="default")
+  intended_job_id = models.UUIDField(default=uuid.uuid4)
   job = models.OneToOneField(
     "dj_queue.Job",
     null=True,
@@ -51,7 +54,11 @@ class RecurringExecution(models.Model):
       models.UniqueConstraint(
         fields=["backend_alias", "task_key", "run_at"],
         name="dj_queue_recur_exec_backend_run_at_unique",
-      )
+      ),
+      models.CheckConstraint(
+        condition=models.Q(job__isnull=True) | models.Q(job=models.F("intended_job_id")),
+        name="djq_re_job_matches_intended",
+      ),
     ]
     indexes = [
       models.Index(fields=["backend_alias", "task_key", "run_at"]),

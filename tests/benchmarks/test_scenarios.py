@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 
 import pytest
+from django.db import connection
 
 from benchmarks.scenarios import enqueue, runtime, scheduling
 from dj_queue.models import Job
@@ -29,7 +30,8 @@ def test_recurring_scale_reports_steady_poll_query_count():
   metrics = scheduling.recurring_scale(2)
 
   assert metrics["fired_count"] == 0
-  assert metrics["query_count"] > 0
+  expected_query_count = 2 if connection.vendor == "mysql" else 1
+  assert metrics["query_count"] == expected_query_count
 
 
 @pytest.mark.django_db

@@ -1,4 +1,5 @@
 from datetime import timedelta
+from uuid import uuid4
 
 import pytest
 from django.db import IntegrityError, transaction
@@ -45,12 +46,27 @@ def test_recurring_execution_allows_null_job_during_reservation():
   )
 
   assert execution.job is None
+  assert execution.intended_job_id is not None
 
-  job = make_job(task_path=task.task_path)
+  job = make_job(id=execution.intended_job_id, task_path=task.task_path)
   execution.job = job
   execution.save(update_fields=["job"])
 
   assert RecurringExecution.objects.get(pk=execution.pk).job == job
+
+
+@pytest.mark.django_db
+def test_recurring_execution_job_matches_intended_job():
+  execution = RecurringExecution.objects.create(
+    backend_alias="default",
+    task_key="every-minute",
+    run_at=timezone.now(),
+  )
+  other_job = make_job(id=uuid4())
+
+  execution.job = other_job
+  with pytest.raises(IntegrityError), transaction.atomic():
+    execution.save(update_fields=["job"])
 
 
 @pytest.mark.django_db

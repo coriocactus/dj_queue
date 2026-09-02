@@ -1,14 +1,15 @@
 from datetime import timedelta
+from uuid import uuid4
 
-from django.db import transaction
-from django.db.models import Q
+from django.db import IntegrityError, transaction
+from django.db.models import Exists, OuterRef, Q
 from django.utils.module_loading import import_string
 
 from dj_queue.config import load_backend_config
 from dj_queue.cron import is_valid_cron, latest_cron_run, next_cron_run
 from dj_queue.db import get_database_alias, locked_queryset
 from dj_queue.exceptions import EnqueueError
-from dj_queue.models import RecurringExecution, RecurringTask
+from dj_queue.models import Job, RecurringExecution, RecurringTask
 from dj_queue.operations._helpers import _normalize_payload
 from dj_queue.operations._insert import create_ignore_conflicts
 from dj_queue.operations.jobs import enqueue_job, validate_priority, validate_queue_allowed
@@ -262,10 +263,16 @@ def fire_due_recurring_tasks(
   batch_size=500,
 ):
   alias = get_database_alias(backend_alias)
+  unbackfilled = RecurringExecution.objects.using(alias).filter(
+    backend_alias=backend_alias,
+    task_key=OuterRef("key"),
+    job__isnull=True,
+  )
   queryset = (
     RecurringTask.objects.using(alias)
     .filter(backend_alias=backend_alias)
-    .filter(Q(next_run_at__isnull=True) | Q(next_run_at__lte=now))
+    .annotate(has_unbackfilled=Exists(unbackfilled))
+    .filter(Q(next_run_at__isnull=True) | Q(next_run_at__lte=now) | Q(has_unbackfilled=True))
     .order_by("next_run_at", "key")
   )
   if not include_dynamic_tasks:
@@ -273,14 +280,54 @@ def fire_due_recurring_tasks(
   if batch_size is not None:
     queryset = queryset[:batch_size]
 
+  recurring_tasks = list(queryset)
+  if not recurring_tasks:
+    return []
+
+  remaining = batch_size
+  pending_by_key = {}
+  if any(task.has_unbackfilled for task in recurring_tasks):
+    pending = (
+      RecurringExecution.objects.using(alias)
+      .filter(
+        backend_alias=backend_alias,
+        task_key__in=[task.key for task in recurring_tasks],
+        job__isnull=True,
+      )
+      .order_by("run_at", "id")
+    )
+    if remaining is not None:
+      pending = pending[:remaining]
+    for execution in pending:
+      pending_by_key.setdefault(execution.task_key, []).append(execution)
+
   fired_jobs = []
-  for recurring_task in queryset:
+  for recurring_task in recurring_tasks:
+    for pending_execution in pending_by_key.get(recurring_task.key, ()):
+      execution = fire_recurring_task(
+        recurring_task,
+        pending_execution.run_at,
+        backend_alias=backend_alias,
+      )
+      if execution is not None and execution.job_id is not None:
+        fired_jobs.append(execution.job)
+      if remaining is not None:
+        remaining -= 1
+        if remaining == 0:
+          return fired_jobs
+
+    if recurring_task.next_run_at is not None and recurring_task.next_run_at > now:
+      continue
     run_at = latest_cron_run(recurring_task.schedule, now)
     if run_at is None:
       continue
     execution = fire_recurring_task(recurring_task, run_at, backend_alias=backend_alias)
     if execution is not None and execution.job_id is not None:
       fired_jobs.append(execution.job)
+    if remaining is not None:
+      remaining -= 1
+      if remaining == 0:
+        break
   return fired_jobs
 
 
@@ -290,11 +337,7 @@ def fire_recurring_task(recurring_task, run_at, *, backend_alias="default"):
   if reservation is None:
     return None
 
-  try:
-    job = _enqueue_reserved_recurring_task(reservation, backend_alias=backend_alias)
-  except Exception:
-    _delete_unbackfilled_reservation(reservation, using=alias, backend_alias=backend_alias)
-    raise
+  job = _enqueue_reserved_recurring_task(reservation, using=alias, backend_alias=backend_alias)
   return _attach_reserved_recurring_job(reservation, job, using=alias, backend_alias=backend_alias)
 
 
@@ -308,24 +351,33 @@ def _reserve_recurring_task(recurring_task, run_at, *, backend_alias):
     ).first()
     if recurring_task is None:
       return None
-    if recurring_task.next_run_at is not None and recurring_task.next_run_at > run_at:
-      return None
     if latest_cron_run(recurring_task.schedule, run_at + timedelta(microseconds=1)) != run_at:
       return None
 
     next_run_at = _next_run_after(recurring_task.schedule, run_at)
+    if recurring_task.next_run_at is not None and recurring_task.next_run_at > run_at:
+      execution = (
+        RecurringExecution.objects.using(alias)
+        .filter(
+          backend_alias=backend_alias,
+          task_key=recurring_task.key,
+          run_at=run_at,
+        )
+        .first()
+      )
+      if execution is None or execution.job_id is not None:
+        return None
+      return _recurring_reservation(execution, recurring_task, next_run_at)
+
+    intended_job_id = uuid4()
     created = create_ignore_conflicts(
       RecurringExecution,
       using=alias,
       backend_alias=backend_alias,
       task_key=recurring_task.key,
       run_at=run_at,
+      intended_job_id=intended_job_id,
     )
-    if not created:
-      _advance_next_run_at(recurring_task, next_run_at, using=alias)
-      # treat an existing reservation row as authoritative even if its job backfill
-      # has not happened yet, so duplicate scheduler ticks never enqueue twice
-      return None
 
     execution = RecurringExecution.objects.using(alias).get(
       backend_alias=backend_alias,
@@ -333,32 +385,78 @@ def _reserve_recurring_task(recurring_task, run_at, *, backend_alias):
       run_at=run_at,
     )
     _advance_next_run_at(recurring_task, next_run_at, using=alias)
-    return {
-      "execution_id": execution.id,
-      "recurring_task_id": recurring_task.id,
-      "task_key": recurring_task.key,
-      "run_at": run_at,
-      "next_run_at": next_run_at,
-      "task_path": recurring_task.task_path,
-      "payload": recurring_task.payload or {},
-      "queue_name": recurring_task.queue_name,
-      "priority": recurring_task.priority,
-    }
+    if not created and execution.job_id is not None:
+      return None
+    return _recurring_reservation(execution, recurring_task, next_run_at)
 
 
-def _enqueue_reserved_recurring_task(reservation, *, backend_alias):
+def _recurring_reservation(execution, recurring_task, next_run_at):
+  return {
+    "execution_id": execution.id,
+    "intended_job_id": execution.intended_job_id,
+    "recurring_task_id": recurring_task.id,
+    "task_key": recurring_task.key,
+    "run_at": execution.run_at,
+    "next_run_at": next_run_at,
+    "task_path": recurring_task.task_path,
+    "payload": recurring_task.payload or {},
+    "queue_name": recurring_task.queue_name,
+    "priority": recurring_task.priority,
+    "backend_alias": recurring_task.backend_alias,
+  }
+
+
+def _enqueue_reserved_recurring_task(reservation, *, using, backend_alias):
+  existing_job = Job.objects.using(using).filter(pk=reservation["intended_job_id"]).first()
+  if existing_job is not None:
+    return _validated_reserved_job(reservation, existing_job, using=using)
+
   task = import_string(reservation["task_path"]).using(
     queue_name=reservation["queue_name"],
     priority=reservation["priority"],
     backend=backend_alias,
   )
   payload = reservation["payload"]
-  return enqueue_job(
-    task,
-    payload.get("args", []),
-    payload.get("kwargs", {}),
-    backend_alias=backend_alias,
+  try:
+    return enqueue_job(
+      task,
+      payload.get("args", []),
+      payload.get("kwargs", {}),
+      backend_alias=backend_alias,
+      job_id=reservation["intended_job_id"],
+    )
+  except IntegrityError:
+    existing_job = Job.objects.using(using).filter(pk=reservation["intended_job_id"]).first()
+    if existing_job is None:
+      raise
+    return _validated_reserved_job(reservation, existing_job, using=using)
+
+
+def _validated_reserved_job(reservation, job, *, using):
+  payload = reservation["payload"]
+  expected = (
+    reservation["task_path"],
+    reservation["queue_name"],
+    reservation["priority"],
+    _normalize_payload(payload.get("args", []), payload.get("kwargs", {})),
+    reservation["backend_alias"],
   )
+  actual = (
+    job.task_path,
+    job.queue_name,
+    job.priority,
+    job.payload,
+    job.backend_alias,
+  )
+  assigned_elsewhere = (
+    RecurringExecution.objects.using(using)
+    .filter(job_id=job.id)
+    .exclude(pk=reservation["execution_id"])
+    .exists()
+  )
+  if actual != expected or assigned_elsewhere:
+    raise EnqueueError("intended recurring job metadata does not match reservation")
+  return job
 
 
 def _attach_reserved_recurring_job(reservation, job, *, using, backend_alias):
@@ -368,35 +466,24 @@ def _attach_reserved_recurring_job(reservation, job, *, using, backend_alias):
       pk=reservation["execution_id"],
       backend_alias=backend_alias,
       job__isnull=True,
+      intended_job_id=job.id,
     )
     .update(job=job)
   )
   if updated != 1:
+    execution = (
+      RecurringExecution.objects.using(using)
+      .select_related("job")
+      .get(pk=reservation["execution_id"])
+    )
+    if execution.job_id == job.id and execution.intended_job_id == job.id:
+      return None
     raise EnqueueError("recurring execution reservation could not be assigned a job")
   return (
     RecurringExecution.objects.using(using)
     .select_related("job")
     .get(pk=reservation["execution_id"])
   )
-
-
-def _delete_unbackfilled_reservation(reservation, *, using, backend_alias):
-  with transaction.atomic(using=using):
-    deleted, _ = (
-      RecurringExecution.objects.using(using)
-      .filter(
-        pk=reservation["execution_id"],
-        backend_alias=backend_alias,
-        job__isnull=True,
-      )
-      .delete()
-    )
-    if deleted:
-      RecurringTask.objects.using(using).filter(
-        pk=reservation["recurring_task_id"],
-        backend_alias=backend_alias,
-        next_run_at=reservation["next_run_at"],
-      ).update(next_run_at=reservation["run_at"])
 
 
 def _next_run_after(schedule, run_at):

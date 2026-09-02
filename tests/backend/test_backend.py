@@ -151,6 +151,22 @@ def test_enqueue_job_with_dispatch_returns_explicit_outcome():
 
 
 @pytest.mark.django_db
+def test_internal_enqueue_accepts_exact_job_id():
+  job_id = uuid.uuid4()
+
+  job, dispatch_outcome = enqueue_job_with_dispatch(
+    echo,
+    ("ready",),
+    {},
+    backend_alias="default",
+    job_id=job_id,
+  )
+
+  assert job.id == job_id
+  assert dispatch_outcome is DispatchOutcome.READY
+
+
+@pytest.mark.django_db
 def test_enqueue_persists_concurrency_policy():
   result = limited_discard.enqueue(1, value="ready")
 

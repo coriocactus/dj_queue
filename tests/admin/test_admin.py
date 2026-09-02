@@ -226,6 +226,7 @@ def test_job_admin_recurring_task_filter(admin_client):
   _other_job = make_job(task_path="tests.tasks.other")
   RecurringExecution.objects.create(
     backend_alias="default",
+    intended_job_id=recurring_job.id,
     job=recurring_job,
     task_key=task.key,
     run_at=timezone.now(),

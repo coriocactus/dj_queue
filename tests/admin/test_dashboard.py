@@ -533,6 +533,7 @@ def test_dashboard_recurring_key_links_to_raw_jobs(admin_client):
   job = make_job(queue_name="default")
   RecurringExecution.objects.create(
     backend_alias="default",
+    intended_job_id=job.id,
     job=job,
     task_key=task.key,
     run_at=timezone.now(),

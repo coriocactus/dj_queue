@@ -111,6 +111,7 @@ def test_mysql_create_ignore_conflicts_uses_duplicate_key_noop(monkeypatch):
       statements.append((sql, params))
 
   class FakeConnection:
+    features = connections["default"].features
     ops = connections["default"].ops
 
     def cursor(self):

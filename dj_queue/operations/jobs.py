@@ -138,12 +138,26 @@ class _PreparedJob:
   dispatch_outcome: DispatchOutcome | None = None
 
 
-def enqueue_job(task, args, kwargs, *, backend_alias="default"):
-  job, _ = enqueue_job_with_dispatch(task, args, kwargs, backend_alias=backend_alias)
+def enqueue_job(task, args, kwargs, *, backend_alias="default", job_id=None):
+  job, _ = enqueue_job_with_dispatch(
+    task,
+    args,
+    kwargs,
+    backend_alias=backend_alias,
+    job_id=job_id,
+  )
   return job
 
 
-def enqueue_job_with_dispatch(task, args, kwargs, *, backend_alias="default", validate=True):
+def enqueue_job_with_dispatch(
+  task,
+  args,
+  kwargs,
+  *,
+  backend_alias="default",
+  validate=True,
+  job_id=None,
+):
   if validate:
     validate_queue_allowed(task.queue_name, backend_alias=backend_alias)
     validate_priority(task.priority)
@@ -157,18 +171,21 @@ def enqueue_job_with_dispatch(task, args, kwargs, *, backend_alias="default", va
   )
 
   with transaction.atomic(using=alias):
-    job = Job.objects.using(alias).create(
-      task_path=task.module_path,
-      queue_name=task.queue_name,
-      priority=task.priority,
-      payload=payload,
-      backend_alias=backend_alias,
-      scheduled_at=task.run_after,
-      concurrency_key=concurrency_key,
-      concurrency_limit=concurrency_limit,
-      concurrency_duration=concurrency_duration,
-      concurrency_on_conflict=concurrency_on_conflict,
-    )
+    job_fields = {
+      "task_path": task.module_path,
+      "queue_name": task.queue_name,
+      "priority": task.priority,
+      "payload": payload,
+      "backend_alias": backend_alias,
+      "scheduled_at": task.run_after,
+      "concurrency_key": concurrency_key,
+      "concurrency_limit": concurrency_limit,
+      "concurrency_duration": concurrency_duration,
+      "concurrency_on_conflict": concurrency_on_conflict,
+    }
+    if job_id is not None:
+      job_fields["id"] = job_id
+    job = Job.objects.using(alias).create(**job_fields)
     dispatch_outcome = _dispatch_job(
       job,
       task=task,

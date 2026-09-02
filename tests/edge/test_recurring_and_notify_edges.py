@@ -1,16 +1,16 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from django.db import transaction
-from django.db.models.query import QuerySet
 from django.utils import timezone
 
 from dj_queue.api import unschedule_recurring_task
 from dj_queue.cron import latest_cron_run
-from dj_queue.models import Job, RecurringExecution, RecurringTask
+from dj_queue.exceptions import EnqueueError
+from dj_queue.models import Job, ReadyExecution, RecurringExecution, RecurringTask
 from dj_queue.runtime.notify import (
   NoopWakeupBackend,
   NotifyWakeupBackend,
@@ -135,7 +135,7 @@ def test_ready_notification_skips_on_commit_without_notify_support(monkeypatch):
   assert on_commit_calls == []
 
 
-def test_recurring_reservation_without_job_backfill_does_not_double_fire(monkeypatch):
+def test_recurring_reservation_without_job_backfill_recovers_intended_job():
   now = fixed_now()
   scheduler = build_scheduler(
     tasks_settings=scheduler_tasks_settings(
@@ -150,33 +150,79 @@ def test_recurring_reservation_without_job_backfill_does_not_double_fire(monkeyp
   scheduler.sync_static_tasks()
   recurring_task = RecurringTask.objects.get(backend_alias="default", key="static-task")
   run_at = latest_cron_run(recurring_task.schedule, now)
-  RecurringExecution.objects.create(
+  intended_job_id = uuid4()
+  recurring_task.next_run_at = run_at + timedelta(minutes=1)
+  recurring_task.save(update_fields=["next_run_at"])
+  execution = RecurringExecution.objects.create(
     backend_alias="default",
     task_key=recurring_task.key,
     run_at=run_at,
     job=None,
+    intended_job_id=intended_job_id,
+  )
+
+  fired_jobs = scheduler.poll_once(now=now)
+
+  execution.refresh_from_db()
+  assert [job.id for job in fired_jobs] == [intended_job_id]
+  assert Job.objects.filter(pk=intended_job_id).count() == 1
+  assert execution.job_id == intended_job_id
+  scheduler.stop()
+
+
+def test_recurring_reservation_attaches_existing_intended_job_without_enqueue(monkeypatch):
+  now = fixed_now()
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      recurring={
+        "static-task": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "* * * * *",
+        }
+      }
+    )
+  )
+  scheduler.sync_static_tasks()
+  recurring_task = RecurringTask.objects.get(backend_alias="default", key="static-task")
+  run_at = latest_cron_run(recurring_task.schedule, now)
+  intended_job_id = uuid4()
+  recurring_task.next_run_at = run_at + timedelta(minutes=1)
+  recurring_task.save(update_fields=["next_run_at"])
+  job = Job.objects.create(
+    id=intended_job_id,
+    task_path="tests.tasks.echo",
+    queue_name="default",
+    priority=0,
+    payload={"args": [], "kwargs": {}},
+    backend_alias="default",
+  )
+  ReadyExecution.objects.create(
+    job=job,
+    backend_alias="default",
+    queue_name="default",
+    priority=0,
+  )
+  execution = RecurringExecution.objects.create(
+    backend_alias="default",
+    task_key=recurring_task.key,
+    run_at=run_at,
+    intended_job_id=intended_job_id,
   )
 
   monkeypatch.setattr(
     "dj_queue.operations.recurring.enqueue_job",
-    lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not enqueue twice")),
+    lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("job already exists")),
   )
 
   fired_jobs = scheduler.poll_once(now=now)
 
-  assert fired_jobs == []
-  assert Job.objects.count() == 0
-  assert (
-    RecurringExecution.objects.filter(
-      backend_alias="default",
-      task_key="static-task",
-      run_at=run_at,
-    ).count()
-    == 1
-  )
+  execution.refresh_from_db()
+  assert [fired.id for fired in fired_jobs] == [job.id]
+  assert execution.job_id == job.id
+  scheduler.stop()
 
 
-def test_recurring_reservation_does_not_insert_when_already_reserved(monkeypatch):
+def test_recurring_reservation_rejects_conflicting_intended_job_metadata():
   now = fixed_now()
   scheduler = build_scheduler(
     tasks_settings=scheduler_tasks_settings(
@@ -191,26 +237,159 @@ def test_recurring_reservation_does_not_insert_when_already_reserved(monkeypatch
   scheduler.sync_static_tasks()
   recurring_task = RecurringTask.objects.get(backend_alias="default", key="static-task")
   run_at = latest_cron_run(recurring_task.schedule, now)
+  intended_job_id = uuid4()
+  recurring_task.next_run_at = run_at + timedelta(minutes=1)
+  recurring_task.save(update_fields=["next_run_at"])
+  Job.objects.create(
+    id=intended_job_id,
+    task_path="tests.tasks.other",
+    queue_name="default",
+    priority=0,
+    payload={"args": [], "kwargs": {}},
+    backend_alias="default",
+  )
+  execution = RecurringExecution.objects.create(
+    backend_alias="default",
+    task_key=recurring_task.key,
+    run_at=run_at,
+    intended_job_id=intended_job_id,
+  )
+
+  with pytest.raises(EnqueueError, match="metadata does not match"):
+    scheduler.poll_once(now=now)
+
+  execution.refresh_from_db()
+  assert execution.job_id is None
+  scheduler.stop()
+
+
+def test_recurring_enqueue_failure_leaves_reservation_recoverable(monkeypatch):
+  now = fixed_now()
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      recurring={
+        "static-task": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "* * * * *",
+        }
+      }
+    )
+  )
+  scheduler.sync_static_tasks()
+  recurring_task = RecurringTask.objects.get(backend_alias="default", key="static-task")
+  run_at = latest_cron_run(recurring_task.schedule, now)
+  from dj_queue.operations import recurring
+
+  original_enqueue_job = recurring.enqueue_job
+  monkeypatch.setattr(
+    recurring,
+    "enqueue_job",
+    lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("enqueue failed")),
+  )
+
+  with pytest.raises(RuntimeError, match="enqueue failed"):
+    scheduler.poll_once(now=now)
+
+  execution = RecurringExecution.objects.get(
+    backend_alias="default",
+    task_key=recurring_task.key,
+    run_at=run_at,
+  )
+  assert execution.job_id is None
+  intended_job_id = execution.intended_job_id
+
+  monkeypatch.setattr(recurring, "enqueue_job", original_enqueue_job)
+  fired_jobs = scheduler.poll_once(now=now)
+
+  execution.refresh_from_db()
+  assert [job.id for job in fired_jobs] == [intended_job_id]
+  assert execution.job_id == intended_job_id
+  scheduler.stop()
+
+
+def test_complete_recurring_reservation_is_a_noop(monkeypatch):
+  now = fixed_now()
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      recurring={
+        "static-task": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "* * * * *",
+        }
+      }
+    )
+  )
+  scheduler.sync_static_tasks()
+  recurring_task = RecurringTask.objects.get(backend_alias="default", key="static-task")
+  run_at = latest_cron_run(recurring_task.schedule, now)
+  intended_job_id = uuid4()
+  job = Job.objects.create(
+    id=intended_job_id,
+    task_path="tests.tasks.echo",
+    queue_name="default",
+    priority=0,
+    payload={"args": [], "kwargs": {}},
+    backend_alias="default",
+  )
   RecurringExecution.objects.create(
     backend_alias="default",
     task_key=recurring_task.key,
     run_at=run_at,
-    job=None,
+    intended_job_id=intended_job_id,
+    job=job,
   )
-
-  original_create = QuerySet.create
-
-  def reject_duplicate_insert(queryset, *args, **kwargs):
-    if queryset.model is RecurringExecution:
-      raise AssertionError("existing recurring execution should be read, not inserted")
-    return original_create(queryset, *args, **kwargs)
-
-  monkeypatch.setattr(QuerySet, "create", reject_duplicate_insert)
+  recurring_task.next_run_at = run_at + timedelta(minutes=1)
+  recurring_task.save(update_fields=["next_run_at"])
+  monkeypatch.setattr(
+    "dj_queue.operations.recurring.enqueue_job",
+    lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("reservation is complete")),
+  )
 
   fired_jobs = scheduler.poll_once(now=now)
 
   assert fired_jobs == []
-  assert Job.objects.count() == 0
+  assert Job.objects.count() == 1
+  scheduler.stop()
+
+
+def test_recurring_recovery_respects_scheduler_batch_size(monkeypatch):
+  now = fixed_now()
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      recurring={
+        "static-a": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "* * * * *",
+        },
+        "static-b": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "* * * * *",
+        },
+      }
+    )
+  )
+  scheduler.sync_static_tasks()
+  intended_job_ids = []
+  for recurring_task in RecurringTask.objects.order_by("key"):
+    run_at = latest_cron_run(recurring_task.schedule, now)
+    recurring_task.next_run_at = run_at + timedelta(minutes=1)
+    recurring_task.save(update_fields=["next_run_at"])
+    execution = RecurringExecution.objects.create(
+      backend_alias="default",
+      task_key=recurring_task.key,
+      run_at=run_at,
+    )
+    intended_job_ids.append(execution.intended_job_id)
+  monkeypatch.setattr("dj_queue.runtime.scheduler.RECURRING_BATCH_SIZE", 1)
+
+  first_batch = scheduler.poll_once(now=now)
+  second_batch = scheduler.poll_once(now=now)
+
+  assert len(first_batch) == 1
+  assert len(second_batch) == 1
+  assert {first_batch[0].id, second_batch[0].id} == set(intended_job_ids)
+  assert Job.objects.count() == 2
+  scheduler.stop()
 
 
 def test_listen_notify_ignored_on_non_postgres_backends(settings):
