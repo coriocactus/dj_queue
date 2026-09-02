@@ -457,6 +457,40 @@ def test_scheduler_runs_cleanup_on_separate_cadence():
   scheduler.stop()
 
 
+def test_scheduler_bounds_each_retention_cleanup(monkeypatch):
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      clear_finished_jobs_after=60,
+      clear_failed_jobs_after=60,
+      clear_recurring_executions_after=60,
+    )
+  )
+  calls = []
+
+  def record_cleanup(name):
+    def cleanup(**kwargs):
+      calls.append((name, kwargs["batch_size"]))
+      return 0
+
+    return cleanup
+
+  monkeypatch.setattr(
+    "dj_queue.runtime.scheduler.clear_finished_jobs",
+    record_cleanup("finished"),
+  )
+  monkeypatch.setattr(
+    "dj_queue.runtime.scheduler.clear_failed_jobs",
+    record_cleanup("failed"),
+  )
+  monkeypatch.setattr(
+    "dj_queue.runtime.scheduler.clear_recurring_executions",
+    record_cleanup("recurring"),
+  )
+
+  assert scheduler._run_cleanup(fixed_now()) == 0
+  assert calls == [("finished", 500), ("failed", 500), ("recurring", 500)]
+
+
 def test_scheduler_limits_due_recurring_work_per_poll(monkeypatch):
   now = fixed_now()
   scheduler = build_scheduler(

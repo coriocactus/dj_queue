@@ -264,6 +264,27 @@ def test_startup_orphan_cleanup_fails_leftover_claimed_jobs():
   supervisor.stop()
 
 
+def test_orphan_recovery_is_bounded_and_makes_progress():
+  process = make_process()
+  jobs = [make_job(task_path="tests.tasks.echo") for _index in range(3)]
+  for job in jobs:
+    make_claimed_execution(job=job, process=process)
+  process.delete()
+  supervisor = make_supervisor()
+
+  first_batch = supervisor.fail_orphaned_jobs(batch_size=2)
+
+  assert len(first_batch) == 2
+  assert FailedExecution.objects.filter(job__in=jobs).count() == 2
+  assert ClaimedExecution.objects.filter(job__in=jobs).count() == 1
+
+  second_batch = supervisor.fail_orphaned_jobs(batch_size=2)
+
+  assert len(second_batch) == 1
+  assert FailedExecution.objects.filter(job__in=jobs).count() == 3
+  assert ClaimedExecution.objects.filter(job__in=jobs).exists() is False
+
+
 def test_supervisor_start_checks_persistent_connection_budget(monkeypatch):
   seen = []
 
@@ -350,6 +371,54 @@ def test_prune_stale_process_rows_fails_multiple_claimed_jobs_for_process():
   assert [process.name for process in pruned] == ["stale-worker"]
   assert FailedExecution.objects.filter(job__in=jobs).count() == len(jobs)
   assert ClaimedExecution.objects.filter(job__in=jobs).exists() is False
+
+
+def test_prune_stale_process_rows_bounds_claimed_job_recovery():
+  stale_process = make_process(
+    name="stale-worker",
+    last_heartbeat_at=timezone.now() - timedelta(minutes=10),
+  )
+  jobs = [make_job(task_path="tests.tasks.echo") for _index in range(3)]
+  for job in jobs:
+    make_claimed_execution(job=job, process=stale_process)
+  supervisor = make_supervisor()
+
+  first_batch = supervisor.prune_stale_process_rows(now=timezone.now(), batch_size=2)
+
+  assert [process.pk for process in first_batch] == [stale_process.pk]
+  assert Process.objects.filter(pk=stale_process.pk).exists() is False
+  assert FailedExecution.objects.filter(job__in=jobs).count() == 2
+  assert ClaimedExecution.objects.filter(job__in=jobs).count() == 1
+  assert ClaimedExecution.objects.filter(job__in=jobs, process__isnull=True).count() == 1
+
+  second_batch = supervisor.fail_orphaned_jobs(batch_size=2)
+
+  assert len(second_batch) == 1
+  assert FailedExecution.objects.filter(job__in=jobs).count() == 3
+  assert ClaimedExecution.objects.filter(job__in=jobs).exists() is False
+
+
+def test_prune_stale_process_rows_bounds_process_recovery():
+  stale_processes = [
+    make_process(
+      name=f"stale-worker-{index}",
+      last_heartbeat_at=timezone.now() - timedelta(minutes=10),
+    )
+    for index in range(3)
+  ]
+  supervisor = make_supervisor()
+
+  first_batch = supervisor.prune_stale_process_rows(now=timezone.now(), batch_size=2)
+
+  assert len(first_batch) == 2
+  assert Process.objects.filter(pk__in=[process.pk for process in stale_processes]).count() == 1
+
+  second_batch = supervisor.prune_stale_process_rows(now=timezone.now(), batch_size=2)
+
+  assert len(second_batch) == 1
+  assert (
+    Process.objects.filter(pk__in=[process.pk for process in stale_processes]).exists() is False
+  )
 
 
 def test_prune_stale_process_rows_promotes_recovered_concurrency_waiters(monkeypatch):
@@ -684,7 +753,9 @@ def test_supervisor_poll_once_skips_prune_until_housekeeping_interval(monkeypatc
   monkeypatch.setattr(Supervisor, "housekeeping_interval", property(lambda self: 60))
   monkeypatch.setattr("dj_queue.runtime.supervisor.time.monotonic", lambda: 120)
   monkeypatch.setattr(
-    supervisor, "prune_stale_process_rows", lambda now=None: calls.append(now) or []
+    supervisor,
+    "prune_stale_process_rows",
+    lambda now=None, batch_size=None: calls.append((now, batch_size)) or [],
   )
 
   assert supervisor.poll_once() == []
@@ -698,12 +769,39 @@ def test_supervisor_poll_once_prunes_when_housekeeping_interval_elapsed(monkeypa
 
   monkeypatch.setattr(Supervisor, "housekeeping_interval", property(lambda self: 60))
   monkeypatch.setattr("dj_queue.runtime.supervisor.time.monotonic", lambda: 160)
-  monkeypatch.setattr(supervisor, "prune_stale_process_rows", lambda now=None: [stale_process])
+  monkeypatch.setattr(
+    supervisor,
+    "prune_stale_process_rows",
+    lambda now=None, batch_size=None: [stale_process],
+  )
 
   pruned = supervisor.poll_once()
 
   assert pruned == [stale_process]
   assert supervisor._last_housekeeping_at == 160
+
+
+def test_supervisor_housekeeping_shares_recovery_batch(monkeypatch):
+  supervisor = make_supervisor()
+  supervisor._last_housekeeping_at = 100
+  calls = []
+
+  monkeypatch.setattr(Supervisor, "housekeeping_interval", property(lambda self: 60))
+  monkeypatch.setattr("dj_queue.runtime.supervisor.time.monotonic", lambda: 160)
+  monkeypatch.setattr("dj_queue.runtime.supervisor.SUPERVISOR_RECOVERY_BATCH_SIZE", 3)
+  monkeypatch.setattr(
+    supervisor,
+    "fail_orphaned_jobs",
+    lambda *, batch_size: calls.append(("orphan", batch_size)) or [object(), object()],
+  )
+  monkeypatch.setattr(
+    supervisor,
+    "prune_stale_process_rows",
+    lambda *, batch_size, now=None: calls.append(("stale", batch_size)) or [],
+  )
+
+  assert supervisor.poll_once() == []
+  assert calls == [("orphan", 3), ("stale", 1)]
 
 
 def test_supervisor_poll_once_keeps_running_after_housekeeping_error(monkeypatch):
@@ -716,7 +814,7 @@ def test_supervisor_poll_once_keeps_running_after_housekeeping_error(monkeypatch
   monkeypatch.setattr(
     supervisor,
     "prune_stale_process_rows",
-    lambda now=None: (_ for _ in ()).throw(RuntimeError("prune failed")),
+    lambda now=None, batch_size=None: (_ for _ in ()).throw(RuntimeError("prune failed")),
   )
   monkeypatch.setattr(
     "dj_queue.runtime.supervisor.handle_thread_error",

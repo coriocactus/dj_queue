@@ -768,22 +768,31 @@ def _fail_claimed_job(
   return job
 
 
-def fail_orphaned_claimed_jobs(error, *, traceback_text="", backend_alias="default"):
+def fail_orphaned_claimed_jobs(
+  error,
+  *,
+  traceback_text="",
+  backend_alias="default",
+  batch_size=500,
+):
   alias = get_database_alias(backend_alias)
-  jobs = [
-    claimed.job
-    for claimed in (
-      ClaimedExecution.objects.using(alias)
-      .select_related("job")
-      .filter(process__isnull=True, job__backend_alias=backend_alias)
+  config = load_backend_config(backend_alias)
+  with transaction.atomic(using=alias):
+    claimed_rows = list(
+      locked_queryset(
+        ClaimedExecution.objects.using(alias)
+        .select_related("job")
+        .filter(process__isnull=True, job__backend_alias=backend_alias)
+        .order_by("id"),
+        use_skip_locked=config.use_skip_locked,
+      )[:batch_size]
     )
-  ]
-  return _fail_claimed_jobs(
-    jobs,
-    error,
-    traceback_text=traceback_text,
-    backend_alias=backend_alias,
-  )
+    return _fail_claimed_jobs(
+      [claimed.job for claimed in claimed_rows],
+      error,
+      traceback_text=traceback_text,
+      backend_alias=backend_alias,
+    )
 
 
 def fail_claimed_jobs_for_process(
@@ -866,6 +875,7 @@ def prune_stale_processes(
   traceback_text="",
   backend_alias="default",
   exclude_process=None,
+  batch_size=500,
 ):
   alias = get_database_alias(backend_alias)
   config = load_backend_config(backend_alias)
@@ -883,18 +893,20 @@ def prune_stale_processes(
       locked_queryset(
         queryset.order_by("last_heartbeat_at", "id"),
         use_skip_locked=config.use_skip_locked,
-      )
+      )[:batch_size]
     )
     if not stale_processes:
       return []
 
+    remaining = batch_size
     for process in stale_processes:
-      jobs = [
-        claimed.job
-        for claimed in (
-          ClaimedExecution.objects.using(alias).select_related("job").filter(process_id=process.id)
-        )
-      ]
+      claimed_rows = list(
+        ClaimedExecution.objects.using(alias)
+        .select_related("job")
+        .filter(process_id=process.id)
+        .order_by("id")[:remaining]
+      )
+      jobs = [claimed.job for claimed in claimed_rows]
       deleted, _ = (
         Process.objects.using(alias)
         .filter(
@@ -914,6 +926,9 @@ def prune_stale_processes(
         backend_alias=backend_alias,
       )
       pruned_processes.append(process)
+      remaining -= len(jobs)
+      if remaining == 0:
+        break
     return pruned_processes
 
 

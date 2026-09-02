@@ -28,6 +28,7 @@ from dj_queue.runtime.topology import runner_definitions
 SUPERVISOR_RESTART_BACKOFF_BASE_DELAY = 0.1
 SUPERVISOR_RESTART_BACKOFF_MAX_DELAY = 30.0
 SUPERVISOR_RESTART_BACKOFF_RESET_AFTER = 60.0
+SUPERVISOR_RECOVERY_BATCH_SIZE = 500
 
 
 class Supervisor(BaseRunner):
@@ -101,7 +102,7 @@ class Supervisor(BaseRunner):
         self.config,
         backend_alias=self.backend_alias,
       )
-      self.fail_startup_orphaned_jobs()
+      self.fail_orphaned_jobs()
       return process
     except Exception:
       self.stop()
@@ -111,7 +112,10 @@ class Supervisor(BaseRunner):
     pruned_processes = []
     if self._housekeeping_due():
       try:
-        pruned_processes = self.prune_stale_process_rows()
+        failed_orphans = self.fail_orphaned_jobs(batch_size=SUPERVISOR_RECOVERY_BATCH_SIZE)
+        remaining = SUPERVISOR_RECOVERY_BATCH_SIZE - len(failed_orphans)
+        if remaining > 0:
+          pruned_processes = self.prune_stale_process_rows(batch_size=remaining)
       except Exception as error:
         handle_thread_error(
           error,
@@ -193,15 +197,16 @@ class Supervisor(BaseRunner):
       self.pidfile.release()
       self.pidfile = None
 
-  def fail_startup_orphaned_jobs(self):
+  def fail_orphaned_jobs(self, *, batch_size=SUPERVISOR_RECOVERY_BATCH_SIZE):
     with app_executor():
       return fail_orphaned_claimed_jobs(
-        ProcessMissingError("process no longer registered at supervisor startup"),
-        traceback_text="process no longer registered at supervisor startup",
+        ProcessMissingError("process no longer registered"),
+        traceback_text="process no longer registered",
         backend_alias=self.backend_alias,
+        batch_size=batch_size,
       )
 
-  def prune_stale_process_rows(self, *, now=None):
+  def prune_stale_process_rows(self, *, now=None, batch_size=SUPERVISOR_RECOVERY_BATCH_SIZE):
     if now is None:
       now = timezone.now()
     cutoff = now - timedelta(seconds=self.config.process_alive_threshold)
@@ -212,6 +217,7 @@ class Supervisor(BaseRunner):
         traceback_text="process heartbeat expired",
         backend_alias=self.backend_alias,
         exclude_process=self.process,
+        batch_size=batch_size,
       )
 
 

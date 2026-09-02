@@ -117,7 +117,7 @@ class RuntimeSimulation:
     self.supervisor._acquire_pidfile()
     self.supervisor.process = self.supervisor._register_process()
     self.supervisor._started = True
-    self.supervisor.fail_startup_orphaned_jobs()
+    self.supervisor.fail_orphaned_jobs()
     self.supervisor.runners = list(self.supervisor._build_runners())
     self.supervisor.runner_threads = []
     self.supervisor._stop_event.clear()
@@ -413,7 +413,7 @@ class RuntimeSimulation:
       }
 
     missing_failures = FailedExecution.objects.filter(
-      message__contains="process no longer registered at supervisor startup"
+      message__contains="process no longer registered"
     )
     missing_classes = set(missing_failures.values_list("exception_class", flat=True))
     if missing_classes:
@@ -484,7 +484,7 @@ class RuntimeSimulation:
     claimed = ClaimedExecution.objects.get(job_id=orphan_job.id)
     claimed.process = None
     claimed.save(update_fields=["process"])
-    self.supervisor.fail_startup_orphaned_jobs()
+    self.supervisor.fail_orphaned_jobs()
     failed = FailedExecution.objects.get(job_id=orphan_job.id)
     assert failed.exception_class == (
       f"{ProcessMissingError.__module__}.{ProcessMissingError.__qualname__}"

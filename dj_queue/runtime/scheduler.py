@@ -12,6 +12,7 @@ from dj_queue.operations.cleanup import (
 from dj_queue.operations.recurring import fire_due_recurring_tasks, upsert_static_recurring_tasks
 from dj_queue.runtime.base import BaseRunner, app_executor
 
+CLEANUP_BATCH_SIZE = 500
 CLEANUP_INTERVAL = 60
 RECURRING_BATCH_SIZE = 500
 
@@ -159,18 +160,21 @@ class Scheduler(BaseRunner):
     if self.config.preserve_finished_jobs and self.config.clear_finished_jobs_after is not None:
       deleted += clear_finished_jobs(
         older_than=self.config.clear_finished_jobs_after,
+        batch_size=CLEANUP_BATCH_SIZE,
         backend_alias=self.backend_alias,
         now=now,
       )
     if self.config.clear_failed_jobs_after is not None:
       deleted += clear_failed_jobs(
         older_than=self.config.clear_failed_jobs_after,
+        batch_size=CLEANUP_BATCH_SIZE,
         backend_alias=self.backend_alias,
         now=now,
       )
     if self.config.clear_recurring_executions_after is not None:
       deleted += clear_recurring_executions(
         older_than=self.config.clear_recurring_executions_after,
+        batch_size=CLEANUP_BATCH_SIZE,
         backend_alias=self.backend_alias,
         now=now,
       )
