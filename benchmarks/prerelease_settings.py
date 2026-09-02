@@ -19,6 +19,10 @@ DATABASES = {
     "sqlite": {
       "ENGINE": "django.db.backends.sqlite3",
       "NAME": os.environ["PRERELEASE_DB_NAME"],
+      "OPTIONS": {
+        "timeout": 30,
+        "transaction_mode": "IMMEDIATE",
+      },
     },
     "postgres": {
       "ENGINE": "django.db.backends.postgresql",

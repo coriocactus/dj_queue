@@ -1,3 +1,5 @@
+import runpy
+
 import pytest
 from django.db import connection
 
@@ -19,6 +21,18 @@ def test_prerelease_runtime_rejects_unsafe_database_name(monkeypatch):
 
   with pytest.raises(RuntimeError, match="must contain 'prerelease'"):
     prerelease_runtime.assert_prerelease_database_name()
+
+
+def test_prerelease_sqlite_serializes_write_transactions(monkeypatch, tmp_path):
+  monkeypatch.setenv("PRERELEASE_BACKEND", "sqlite")
+  monkeypatch.setenv("PRERELEASE_DB_NAME", str(tmp_path / "prerelease.sqlite3"))
+
+  settings = runpy.run_path(prerelease_runtime.__file__.replace("runtime.py", "settings.py"))
+
+  assert settings["DATABASES"]["default"]["OPTIONS"] == {
+    "timeout": 30,
+    "transaction_mode": "IMMEDIATE",
+  }
 
 
 @pytest.mark.django_db(transaction=True)
