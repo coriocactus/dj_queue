@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:17
+    image: postgres:18
     environment:
       POSTGRES_DB: dj_queue_test
       POSTGRES_USER: dj_queue
@@ -14,7 +14,7 @@ services:
       retries: 15
 
   mysql:
-    image: mysql:8.4
+    image: mysql:9.7
     environment:
       MYSQL_DATABASE: dj_queue_test
       MYSQL_USER: dj_queue
@@ -29,7 +29,7 @@ services:
       retries: 15
 
   mariadb:
-    image: mariadb:10.6
+    image: mariadb:12.3
     environment:
       MARIADB_DATABASE: dj_queue_test
       MARIADB_USER: dj_queue

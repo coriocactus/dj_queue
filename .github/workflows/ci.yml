@@ -29,11 +29,13 @@ jobs:
         with:
           version: "0.11.19"
       - run: uv build --no-sources
-      - run: uv run --isolated --no-project --with dist/*.whl tests/smoke_publish.py
-      - run: uv run --isolated --no-project --with dist/*.tar.gz tests/smoke_publish.py
+      - run: uv run --isolated --no-project --with 'django>=6.0,<6.1' --with dist/*.whl tests/smoke_publish.py
+      - run: uv run --isolated --no-project --with 'django>=6.1,<6.2' --with dist/*.whl tests/smoke_publish.py
+      - run: uv run --isolated --no-project --with 'django>=6.0,<6.1' --with dist/*.tar.gz tests/smoke_publish.py
+      - run: uv run --isolated --no-project --with 'django>=6.1,<6.2' --with dist/*.tar.gz tests/smoke_publish.py
 
   sqlite:
-    name: SQLite / ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    name: SQLite / Django ${{ matrix.django.version }} / ${{ matrix.os }} / Python ${{ matrix.python-version }}
     needs: lint
     runs-on: ${{ matrix.os }}
     strategy:
@@ -41,24 +43,47 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         python-version: ["3.12", "3.13", "3.14"]
+        django:
+          - version: "6.0"
+            group: django60
+          - version: "6.1"
+            group: django61
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v8.2.0
         with:
           python-version: ${{ matrix.python-version }}
-      - run: uv sync
-      - run: uv run pytest
+      - run: uv sync --locked --group ${{ matrix.django.group }}
+      - run: uv run --no-sync pytest
         env:
           DB_BACKEND: sqlite
 
   postgres:
-    name: PostgreSQL ${{ matrix.postgres-version }}
+    name: PostgreSQL ${{ matrix.postgres-version }} / Django ${{ matrix.django }}
     needs: lint
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        postgres-version: ["14", "15", "16", "17", "18"]
+        include:
+          - postgres-version: "14"
+            django: "6.0"
+            group: django60
+          - postgres-version: "15"
+            django: "6.1"
+            group: django61
+          - postgres-version: "16"
+            django: "6.1"
+            group: django61
+          - postgres-version: "17"
+            django: "6.1"
+            group: django61
+          - postgres-version: "18"
+            django: "6.0"
+            group: django60
+          - postgres-version: "18"
+            django: "6.1"
+            group: django61
     services:
       postgres:
         image: postgres:${{ matrix.postgres-version }}
@@ -78,20 +103,35 @@ jobs:
       - uses: astral-sh/setup-uv@v8.2.0
         with:
           python-version: "3.14"
-      - run: uv sync
-      - run: uv run pytest
+      - run: uv sync --locked --group ${{ matrix.group }}
+      - run: uv run --no-sync pytest
         env:
           DB_BACKEND: postgres
           DB_PORT: "5432"
 
   mysql:
-    name: MySQL ${{ matrix.mysql-version }}
+    name: MySQL ${{ matrix.mysql-version }} / Django ${{ matrix.django }}
     needs: lint
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        mysql-version: ["8.0", "8.4"]
+        include:
+          - mysql-version: "8.0"
+            django: "6.0"
+            group: django60
+          - mysql-version: "8.4"
+            django: "6.1"
+            group: django61
+          - mysql-version: "9.7"
+            django: "6.1"
+            group: django61
+          - mysql-version: "26.7"
+            django: "6.0"
+            group: django60
+          - mysql-version: "26.7"
+            django: "6.1"
+            group: django61
     services:
       mysql:
         image: mysql:${{ matrix.mysql-version }}
@@ -112,20 +152,38 @@ jobs:
       - uses: astral-sh/setup-uv@v8.2.0
         with:
           python-version: "3.14"
-      - run: uv sync
-      - run: uv run pytest
+      - run: uv sync --locked --group ${{ matrix.group }}
+      - run: uv run --no-sync pytest
         env:
           DB_BACKEND: mysql
           DB_PORT: "3306"
 
   mariadb:
-    name: MariaDB ${{ matrix.mariadb-version }}
+    name: MariaDB ${{ matrix.mariadb-version }} / Django ${{ matrix.django }}
     needs: lint
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        mariadb-version: ["10.6", "10.11", "11.4", "11.8"]
+        include:
+          - mariadb-version: "10.6"
+            django: "6.0"
+            group: django60
+          - mariadb-version: "10.11"
+            django: "6.1"
+            group: django61
+          - mariadb-version: "11.4"
+            django: "6.1"
+            group: django61
+          - mariadb-version: "11.8"
+            django: "6.1"
+            group: django61
+          - mariadb-version: "12.3"
+            django: "6.0"
+            group: django60
+          - mariadb-version: "12.3"
+            django: "6.1"
+            group: django61
     services:
       mariadb:
         image: mariadb:${{ matrix.mariadb-version }}
@@ -146,8 +204,8 @@ jobs:
       - uses: astral-sh/setup-uv@v8.2.0
         with:
           python-version: "3.14"
-      - run: uv sync
-      - run: uv run pytest
+      - run: uv sync --locked --group ${{ matrix.group }}
+      - run: uv run --no-sync pytest
         env:
           DB_BACKEND: mariadb
           DB_PORT: "3306"
