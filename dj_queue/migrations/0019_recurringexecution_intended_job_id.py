@@ -6,7 +6,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
   dependencies = [
-    ("dj_queue", "0015_job_concurrency_policy"),
+    ("dj_queue", "0018_job_concurrency_policy"),
   ]
 
   operations = [

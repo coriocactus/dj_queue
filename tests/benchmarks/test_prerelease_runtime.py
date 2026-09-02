@@ -2,6 +2,7 @@ import runpy
 
 import pytest
 from django.db import connection
+from django.db.utils import OperationalError
 
 from benchmarks import prerelease_runtime, prerelease_tasks
 
@@ -21,6 +22,23 @@ def test_prerelease_runtime_rejects_unsafe_database_name(monkeypatch):
 
   with pytest.raises(RuntimeError, match="must contain 'prerelease'"):
     prerelease_runtime.assert_prerelease_database_name()
+
+
+def test_prerelease_runtime_retries_migration_lock_conflict(monkeypatch):
+  calls = 0
+
+  def migrate_once_lock_is_available(*_args, **_kwargs):
+    nonlocal calls
+    calls += 1
+    if calls == 1:
+      raise OperationalError(1205, "Lock wait timeout exceeded")
+
+  monkeypatch.setattr("django.core.management.call_command", migrate_once_lock_is_available)
+  monkeypatch.setattr(prerelease_runtime.time, "sleep", lambda _seconds: None)
+
+  prerelease_runtime.migrate()
+
+  assert calls == 2
 
 
 def test_prerelease_sqlite_serializes_write_transactions(monkeypatch, tmp_path):

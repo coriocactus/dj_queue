@@ -6,25 +6,10 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
   dependencies = [
-    ("dj_queue", "0014_semaphore_active_count"),
+    ("dj_queue", "0017_job_concurrency_on_conflict"),
   ]
 
   operations = [
-    migrations.AddField(
-      model_name="job",
-      name="concurrency_duration",
-      field=models.IntegerField(blank=True, null=True),
-    ),
-    migrations.AddField(
-      model_name="job",
-      name="concurrency_limit",
-      field=models.IntegerField(blank=True, null=True),
-    ),
-    migrations.AddField(
-      model_name="job",
-      name="concurrency_on_conflict",
-      field=models.CharField(blank=True, max_length=7, null=True),
-    ),
     migrations.AddConstraint(
       model_name="job",
       constraint=models.CheckConstraint(

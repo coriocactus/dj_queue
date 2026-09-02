@@ -187,8 +187,31 @@ def drop_database():
 
 def migrate():
   from django.core.management import call_command
+  from django.db import connection, connections
+  from django.db.utils import OperationalError
 
-  call_command("migrate", verbosity=1, interactive=False)
+  deadline = time.monotonic() + float(os.environ.get("PRERELEASE_MIGRATION_TIMEOUT", "60"))
+  while True:
+    try:
+      if connection.vendor == "mysql":
+        with connection.cursor() as cursor:
+          cursor.execute("SET SESSION lock_wait_timeout = 2")
+      call_command("migrate", verbosity=1, interactive=False)
+      return
+    except OperationalError as error:
+      if not _is_transient_migration_error(error) or time.monotonic() >= deadline:
+        raise
+      LOGGER.warning("migration lock conflict; retrying")
+      connections.close_all()
+      time.sleep(0.25)
+
+
+def _is_transient_migration_error(error):
+  while error is not None:
+    if error.args and error.args[0] in {1205, 1213}:
+      return True
+    error = error.__cause__ or error.__context__
+  return False
 
 
 def create_control_tables():
