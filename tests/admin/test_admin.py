@@ -1098,9 +1098,10 @@ def test_job_admin_breadcrumb_links_to_dashboard(admin_client):
   assert response.status_code == 200
   content = response.content.decode()
   assert (
-    f'› <a href="{reverse("admin:dj_queue_dashboard_changelist")}?backend=default">dj_queue</a>'
+    f'<li><a href="{reverse("admin:dj_queue_dashboard_changelist")}?backend=default">dj_queue</a></li>'
     in content
   )
+  assert '<ol class="breadcrumbs djq-breadcrumbs">' in content
   assert f'href="{reverse("admin:app_list", kwargs={"app_label": "dj_queue"})}"' not in content
 
 
@@ -1127,9 +1128,10 @@ def test_job_change_view_breadcrumb_links_preserve_backend(admin_client, setting
   assert response.status_code == 200
   content = response.content.decode()
   assert (
-    f'› <a href="{reverse("admin:dj_queue_dashboard_changelist")}?backend=secondary">dj_queue</a>'
+    f'<li><a href="{reverse("admin:dj_queue_dashboard_changelist")}?backend=secondary">dj_queue</a></li>'
     in content
   )
   assert (
-    f'› <a href="{reverse("admin:dj_queue_job_changelist")}?backend=secondary">Jobs</a>' in content
+    f'<li><a href="{reverse("admin:dj_queue_job_changelist")}?backend=secondary">Jobs</a></li>'
+    in content
   )

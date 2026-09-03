@@ -1,11 +1,16 @@
 {% extends "admin/change_list.html" %}
 
-{% load i18n %}
+{% load i18n static %}
+
+{% block extrastyle %}
+  {{ block.super }}
+  <link rel="stylesheet" href="{% static 'admin/dj_queue/breadcrumbs.css' %}">
+{% endblock extrastyle %}
 
 {% block breadcrumbs %}
-  <div class="breadcrumbs">
-    <a href='{% url "admin:index" %}'>{% translate "Home" %}</a>
-    › <a href="{{ dashboard_url }}">dj_queue</a>
-    › {{ cl.opts.verbose_name_plural|capfirst }}
-  </div>
+  <ol class="breadcrumbs djq-breadcrumbs">
+    <li><a href='{% url "admin:index" %}'>{% translate "Home" %}</a></li>
+    <li><a href="{{ dashboard_url }}">dj_queue</a></li>
+    <li aria-current="page">{{ cl.opts.verbose_name_plural|capfirst }}</li>
+  </ol>
 {% endblock breadcrumbs %}

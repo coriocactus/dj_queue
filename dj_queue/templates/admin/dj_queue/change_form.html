@@ -1,9 +1,10 @@
 {% extends "admin/change_form.html" %}
 
-{% load i18n admin_urls %}
+{% load i18n admin_urls static %}
 
 {% block extrastyle %}
   {{ block.super }}
+  <link rel="stylesheet" href="{% static 'admin/dj_queue/breadcrumbs.css' %}">
   <style>
     .submit-row form {
       display: inline;
@@ -54,12 +55,12 @@
 {% endblock extrastyle %}
 
 {% block breadcrumbs %}
-  <div class="breadcrumbs">
-    <a href='{% url "admin:index" %}'>{% translate "Home" %}</a>
-    › <a href="{{ dashboard_url }}">dj_queue</a>
-    › {% if has_view_permission %}<a href="{{ changelist_url }}">{{ opts.verbose_name_plural|capfirst }}</a>{% else %}{{ opts.verbose_name_plural|capfirst }}{% endif %}
-    › {% if add %}{% blocktranslate with name=opts.verbose_name %}Add {{ name }}{% endblocktranslate %}{% else %}{{ original|truncatewords:"18" }}{% endif %}
-  </div>
+  <ol class="breadcrumbs djq-breadcrumbs">
+    <li><a href='{% url "admin:index" %}'>{% translate "Home" %}</a></li>
+    <li><a href="{{ dashboard_url }}">dj_queue</a></li>
+    <li>{% if has_view_permission %}<a href="{{ changelist_url }}">{{ opts.verbose_name_plural|capfirst }}</a>{% else %}{{ opts.verbose_name_plural|capfirst }}{% endif %}</li>
+    <li aria-current="page">{% if add %}{% blocktranslate with name=opts.verbose_name %}Add {{ name }}{% endblocktranslate %}{% else %}{{ original|truncatewords:"18" }}{% endif %}</li>
+  </ol>
 {% endblock breadcrumbs %}
 
 {% block object-tools %}{% endblock object-tools %}

@@ -4,6 +4,7 @@
 
 {% block extrastyle %}
   {{ block.super }}
+  <link rel="stylesheet" href="{% static 'admin/dj_queue/breadcrumbs.css' %}">
   <link rel="stylesheet" type="text/css" href="{% static 'admin/css/changelists.css' %}">
   <style>
     #content-main {
@@ -196,12 +197,12 @@
 {% endblock bodyclass %}
 
 {% block breadcrumbs %}
-  <div class="breadcrumbs">
-    <a href="{% url 'admin:index' %}">Home</a>
-    › <a href="{% url 'admin:dj_queue_dashboard_changelist' %}?backend={{ backend_alias }}">dj_queue</a>
-    › <a href="{% url 'admin:dj_queue_dashboard_changelist' %}?backend={{ backend_alias }}#queue-summary">queues</a>
-    › {{ queue_name }}
-  </div>
+  <ol class="breadcrumbs djq-breadcrumbs">
+    <li><a href="{% url 'admin:index' %}">Home</a></li>
+    <li><a href="{% url 'admin:dj_queue_dashboard_changelist' %}?backend={{ backend_alias }}">dj_queue</a></li>
+    <li><a href="{% url 'admin:dj_queue_dashboard_changelist' %}?backend={{ backend_alias }}#queue-summary">queues</a></li>
+    <li aria-current="page">{{ queue_name }}</li>
+  </ol>
 {% endblock breadcrumbs %}
 
 {% block content_title %}

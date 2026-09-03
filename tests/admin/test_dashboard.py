@@ -206,6 +206,17 @@ def test_dashboard_admin_title_includes_dj_queue(admin_client):
   assert "<h2>dashboard</h2>" not in content
 
 
+def test_dashboard_uses_semantic_breadcrumbs(admin_client):
+  response = admin_client.get(reverse("admin:dj_queue_dashboard_changelist"))
+
+  assert response.status_code == 200
+  content = response.content.decode()
+  assert '<link rel="stylesheet" href="/static/admin/dj_queue/breadcrumbs.css">' in content
+  assert '<ol class="breadcrumbs djq-breadcrumbs">' in content
+  assert '<li aria-current="page">dj_queue</li>' in content
+  assert '<div class="breadcrumbs">' not in content
+
+
 def test_dashboard_backend_selection_changes_job_counts(admin_client, settings):
   settings.TASKS = {
     "default": {
@@ -1024,7 +1035,8 @@ def test_dashboard_queue_view_uses_django_changelist_structure(admin_client):
   assert "Latency:</strong> " in content
   assert "Paused:</strong> no" in content
   assert '<option value="" selected>---------</option>' in content
-  assert 'aria-current="page"' in content
+  assert '<ol class="breadcrumbs djq-breadcrumbs">' in content
+  assert '<li aria-current="page">alpha</li>' in content
   dashboard_url = f"{reverse('admin:dj_queue_dashboard_changelist')}?backend=default"
   queue_section_url = f"{dashboard_url}#queue-summary"
   assert content.count(f'<a href="{dashboard_url}">dj_queue</a>') == 2
