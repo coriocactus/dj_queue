@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,7 @@ EXAMPLES = sorted(
 def test_example_runs_successfully(name):
   script = str(EXAMPLES_DIR / f"{name}.py")
   result = subprocess.run(
-    [script],
+    [sys.executable, script],
     check=False,
     cwd=EXAMPLES_DIR.parent,
     env={**os.environ, "DB_BACKEND": os.environ.get("DB_BACKEND", "sqlite")},
@@ -32,18 +33,21 @@ def test_example_runs_successfully(name):
   connections.close_all()
 
 
-def test_examples_close_connections_after_subprocess_runs(monkeypatch):
+def test_examples_use_active_python_and_close_connections(monkeypatch):
+  commands = []
   seen = []
+
+  def run(command, **_kwargs):
+    commands.append(command)
+    return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
   monkeypatch.setattr(
     "tests.examples.test_examples.connections",
     type("DummyConnections", (), {"close_all": lambda self: seen.append("closed")})(),
   )
-  monkeypatch.setattr(
-    "tests.examples.test_examples.subprocess.run",
-    lambda *args, **kwargs: type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
-  )
+  monkeypatch.setattr("tests.examples.test_examples.subprocess.run", run)
 
   test_example_runs_successfully(EXAMPLES[0])
 
+  assert commands == [[sys.executable, str(EXAMPLES_DIR / f"{EXAMPLES[0]}.py")]]
   assert seen == ["closed"]

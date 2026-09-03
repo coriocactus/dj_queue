@@ -45,6 +45,7 @@ def test_prerelease_runtime_retries_migration_lock_conflict(monkeypatch):
       raise OperationalError(1205, "Lock wait timeout exceeded")
 
   monkeypatch.setattr("django.core.management.call_command", migrate_once_lock_is_available)
+  monkeypatch.setattr(prerelease_runtime, "_set_migration_lock_timeout", lambda _connection: None)
   monkeypatch.setattr(prerelease_runtime.time, "sleep", lambda _seconds: None)
 
   prerelease_runtime.migrate()
@@ -121,4 +122,4 @@ def test_prerelease_tasks_record_attempts_and_duplicate_completions(monkeypatch)
     cursor.execute(f"SELECT token, attempts, completions FROM {table} ORDER BY token")
     rows = cursor.fetchall()
 
-  assert rows == [("record-token", 2, 2), ("retry-token", 2, 1)]
+  assert list(rows) == [("record-token", 2, 2), ("retry-token", 2, 1)]

@@ -38,12 +38,14 @@ prometheus = ["prometheus_client>=0.4.0"]
 [dependency-groups]
 dev = [
   "cryptography>=46.0.6",
+  "gunicorn>=26.2.0",
   "prometheus-client>=0.4.0",
   "psycopg>=3.3.3",
   "pymysql>=1.1.2",
   "pytest>=9.0.2",
   "pytest-django>=4.12.0",
   "ruff>=0.15.8",
+  "uvicorn>=0.52.4",
 ]
 django60 = ["django>=6.0,<6.1"]
 django61 = ["django>=6.1,<6.2"]
