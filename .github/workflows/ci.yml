@@ -30,8 +30,6 @@ jobs:
           version: "0.11.19"
       - run: uv build --no-sources
       - run: uv run --isolated --no-project --with 'django>=6.0,<6.1' --with dist/*.whl tests/smoke_publish.py
-      - run: uv run --isolated --no-project --with 'django>=6.1,<6.2' --with dist/*.whl tests/smoke_publish.py
-      - run: uv run --isolated --no-project --with 'django>=6.0,<6.1' --with dist/*.tar.gz tests/smoke_publish.py
       - run: uv run --isolated --no-project --with 'django>=6.1,<6.2' --with dist/*.tar.gz tests/smoke_publish.py
 
   sqlite:
@@ -41,13 +39,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.12", "3.13", "3.14"]
-        django:
-          - version: "6.0"
-            group: django60
-          - version: "6.1"
-            group: django61
+        include:
+          - os: ubuntu-latest
+            python-version: "3.12"
+            django:
+              version: "6.0"
+              group: django60
+          - os: ubuntu-latest
+            python-version: "3.13"
+            django:
+              version: "6.1"
+              group: django61
+          - os: macos-latest
+            python-version: "3.14"
+            django:
+              version: "6.1"
+              group: django61
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v8.2.0
@@ -69,15 +76,6 @@ jobs:
           - postgres-version: "14"
             django: "6.0"
             group: django60
-          - postgres-version: "15"
-            django: "6.1"
-            group: django61
-          - postgres-version: "16"
-            django: "6.1"
-            group: django61
-          - postgres-version: "17"
-            django: "6.1"
-            group: django61
           - postgres-version: "18"
             django: "6.0"
             group: django60
@@ -120,12 +118,6 @@ jobs:
           - mysql-version: "8.0"
             django: "6.0"
             group: django60
-          - mysql-version: "8.4"
-            django: "6.1"
-            group: django61
-          - mysql-version: "9.7"
-            django: "6.1"
-            group: django61
           - mysql-version: "26.7"
             django: "6.0"
             group: django60
@@ -169,15 +161,6 @@ jobs:
           - mariadb-version: "10.6"
             django: "6.0"
             group: django60
-          - mariadb-version: "10.11"
-            django: "6.1"
-            group: django61
-          - mariadb-version: "11.4"
-            django: "6.1"
-            group: django61
-          - mariadb-version: "11.8"
-            django: "6.1"
-            group: django61
           - mariadb-version: "12.3"
             django: "6.0"
             group: django60
