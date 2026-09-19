@@ -1199,6 +1199,7 @@ def test_async_supervisor_sigquit_takes_immediate_exit_path():
 def test_async_supervisor_stop_preserves_undrained_worker_until_work_finishes(monkeypatch):
   release = threading.Event()
   finished = threading.Event()
+  job_threads = []
   tasks_settings = async_tasks_settings(dispatchers=[])
   tasks_settings["default"]["OPTIONS"]["shutdown_timeout"] = 0.01
   supervisor = build_async_supervisor(
@@ -1211,8 +1212,10 @@ def test_async_supervisor_stop_preserves_undrained_worker_until_work_finishes(mo
 
     worker = supervisor.runners[0]
     worker_process_pk = worker.process.pk
+    runner_thread = supervisor.runner_threads[0]
 
     def blocking_job(job_id):
+      job_threads.append(threading.current_thread())
       try:
         release.wait()
       finally:
@@ -1221,15 +1224,19 @@ def test_async_supervisor_stop_preserves_undrained_worker_until_work_finishes(mo
     monkeypatch.setattr(worker, "_execute_job", blocking_job)
 
     worker.pool.submit(worker._execute_job, "slow-job")
-    assert supervisor.runner_threads[0].daemon is False
+    assert runner_thread.daemon is False
 
     supervisor.stop()
 
-    assert Process.objects.filter(pk=worker_process_pk).exists() is True
+    assert Process.objects.get(pk=worker_process_pk).supervisor_id is None
   finally:
     release.set()
     wait_until(finished.is_set)
-    wait_until(lambda: Process.objects.filter(supervisor=process, kind="Worker").exists() is False)
+    for thread in (runner_thread, *job_threads):
+      thread.join(timeout=1)
+      assert thread.is_alive() is False
+    assert worker.process is None
+    assert Process.objects.filter(pk=worker_process_pk).exists() is False
 
 
 def test_async_supervisor_passes_backend_heartbeat_interval_to_managed_runners():
