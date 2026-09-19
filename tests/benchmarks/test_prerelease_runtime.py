@@ -1,4 +1,5 @@
 import runpy
+from unittest.mock import Mock
 
 import pytest
 from django.db import connection
@@ -7,25 +8,13 @@ from django.db.utils import OperationalError
 from benchmarks import prerelease_runtime, prerelease_tasks
 
 
-def test_prerelease_runtime_parses_bounded_process_duration():
-  args = prerelease_runtime.parse_args(
-    [
-      "produce",
-      "--run-id",
-      "release",
-      "--rate",
-      "25",
-      "--run-started-at",
-      "100.5",
-      "--duration",
-      "10",
-    ]
-  )
+def test_prerelease_supervision_uses_normal_management_command(monkeypatch):
+  command = Mock()
+  monkeypatch.setattr("django.core.management.call_command", command)
 
-  assert args.run_id == "release"
-  assert args.rate == 25
-  assert args.run_started_at == 100.5
-  assert args.duration == 10
+  prerelease_runtime.supervise()
+
+  command.assert_called_once_with("dj_queue", mode="async")
 
 
 def test_prerelease_runtime_rejects_unsafe_database_name(monkeypatch):
@@ -36,50 +25,25 @@ def test_prerelease_runtime_rejects_unsafe_database_name(monkeypatch):
 
 
 def test_prerelease_runtime_retries_migration_lock_conflict(monkeypatch):
-  calls = 0
-
-  def migrate_once_lock_is_available(*_args, **_kwargs):
-    nonlocal calls
-    calls += 1
-    if calls == 1:
-      raise OperationalError(1205, "Lock wait timeout exceeded")
-
-  monkeypatch.setattr("django.core.management.call_command", migrate_once_lock_is_available)
+  command = Mock(side_effect=[OperationalError(1205, "Lock wait timeout exceeded"), None])
+  monkeypatch.setattr("django.core.management.call_command", command)
   monkeypatch.setattr(prerelease_runtime, "_set_migration_lock_timeout", lambda _connection: None)
   monkeypatch.setattr(prerelease_runtime.time, "sleep", lambda _seconds: None)
 
   prerelease_runtime.migrate()
 
-  assert calls == 2
+  assert command.call_count == 2
 
 
-def test_prerelease_runtime_recognizes_postgres_lock_conflict():
-  driver_error = Exception("canceling statement due to lock timeout")
-  driver_error.sqlstate = "55P03"
-  error = OperationalError("migration failed")
-  error.__cause__ = driver_error
+def test_prerelease_runtime_does_not_retry_other_migration_errors(monkeypatch):
+  command = Mock(side_effect=OperationalError("invalid DDL"))
+  monkeypatch.setattr("django.core.management.call_command", command)
+  monkeypatch.setattr(prerelease_runtime, "_set_migration_lock_timeout", lambda _connection: None)
 
-  assert prerelease_runtime._is_transient_migration_error(error) is True
+  with pytest.raises(OperationalError, match="invalid DDL"):
+    prerelease_runtime.migrate()
 
-
-def test_prerelease_runtime_sets_postgres_migration_lock_timeout():
-  statements = []
-
-  class Cursor:
-    def __enter__(self):
-      return self
-
-    def __exit__(self, *_args):
-      return None
-
-    def execute(self, statement):
-      statements.append(statement)
-
-  database = type("Database", (), {"vendor": "postgresql", "cursor": lambda _self: Cursor()})()
-
-  prerelease_runtime._set_migration_lock_timeout(database)
-
-  assert statements == ["SET SESSION lock_timeout = '2s'"]
+  assert command.call_count == 1
 
 
 def test_prerelease_runtime_refuses_to_replace_existing_sqlite_database(monkeypatch, tmp_path):
@@ -88,38 +52,103 @@ def test_prerelease_runtime_refuses_to_replace_existing_sqlite_database(monkeypa
   monkeypatch.setenv("PRERELEASE_BACKEND", "sqlite")
   monkeypatch.setenv("PRERELEASE_DB_NAME", str(database))
 
-  with pytest.raises(RuntimeError, match="already exists"):
+  with pytest.raises(FileExistsError):
     prerelease_runtime.create_database()
 
   assert database.read_text(encoding="utf-8") == "keep"
 
 
-def test_prerelease_sqlite_serializes_write_transactions(monkeypatch, tmp_path):
+def test_prerelease_settings_route_version_witnesses(monkeypatch, tmp_path):
   monkeypatch.setenv("PRERELEASE_BACKEND", "sqlite")
   monkeypatch.setenv("PRERELEASE_DB_NAME", str(tmp_path / "prerelease.sqlite3"))
+  monkeypatch.setenv("PRERELEASE_RUNTIME_LABEL", "Y")
 
   settings = runpy.run_path(prerelease_runtime.__file__.replace("runtime.py", "settings.py"))
 
-  assert settings["DATABASES"]["default"]["OPTIONS"] == {
-    "timeout": 30,
-    "transaction_mode": "IMMEDIATE",
+  assert settings["DATABASES"]["default"]["OPTIONS"]["transaction_mode"] == "IMMEDIATE"
+  assert settings["TASKS"]["default"]["OPTIONS"]["workers"][0]["queues"] == ["y", "shared"]
+
+
+@pytest.fixture
+def ledger(transactional_db):
+  prerelease_runtime.create_control_tables()
+  yield
+  with connection.cursor() as cursor:
+    cursor.execute("DROP TABLE dj_queue_prerelease_effects")
+
+
+def test_prerelease_tasks_count_retries_and_duplicates(ledger, monkeypatch):
+  monkeypatch.setenv("PRERELEASE_RUNTIME_LABEL", "X")
+  prerelease_runtime.expect_tokens(["batch:immediate", "batch:retry"])
+
+  prerelease_tasks.record.func("batch:immediate")
+  prerelease_tasks.record.func("batch:immediate")
+  with pytest.raises(RuntimeError, match="expected prerelease failure"):
+    prerelease_tasks.fail_once.func("batch:retry")
+  prerelease_tasks.fail_once.func("batch:retry")
+
+  assert prerelease_runtime.status()["effects"] == {
+    "batch:immediate": [2, 2, "X"],
+    "batch:retry": [2, 1, "X"],
   }
 
 
-@pytest.mark.django_db(transaction=True)
-def test_prerelease_tasks_record_attempts_and_duplicate_completions(monkeypatch):
+def test_prerelease_requires_every_planned_effect_and_reservation(ledger, monkeypatch):
   monkeypatch.setenv("PRERELEASE_RUNTIME_LABEL", "X")
-  prerelease_runtime.create_control_tables()
+  prerelease_runtime.expect_tokens(["old:immediate"])
+  prerelease_tasks.record.func("old:immediate")
 
-  assert prerelease_tasks.record.func("record-token") == "record-token"
-  assert prerelease_tasks.record.func("record-token") == "record-token"
-  with pytest.raises(RuntimeError, match="expected prerelease failure"):
-    prerelease_tasks.fail_once.func("retry-token")
-  assert prerelease_tasks.fail_once.func("retry-token") == "retry-token"
+  problems = prerelease_runtime.batch_problems(prerelease_runtime.status(), "old", "X")
 
-  table = connection.ops.quote_name("dj_queue_prerelease_effects")
-  with connection.cursor() as cursor:
-    cursor.execute(f"SELECT token, attempts, completions FROM {table} ORDER BY token")
-    rows = cursor.fetchall()
+  assert any("old:recurring" in problem for problem in problems)
+  assert any("old:scheduled" in problem for problem in problems)
+  assert any("reservation" in problem for problem in problems)
 
-  assert list(rows) == [("record-token", 2, 2), ("retry-token", 2, 1)]
+
+@pytest.mark.parametrize(
+  "fault", [None, "wrong-worker", "duplicate", "bad-retry", "no-reservation"]
+)
+def test_prerelease_batch_checks_outcomes(fault):
+  snapshot = {
+    "effects": {
+      f"old:{name}": [2 if name == "retry" else 1, 1, "X"]
+      for name in (
+        "immediate",
+        "scheduled",
+        "limited-0",
+        "limited-1",
+        "bulk-0",
+        "bulk-1",
+        "retry",
+        "recurring",
+      )
+    },
+    "recurring": {"old:recurring": "a-job-id"},
+  }
+  if fault == "wrong-worker":
+    snapshot["effects"]["old:immediate"][2] = "Y"
+  elif fault == "duplicate":
+    snapshot["effects"]["old:bulk-1"] = [2, 2, "X"]
+  elif fault == "bad-retry":
+    snapshot["effects"]["old:retry"][0] = 1
+  elif fault == "no-reservation":
+    snapshot["recurring"] = {}
+
+  assert bool(prerelease_runtime.batch_problems(snapshot, "old", "X")) is (fault is not None)
+
+
+def test_prerelease_plans_work_before_enqueue(ledger, monkeypatch):
+  import sys
+
+  monkeypatch.setitem(sys.modules, "prerelease_tasks", prerelease_tasks)
+  record = Mock()
+  record.using.side_effect = RuntimeError("enqueue")
+  monkeypatch.setattr(prerelease_tasks, "record", record)
+
+  with pytest.raises(RuntimeError, match="enqueue"):
+    prerelease_runtime.enqueue_batch("old", "x")
+
+  effects = prerelease_runtime.status()["effects"]
+  assert len(effects) == 8
+  assert effects["old:recurring"] == [0, 0, ""]
+  assert effects["old:scheduled"] == [0, 0, ""]

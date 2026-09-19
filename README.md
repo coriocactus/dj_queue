@@ -398,7 +398,7 @@ application deployment, so keep your task import paths and accepted argument
 shapes compatible. Use a new task name when a payload change cannot be backward
 compatible.
 
-Maintainers can prove a candidate rollout against two immutable revisions:
+Maintainers can check a candidate rollout against two immutable revisions:
 
 ```bash
 bin/prerelease.py \
@@ -408,14 +408,22 @@ bin/prerelease.py \
   --django '>=6.0,<6.1'
 ```
 
-The command calibrates release N−1, applies release N migrations under live
-writes, runs both versions together, drains with release N, and verifies queue
-state and side effects. It rejects revisions that do not publish one shared
-rollout protocol. It writes wheel hashes, one-second metrics, logs, and a result
-manifest under `benchmark-results/`. The **Pre-release migration load** workflow
-runs the database floor and current-version lanes. `--smoke` and custom workload
-profiles keep all validity and stability gates and record performance. Only the
-default ten-minute release profile enforces the X-to-Y performance ratios.
+The command builds isolated wheels, applies N migrations while an N−1 producer
+and supervisor run, then checks both cross-version producer/worker directions
+and N-only operation. Each phase must complete immediate, scheduled, limited,
+bulk, recurring, and fail-once/retry work before its deadline.
+
+The check requires one shared rollout protocol and the same Django version.
+It verifies planned side effects, queue drain, deep health, and clean shutdown.
+It creates a fresh database and drops it before reporting success; use
+`--keep-database` to retain it for inspection. Wheels, hashes, phase results,
+migration timing, and logs stay under `benchmark-results/`.
+
+The manual/reusable **Mixed-version upgrade check** workflow uses hosted runners
+for PostgreSQL 14, MySQL 8.0, and MariaDB 10.6 with Django 6.0. Run this check for
+upgrade-sensitive changes; backend-specific DDL changes may need extra database
+versions. This is a correctness check, not a capacity or latency benchmark.
+Use the [benchmark tools](docs/benchmarks.md) for performance comparisons.
 
 ## Recurring Tasks
 

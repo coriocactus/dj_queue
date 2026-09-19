@@ -1,93 +1,28 @@
 import argparse
-import importlib
 import json
 import logging
 import os
 import signal
 import sys
 import time
+from contextlib import contextmanager
 from datetime import timedelta
 from importlib.metadata import version
 from pathlib import Path
 from threading import Event
 
 LOGGER = logging.getLogger("dj_queue.prerelease")
-STOP = Event()
-TASK_PATHS = (
-  "prerelease_tasks.record",
-  "prerelease_tasks.record_limited",
-  "prerelease_tasks.fail_once",
-  "prerelease_tasks.record_recurring",
+PHASE_WORKERS = {"old": "X", "old-to-new": "Y", "new-to-old": "X", "new": "Y"}
+BATCH_NAMES = (
+  "immediate",
+  "scheduled",
+  "limited-0",
+  "limited-1",
+  "bulk-0",
+  "bulk-1",
+  "retry",
+  "recurring",
 )
-
-
-def parse_args(argv):
-  parser = argparse.ArgumentParser(description="Run one isolated pre-release load process.")
-  subparsers = parser.add_subparsers(dest="command", required=True)
-
-  subparsers.add_parser("create-database")
-  subparsers.add_parser("drop-database")
-  subparsers.add_parser("migrate")
-  subparsers.add_parser("compatibility")
-
-  seed = subparsers.add_parser("seed")
-  seed.add_argument("--jobs", type=int, required=True)
-  seed.add_argument("--queues", type=int, required=True)
-  seed.add_argument("--semaphores", type=int, required=True)
-  seed.add_argument("--recurring-executions", type=int, required=True)
-
-  supervise = subparsers.add_parser("supervise")
-  supervise.add_argument("--duration", type=float)
-
-  calibrate = subparsers.add_parser("calibrate")
-  calibrate.add_argument("--run-id", required=True)
-  calibrate.add_argument("--jobs", type=int, required=True)
-  calibrate.add_argument("--timeout", type=float, default=180)
-
-  produce = subparsers.add_parser("produce")
-  produce.add_argument("--run-id", required=True)
-  produce.add_argument("--rate", type=float, required=True)
-  produce.add_argument("--run-started-at", type=float, required=True)
-  produce.add_argument("--duration", type=float)
-
-  retry = subparsers.add_parser("retry")
-  retry.add_argument("--interval", type=float, default=0.1)
-  retry.add_argument("--duration", type=float)
-
-  recurring = subparsers.add_parser("stop-recurring")
-  recurring.add_argument("--run-id", required=True)
-
-  status = subparsers.add_parser("status")
-  status.add_argument("--run-id", required=True)
-
-  verify = subparsers.add_parser("verify")
-  verify.add_argument("--run-id", required=True)
-
-  return parser.parse_args(argv)
-
-
-def configure_logging():
-  logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-  )
-  logging.getLogger("dj_queue").setLevel(logging.WARNING)
-  LOGGER.setLevel(logging.INFO)
-
-
-def install_signal_handlers():
-  def request_stop(_signum, _frame):
-    STOP.set()
-
-  signal.signal(signal.SIGINT, request_stop)
-  signal.signal(signal.SIGTERM, request_stop)
-
-
-def setup_django():
-  os.environ.setdefault("DJANGO_SETTINGS_MODULE", "prerelease_settings")
-  import django
-
-  django.setup()
 
 
 def assert_prerelease_database_name():
@@ -97,98 +32,55 @@ def assert_prerelease_database_name():
   return name
 
 
-def create_database():
+@contextmanager
+def maintenance_cursor():
   name = assert_prerelease_database_name()
-  backend = os.environ["PRERELEASE_BACKEND"]
-  if backend == "sqlite":
-    path = Path(name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-      raise RuntimeError(f"pre-release database already exists: {path}")
-    return
-  if backend == "postgres":
+  options = {
+    "user": os.environ["PRERELEASE_DB_USER"],
+    "password": os.environ["PRERELEASE_DB_PASSWORD"],
+    "host": os.environ["PRERELEASE_DB_HOST"],
+    "port": int(os.environ["PRERELEASE_DB_PORT"]),
+    "autocommit": True,
+  }
+  if os.environ["PRERELEASE_BACKEND"] == "postgres":
     import psycopg
     from psycopg import sql
 
-    with (
-      psycopg.connect(
-        dbname=os.environ.get("PRERELEASE_MAINTENANCE_DB", "postgres"),
-        user=os.environ.get("PRERELEASE_DB_USER", "dj_queue"),
-        password=os.environ.get("PRERELEASE_DB_PASSWORD", "dj_queue"),
-        host=os.environ.get("PRERELEASE_DB_HOST", "127.0.0.1"),
-        port=os.environ.get("PRERELEASE_DB_PORT", "5432"),
-        autocommit=True,
-      ) as connection,
-      connection.cursor() as cursor,
-    ):
-      cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s", [name])
-      if cursor.fetchone() is not None:
-        raise RuntimeError(f"pre-release database already exists: {name}")
-      cursor.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+    connection = psycopg.connect(dbname="postgres", **options)
+    quoted_name = sql.Identifier(name).as_string(connection)
+  else:
+    import pymysql
+
+    connection = pymysql.connect(database="mysql", **options)
+    quoted_name = f"`{name.replace('`', '``')}`"
+  try:
+    with connection.cursor() as cursor:
+      yield cursor, quoted_name
+  finally:
+    connection.close()
+
+
+def create_database():
+  name = assert_prerelease_database_name()
+  if os.environ["PRERELEASE_BACKEND"] == "sqlite":
+    path = Path(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch(exist_ok=False)
     return
-
-  import pymysql
-
-  with (
-    pymysql.connect(
-      user=os.environ.get("PRERELEASE_DB_USER", "root"),
-      password=os.environ.get("PRERELEASE_DB_PASSWORD", "root"),
-      host=os.environ.get("PRERELEASE_DB_HOST", "127.0.0.1"),
-      port=int(os.environ.get("PRERELEASE_DB_PORT", "3306")),
-      database=os.environ.get("PRERELEASE_MAINTENANCE_DB", "mysql"),
-      autocommit=True,
-    ) as connection,
-    connection.cursor() as cursor,
-  ):
-    cursor.execute(
-      f"CREATE DATABASE `{name.replace('`', '``')}` "
-      "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-    )
+  with maintenance_cursor() as (cursor, quoted_name):
+    suffix = ""
+    if os.environ["PRERELEASE_BACKEND"] in {"mysql", "mariadb"}:
+      suffix = " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+    cursor.execute(f"CREATE DATABASE {quoted_name}{suffix}")
 
 
 def drop_database():
   name = assert_prerelease_database_name()
-  backend = os.environ["PRERELEASE_BACKEND"]
-  if backend == "sqlite":
-    Path(name).unlink(missing_ok=True)
+  if os.environ["PRERELEASE_BACKEND"] == "sqlite":
+    Path(name).unlink()
     return
-  if backend == "postgres":
-    import psycopg
-    from psycopg import sql
-
-    with (
-      psycopg.connect(
-        dbname=os.environ.get("PRERELEASE_MAINTENANCE_DB", "postgres"),
-        user=os.environ.get("PRERELEASE_DB_USER", "dj_queue"),
-        password=os.environ.get("PRERELEASE_DB_PASSWORD", "dj_queue"),
-        host=os.environ.get("PRERELEASE_DB_HOST", "127.0.0.1"),
-        port=os.environ.get("PRERELEASE_DB_PORT", "5432"),
-        autocommit=True,
-      ) as connection,
-      connection.cursor() as cursor,
-    ):
-      cursor.execute(
-        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-        "WHERE datname = %s AND pid <> pg_backend_pid()",
-        [name],
-      )
-      cursor.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(name)))
-    return
-
-  import pymysql
-
-  with (
-    pymysql.connect(
-      user=os.environ.get("PRERELEASE_DB_USER", "root"),
-      password=os.environ.get("PRERELEASE_DB_PASSWORD", "root"),
-      host=os.environ.get("PRERELEASE_DB_HOST", "127.0.0.1"),
-      port=int(os.environ.get("PRERELEASE_DB_PORT", "3306")),
-      database=os.environ.get("PRERELEASE_MAINTENANCE_DB", "mysql"),
-      autocommit=True,
-    ) as connection,
-    connection.cursor() as cursor,
-  ):
-    cursor.execute(f"DROP DATABASE IF EXISTS `{name.replace('`', '``')}`")
+  with maintenance_cursor() as (cursor, quoted_name):
+    cursor.execute(f"DROP DATABASE {quoted_name}")
 
 
 def migrate():
@@ -196,14 +88,16 @@ def migrate():
   from django.db import connection, connections
   from django.db.utils import OperationalError
 
-  deadline = time.monotonic() + float(os.environ.get("PRERELEASE_MIGRATION_TIMEOUT", "60"))
+  from dj_queue.db import is_transient_database_error
+
+  deadline = time.monotonic() + 60
   while True:
     try:
       _set_migration_lock_timeout(connection)
       call_command("migrate", verbosity=1, interactive=False)
       return
     except OperationalError as error:
-      if not _is_transient_migration_error(error) or time.monotonic() >= deadline:
+      if not is_transient_database_error(error) or time.monotonic() >= deadline:
         raise
       LOGGER.warning("migration lock conflict; retrying")
       connections.close_all()
@@ -211,499 +105,99 @@ def migrate():
 
 
 def _set_migration_lock_timeout(connection):
-  if connection.vendor == "postgresql":
-    with connection.cursor() as cursor:
+  with connection.cursor() as cursor:
+    if connection.vendor == "postgresql":
       cursor.execute("SET SESSION lock_timeout = '2s'")
-  elif connection.vendor == "mysql":
-    with connection.cursor() as cursor:
+    elif connection.vendor == "mysql":
       cursor.execute("SET SESSION lock_wait_timeout = 2")
       cursor.execute("SET SESSION innodb_lock_wait_timeout = 2")
-
-
-def _is_transient_migration_error(error):
-  seen = set()
-  while error is not None and id(error) not in seen:
-    seen.add(id(error))
-    if getattr(error, "pgcode", None) in {"40001", "40P01", "55P03"}:
-      return True
-    if getattr(error, "sqlstate", None) in {"40001", "40P01", "55P03"}:
-      return True
-    if error.args and error.args[0] in {1205, 1213}:
-      return True
-    error = error.__cause__ or error.__context__
-  return False
-
-
-def rollout_compatibility():
-  runtime = importlib.import_module("dj_queue.runtime.base")
-  print_json(
-    {
-      "dj_queue_version": version("dj-queue"),
-      "rollout_protocol": getattr(runtime, "ROLLOUT_PROTOCOL_VERSION", None),
-    }
-  )
 
 
 def create_control_tables():
   from django.db import connection
 
-  accepted = connection.ops.quote_name("dj_queue_prerelease_accepted")
-  effects = connection.ops.quote_name("dj_queue_prerelease_effects")
-  if connection.vendor == "mysql":
-    token_type = "varchar(255)"
-    category_type = "varchar(32)"
-    label_type = "varchar(16)"
-    timestamp_type = "datetime(6)"
-    float_type = "double"
-  else:
-    token_type = "varchar(255)"
-    category_type = "varchar(32)"
-    label_type = "varchar(16)"
-    timestamp_type = "timestamp"
-    float_type = "double precision" if connection.vendor == "postgresql" else "real"
-
   with connection.cursor() as cursor:
     cursor.execute(
-      f"""
-      CREATE TABLE {accepted} (
-        token {token_type} PRIMARY KEY,
-        category {category_type} NOT NULL,
-        producer_version {label_type} NOT NULL,
-        enqueue_ms {float_type} NOT NULL,
-        elapsed_seconds {float_type} NOT NULL,
-        accepted_at {timestamp_type} NOT NULL
-      )
-      """
-    )
-    cursor.execute(
-      f"""
-      CREATE TABLE {effects} (
-        token {token_type} PRIMARY KEY,
-        category {category_type} NOT NULL,
-        attempts integer NOT NULL,
-        completions integer NOT NULL,
-        first_version {label_type} NOT NULL,
-        last_version {label_type} NOT NULL,
-        completed_at {timestamp_type} NOT NULL
-      )
-      """
+      "CREATE TABLE dj_queue_prerelease_effects ("
+      "token varchar(255) PRIMARY KEY, attempts integer NOT NULL DEFAULT 0, "
+      "completions integer NOT NULL DEFAULT 0, worker varchar(1) NOT NULL DEFAULT '')"
     )
 
 
-def seed_database(*, jobs, queues, semaphores, recurring_executions):
-  from django.utils import timezone
-
-  from dj_queue.models import Job, RecurringExecution, Semaphore
-
-  if recurring_executions > jobs:
-    raise ValueError("recurring execution seed count cannot exceed job seed count")
-  create_control_tables()
-  now = timezone.now()
-  expires_at = now + timedelta(days=1)
-  batch_size = 1000
-  seeded_jobs = []
-  for offset in range(0, jobs, batch_size):
-    batch = [
-      Job(
-        task_path="prerelease_tasks.baseline",
-        queue_name=f"queue-{index % queues:03d}",
-        priority=0,
-        payload={"args": [index], "kwargs": {}},
-        backend_alias="default",
-        finished_at=now,
-        return_value=index,
-        created_at=now,
-        updated_at=now,
-      )
-      for index in range(offset, min(offset + batch_size, jobs))
-    ]
-    Job.objects.bulk_create(batch, batch_size=batch_size)
-    seeded_jobs.extend(batch)
-
-  for offset in range(0, recurring_executions, batch_size):
-    RecurringExecution.objects.bulk_create(
-      [
-        RecurringExecution(
-          backend_alias="default",
-          task_key=f"baseline-{index}",
-          run_at=now,
-          job=seeded_jobs[index],
-        )
-        for index in range(offset, min(offset + batch_size, recurring_executions))
-      ],
-      batch_size=batch_size,
-    )
-
-  Semaphore.objects.bulk_create(
-    [
-      Semaphore(
-        key=f"prerelease:{index}",
-        value=2,
-        limit=2,
-        expires_at=expires_at,
-      )
-      for index in range(semaphores)
-    ],
-    batch_size=batch_size,
-  )
-  print_json(
-    {
-      "seeded_jobs": jobs,
-      "seeded_queues": queues,
-      "seeded_semaphores": semaphores,
-      "seeded_recurring_executions": recurring_executions,
-    }
-  )
-
-
-def supervise(*, duration=None):
-  from dj_queue.runtime.supervisor import AsyncSupervisor
-
-  install_signal_handlers()
-  deadline = time.monotonic() + duration if duration is not None else None
-  supervisor = AsyncSupervisor.from_backend_config(backend_alias="default", standalone=False)
-  supervisor.start()
-  LOGGER.info("supervisor started runners=%s", len(supervisor.runners))
-  try:
-    while not STOP.wait(0.2):
-      if deadline is not None and time.monotonic() >= deadline:
-        break
-  finally:
-    supervisor.stop()
-    LOGGER.info("supervisor stopped")
-
-
-def calibrate(*, run_id, jobs, timeout):
+def expect_tokens(tokens):
   from django.db import connection
-  from prerelease_tasks import record
 
-  started = time.monotonic()
-  backend = record.get_backend()
-  for offset in range(0, jobs, 500):
-    backend.enqueue_all(
-      [
-        (record, (f"{run_id}:calibration:{index}", "calibration"), {})
-        for index in range(offset, min(offset + 500, jobs))
-      ]
+  with connection.cursor() as cursor:
+    cursor.executemany(
+      "INSERT INTO dj_queue_prerelease_effects (token) VALUES (%s)",
+      [(token,) for token in tokens],
     )
 
-  table = connection.ops.quote_name("dj_queue_prerelease_effects")
-  deadline = started + timeout
-  completed = 0
-  while time.monotonic() < deadline:
-    with connection.cursor() as cursor:
-      cursor.execute(
-        f"SELECT COUNT(*) FROM {table} WHERE token LIKE %s AND completions = 1",
-        [f"{run_id}:calibration:%"],
-      )
-      completed = cursor.fetchone()[0]
-    if completed == jobs:
-      break
-    time.sleep(0.05)
-  duration = time.monotonic() - started
-  if completed != jobs:
-    raise RuntimeError(f"calibration drained {completed}/{jobs} jobs before timeout")
-  print_json(
-    {
-      "jobs": jobs,
-      "duration_seconds": duration,
-      "capacity_jobs_per_second": jobs / duration,
-    }
-  )
+
+def supervise():
+  from django.core.management import call_command
+
+  call_command("dj_queue", mode="async")
 
 
-def produce(*, run_id, rate, run_started_at, duration=None):
-  from django.db import connection
+def enqueue_batch(phase, queue):
   from django.utils import timezone
   from prerelease_tasks import fail_once, record, record_limited
 
-  install_signal_handlers()
-  runtime_label = os.environ.get("PRERELEASE_RUNTIME_LABEL", "unknown")
-  recurring_count = min(500, max(1, round(rate * 0.05)))
-  ensure_recurring_tasks(run_id, recurring_count)
-  direct_rate = max(1.0, rate - recurring_count)
-  pattern = (
-    ["immediate"] * 45
-    + ["concurrency"] * 20
-    + ["scheduled"] * 15
-    + ["bulk"] * 10
-    + ["failure"] * 5
-  )
-  budget = 0.0
-  sequence = 0
-  last_tick = time.monotonic()
-  deadline = last_tick + duration if duration is not None else None
-  accepted_table = connection.ops.quote_name("dj_queue_prerelease_accepted")
-  LOGGER.info(
-    "producer started rate=%.2f direct_rate=%.2f recurring_tasks=%s",
-    rate,
-    direct_rate,
-    recurring_count,
-  )
-
-  while not STOP.wait(0.01):
-    now = time.monotonic()
-    if deadline is not None and now >= deadline:
-      break
-    budget += direct_rate * (now - last_tick)
-    last_tick = now
-    count = min(int(budget), 100)
-    if count <= 0:
-      continue
-    budget -= count
-
-    bulk = []
-    for _index in range(count):
-      category = pattern[sequence % len(pattern)]
-      token = f"{run_id}:{category}:{runtime_label}:{sequence}"
-      queue_name = f"queue-{sequence % 100:03d}"
-      started = time.perf_counter()
-      if category == "immediate":
-        record.using(queue_name=queue_name).enqueue(token, category)
-        record_accepted(
-          accepted_table,
-          token,
-          category,
-          runtime_label,
-          started,
-          run_started_at=run_started_at,
-          accepted_at=timezone.now(),
-        )
-      elif category == "concurrency":
-        record_limited.using(queue_name=queue_name).enqueue(sequence % 1000, token)
-        record_accepted(
-          accepted_table,
-          token,
-          category,
-          runtime_label,
-          started,
-          run_started_at=run_started_at,
-          accepted_at=timezone.now(),
-        )
-      elif category == "scheduled":
-        record.using(
-          queue_name=queue_name,
-          run_after=timezone.now() + timedelta(seconds=1),
-        ).enqueue(token, category)
-        record_accepted(
-          accepted_table,
-          token,
-          category,
-          runtime_label,
-          started,
-          run_started_at=run_started_at,
-          accepted_at=timezone.now(),
-        )
-      elif category == "failure":
-        fail_once.using(queue_name=queue_name).enqueue(token)
-        record_accepted(
-          accepted_table,
-          token,
-          category,
-          runtime_label,
-          started,
-          run_started_at=run_started_at,
-          accepted_at=timezone.now(),
-        )
-      else:
-        bulk.append((token, queue_name, started))
-      sequence += 1
-
-    if bulk:
-      bulk_started = time.perf_counter()
-      record.get_backend().enqueue_all(
-        [
-          (record.using(queue_name=queue_name), (token, "bulk"), {})
-          for token, queue_name, _started in bulk
-        ]
-      )
-      accepted_at = timezone.now()
-      for token, _queue_name, _started in bulk:
-        record_accepted(
-          accepted_table,
-          token,
-          "bulk",
-          runtime_label,
-          bulk_started,
-          run_started_at=run_started_at,
-          accepted_at=accepted_at,
-        )
-
-  LOGGER.info("producer stopped accepted_sequence=%s", sequence)
-
-
-def record_accepted(
-  table,
-  token,
-  category,
-  runtime_label,
-  started,
-  *,
-  run_started_at,
-  accepted_at,
-):
-  from django.db import connection
-
-  enqueue_ms = (time.perf_counter() - started) * 1000
-  elapsed_seconds = time.monotonic() - run_started_at
-  with connection.cursor() as cursor:
-    cursor.execute(
-      f"""
-      INSERT INTO {table} (
-        token, category, producer_version, enqueue_ms, elapsed_seconds, accepted_at
-      ) VALUES (%s, %s, %s, %s, %s, %s)
-      """,
-      [token, category, runtime_label, enqueue_ms, elapsed_seconds, accepted_at],
-    )
-
-
-def ensure_recurring_tasks(run_id, count):
-  from django.utils import timezone
-
   from dj_queue.models import RecurringTask
 
-  now = timezone.now()
-  for index in range(count):
-    RecurringTask.objects.update_or_create(
-      backend_alias="default",
-      key=f"{run_id}:recurring:{index}",
-      defaults={
-        "task_path": "prerelease_tasks.record_recurring",
-        "payload": {"args": [run_id], "kwargs": {}},
-        "schedule": "* * * * * *",
-        "queue_name": f"queue-{index % 100:03d}",
-        "priority": 0,
-        "description": "pre-release mixed-version load",
-        "static": False,
-        "next_run_at": now + timedelta(seconds=1),
-      },
-    )
+  expect_tokens(f"{phase}:{name}" for name in BATCH_NAMES)
+  record.using(queue_name=queue).enqueue(f"{phase}:immediate")
+  record.using(queue_name=queue, run_after=timezone.now() + timedelta(seconds=1)).enqueue(
+    f"{phase}:scheduled"
+  )
+  for index in range(2):
+    record_limited.using(queue_name=queue).enqueue(queue, f"{phase}:limited-{index}")
+  record.get_backend().enqueue_all(
+    [(record.using(queue_name=queue), (f"{phase}:bulk-{index}",), {}) for index in range(2)]
+  )
+  fail_once.using(queue_name=queue).enqueue(f"{phase}:retry")
+  # one due annual slot gives the scheduler work without an open-ended schedule
+  RecurringTask.objects.create(
+    backend_alias="default",
+    key=f"{phase}:recurring",
+    task_path="prerelease_tasks.record",
+    payload={"args": [f"{phase}:recurring"], "kwargs": {}},
+    schedule="0 0 1 1 *",
+    queue_name=queue,
+    static=False,
+  )
 
 
-def retry_expected_failures(*, interval, duration=None):
+def produce():
+  from prerelease_tasks import record
+
+  stop = Event()
+  signal.signal(signal.SIGTERM, lambda *_args: stop.set())
+  signal.signal(signal.SIGINT, lambda *_args: stop.set())
+  index = 0
+  while not stop.is_set():
+    token = f"live:{index}"
+    expect_tokens([token])
+    record.using(queue_name="shared").enqueue(token)
+    index += 1
+    stop.wait(0.05)
+
+
+def retry_expected_failures():
   from dj_queue.models import FailedExecution
   from dj_queue.operations.jobs import retry_failed_jobs
 
-  install_signal_handlers()
-  deadline = time.monotonic() + duration if duration is not None else None
-  while not STOP.wait(interval):
-    if deadline is not None and time.monotonic() >= deadline:
-      break
-    job_ids = list(
-      FailedExecution.objects.filter(job__task_path="prerelease_tasks.fail_once")
-      .order_by("id")
-      .values_list("job_id", flat=True)[:500]
-    )
-    if job_ids:
-      retry_failed_jobs(job_ids=job_ids, batch_size=len(job_ids))
-
-
-def stop_recurring(run_id):
-  from dj_queue.models import RecurringTask
-
-  deleted, _details = RecurringTask.objects.filter(
-    backend_alias="default",
-    key__startswith=f"{run_id}:recurring:",
-  ).delete()
-  print_json({"deleted_recurring_tasks": deleted})
-
-
-def verify(run_id):
-  from django.db import connection
-  from django.db.models import F, Q
-
-  from dj_queue import observability
-  from dj_queue.models import FailedExecution, Job, RecurringExecution
-
-  problems = list(observability.deep_health_problems(backend_alias="default"))
-  status = queue_status_data(run_id)
-  if status["depth"]:
-    problems.append(f"queue did not drain: {status}")
-
-  accepted = connection.ops.quote_name("dj_queue_prerelease_accepted")
-  effects = connection.ops.quote_name("dj_queue_prerelease_effects")
-  with connection.cursor() as cursor:
-    cursor.execute(
-      f"""
-      SELECT COUNT(*)
-      FROM {accepted} accepted
-      LEFT JOIN {effects} effects ON effects.token = accepted.token
-      WHERE accepted.token LIKE %s AND COALESCE(effects.completions, 0) <> 1
-      """,
-      [f"{run_id}:%"],
-    )
-    lost = cursor.fetchone()[0]
-    cursor.execute(
-      f"SELECT COUNT(*) FROM {effects} WHERE token LIKE %s AND completions > 1",
-      [f"{run_id}:%"],
-    )
-    duplicates = cursor.fetchone()[0]
-    cursor.execute(
-      f"""
-      SELECT COUNT(*) FROM {effects}
-      WHERE token LIKE %s AND category = 'failure' AND (attempts <> 2 OR completions <> 1)
-      """,
-      [f"{run_id}:%"],
-    )
-    bad_retries = cursor.fetchone()[0]
-  if lost:
-    problems.append(f"{lost} accepted jobs have no single completed side effect")
-  if duplicates:
-    problems.append(f"{duplicates} jobs produced duplicate side effects")
-  if bad_retries:
-    problems.append(f"{bad_retries} expected failure jobs did not complete on the second attempt")
-
-  load_failures = FailedExecution.objects.filter(job__task_path__in=TASK_PATHS).count()
-  if load_failures:
-    problems.append(f"{load_failures} load jobs remain failed")
-
-  recurring = RecurringExecution.objects.filter(task_key__startswith=f"{run_id}:recurring:")
-  recurring_without_job = recurring.filter(job__isnull=True).count()
-  recurring_unfinished = recurring.filter(job__finished_at__isnull=True).count()
-  known_mismatch = (
-    recurring.filter(intended_job_id__isnull=False).filter(~Q(intended_job_id=F("job_id"))).count()
+  job_ids = list(
+    FailedExecution.objects.filter(job__task_path="prerelease_tasks.fail_once")
+    .order_by("id")
+    .values_list("job_id", flat=True)[:100]
   )
-  recurring_effects = 0
-  with connection.cursor() as cursor:
-    cursor.execute(
-      f"SELECT COUNT(*) FROM {effects} WHERE token LIKE %s AND completions = 1",
-      [f"{run_id}:recurring:%"],
-    )
-    recurring_effects = cursor.fetchone()[0]
-  if recurring_without_job:
-    problems.append(f"{recurring_without_job} load recurring reservations have no job")
-  if recurring_unfinished:
-    problems.append(f"{recurring_unfinished} load recurring jobs are unfinished")
-  if known_mismatch:
-    problems.append(f"{known_mismatch} load recurring reservations have mismatched identity")
-  if recurring_effects != recurring.count():
-    problems.append(
-      f"recurring side effects do not match reservations: {recurring_effects}/{recurring.count()}"
-    )
-
-  unfinished_load_jobs = Job.objects.filter(
-    task_path__in=TASK_PATHS,
-    finished_at__isnull=True,
-  ).count()
-  if unfinished_load_jobs:
-    problems.append(f"{unfinished_load_jobs} load jobs are unfinished")
-
-  result = {
-    "healthy": not problems,
-    "problems": problems,
-    "status": status,
-    "accepted_loss": lost,
-    "duplicate_side_effects": duplicates,
-    "bad_retries": bad_retries,
-    "recurring_reservations": recurring.count(),
-    "recurring_effects": recurring_effects,
-  }
-  print_json(result)
-  if problems:
-    raise SystemExit(1)
+  if job_ids:
+    retry_failed_jobs(job_ids=job_ids, batch_size=len(job_ids))
 
 
-def queue_status_data(run_id):
+def status():
   from django.db import connection
 
   from dj_queue.models import (
@@ -711,41 +205,102 @@ def queue_status_data(run_id):
     ClaimedExecution,
     FailedExecution,
     ReadyExecution,
+    RecurringExecution,
     ScheduledExecution,
   )
 
-  accepted = connection.ops.quote_name("dj_queue_prerelease_accepted")
-  effects = connection.ops.quote_name("dj_queue_prerelease_effects")
   with connection.cursor() as cursor:
-    cursor.execute(f"SELECT COUNT(*) FROM {accepted} WHERE token LIKE %s", [f"{run_id}:%"])
-    accepted_count = cursor.fetchone()[0]
-    cursor.execute(
-      f"SELECT COUNT(*) FROM {effects} WHERE token LIKE %s AND completions = 1",
-      [f"{run_id}:%"],
-    )
-    completed_count = cursor.fetchone()[0]
-  values = {
-    "accepted": accepted_count,
-    "completed": completed_count,
-    "ready": ReadyExecution.objects.count(),
-    "scheduled": ScheduledExecution.objects.count(),
-    "claimed": ClaimedExecution.objects.count(),
-    "blocked": BlockedExecution.objects.count(),
-    "failed": FailedExecution.objects.count(),
+    cursor.execute("SELECT token, attempts, completions, worker FROM dj_queue_prerelease_effects")
+    effects = {
+      token: [attempts, completions, worker] for token, attempts, completions, worker in cursor
+    }
+  return {
+    "effects": effects,
+    "depth": sum(
+      model.objects.count()
+      for model in (
+        ReadyExecution,
+        ScheduledExecution,
+        ClaimedExecution,
+        BlockedExecution,
+        FailedExecution,
+      )
+    ),
+    "recurring": {
+      key: str(job_id) if job_id else None
+      for key, job_id in RecurringExecution.objects.values_list("task_key", "job_id")
+    },
+    "live_completed": sum(
+      token.startswith("live:") and row[1] == 1 for token, row in effects.items()
+    ),
   }
-  values["depth"] = sum(
-    values[name] for name in ("ready", "scheduled", "claimed", "blocked", "failed")
-  )
-  return values
 
 
-def print_json(value):
-  print(json.dumps(value, sort_keys=True, default=str), flush=True)
+def batch_problems(snapshot, phase, worker):
+  problems = []
+  for name in BATCH_NAMES:
+    token = f"{phase}:{name}"
+    expected = [2 if name == "retry" else 1, 1, worker]
+    actual = snapshot["effects"].get(token)
+    if actual != expected:
+      problems.append(f"{token}: expected {expected}, found {actual}")
+  if not snapshot["recurring"].get(f"{phase}:recurring"):
+    problems.append(f"{phase}:recurring reservation has no job")
+  return problems
+
+
+def verify():
+  from django.db import connection
+
+  from dj_queue import observability
+  from dj_queue.models import Job, Process, RecurringExecution
+
+  snapshot = status()
+  problems = list(observability.deep_health_problems(backend_alias="default"))
+  for phase, worker in PHASE_WORKERS.items():
+    problems.extend(batch_problems(snapshot, phase, worker))
+  for token, (attempts, completions, worker) in snapshot["effects"].items():
+    if attempts != (2 if token.endswith(":retry") else 1) or completions != 1:
+      problems.append(
+        f"incorrect side effect: {token} ({attempts} attempts, {completions} completions)"
+      )
+  if not snapshot["live_completed"]:
+    problems.append("old producer made no live progress")
+  if snapshot["depth"] or Job.objects.filter(finished_at__isnull=True).exists():
+    problems.append("queue did not drain")
+  if Process.objects.exists():
+    problems.append("runtime process rows remain after shutdown")
+  if RecurringExecution.objects.count() != len(PHASE_WORKERS):
+    problems.append("expected one recurring reservation per phase")
+  with connection.cursor() as cursor:
+    cursor.execute(
+      "SELECT sqlite_version()" if connection.vendor == "sqlite" else "SELECT version()"
+    )
+    database_version = cursor.fetchone()[0]
+  return {"problems": problems, "status": snapshot, "database_version": database_version}
 
 
 def main(argv):
-  configure_logging()
-  args = parse_args(argv)
+  parser = argparse.ArgumentParser(description="Run one isolated upgrade-check process.")
+  parser.add_argument(
+    "command",
+    choices=(
+      "create-database",
+      "drop-database",
+      "migrate",
+      "compatibility",
+      "init",
+      "supervise",
+      "enqueue",
+      "produce",
+      "progress",
+      "verify",
+    ),
+  )
+  parser.add_argument("--phase", choices=tuple(PHASE_WORKERS))
+  parser.add_argument("--queue", choices=("x", "y"))
+  args = parser.parse_args(argv)
+  logging.basicConfig(level=logging.WARNING)
   if args.command == "create-database":
     create_database()
     return 0
@@ -753,37 +308,38 @@ def main(argv):
     drop_database()
     return 0
 
-  setup_django()
+  os.environ.setdefault("DJANGO_SETTINGS_MODULE", "prerelease_settings")
+  import django
+
+  django.setup()
+  result = None
   if args.command == "compatibility":
-    rollout_compatibility()
+    from dj_queue.runtime.base import ROLLOUT_PROTOCOL_VERSION
+
+    result = {
+      "dj_queue_version": version("dj-queue"),
+      "django_version": django.get_version(),
+      "rollout_protocol": ROLLOUT_PROTOCOL_VERSION,
+    }
   elif args.command == "migrate":
     migrate()
-  elif args.command == "seed":
-    seed_database(
-      jobs=args.jobs,
-      queues=args.queues,
-      semaphores=args.semaphores,
-      recurring_executions=args.recurring_executions,
-    )
+  elif args.command == "init":
+    create_control_tables()
   elif args.command == "supervise":
-    supervise(duration=args.duration)
-  elif args.command == "calibrate":
-    calibrate(run_id=args.run_id, jobs=args.jobs, timeout=args.timeout)
+    supervise()
+  elif args.command == "enqueue":
+    if args.phase is None or args.queue is None:
+      parser.error("enqueue requires --phase and --queue")
+    enqueue_batch(args.phase, args.queue)
   elif args.command == "produce":
-    produce(
-      run_id=args.run_id,
-      rate=args.rate,
-      run_started_at=args.run_started_at,
-      duration=args.duration,
-    )
-  elif args.command == "retry":
-    retry_expected_failures(interval=args.interval, duration=args.duration)
-  elif args.command == "stop-recurring":
-    stop_recurring(args.run_id)
-  elif args.command == "status":
-    print_json(queue_status_data(args.run_id))
+    produce()
+  elif args.command == "progress":
+    retry_expected_failures()
+    result = status()
   elif args.command == "verify":
-    verify(args.run_id)
+    result = verify()
+  if result is not None:
+    print(json.dumps(result, sort_keys=True), flush=True)
   return 0
 
 

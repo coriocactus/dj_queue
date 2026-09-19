@@ -2,7 +2,7 @@ import importlib
 import os
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-SECRET_KEY = "prerelease-load"
+SECRET_KEY = "prerelease-check"
 USE_TZ = True
 
 BACKEND = os.environ["PRERELEASE_BACKEND"]
@@ -59,8 +59,6 @@ MIDDLEWARE = []
 TEMPLATES = []
 DATABASE_ROUTERS = ["dj_queue.routers.DjQueueRouter"]
 
-WORKER_COUNT = int(os.environ.get("PRERELEASE_WORKERS", "2"))
-WORKER_THREADS = int(os.environ.get("PRERELEASE_THREADS", "4"))
 RUNTIME_LABEL = os.environ.get("PRERELEASE_RUNTIME_LABEL", "unknown")
 
 TASKS = {
@@ -71,12 +69,11 @@ TASKS = {
       "mode": "async",
       "workers": [
         {
-          "queues": "*",
-          "threads": WORKER_THREADS,
+          "queues": [RUNTIME_LABEL.lower(), "shared"],
+          "threads": 2,
           "processes": 1,
-          "polling_interval": 0.01,
+          "polling_interval": 0.05,
         }
-        for _index in range(WORKER_COUNT)
       ],
       "dispatchers": [
         {
@@ -93,7 +90,7 @@ TASKS = {
       "recurring": {},
       "process_heartbeat_interval": 1,
       "process_alive_threshold": 10,
-      "shutdown_timeout": 60,
+      "shutdown_timeout": 5,
       "preserve_finished_jobs": True,
       "clear_finished_jobs_after": None,
       "clear_failed_jobs_after": None,
