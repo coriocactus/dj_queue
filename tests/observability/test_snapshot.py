@@ -1,5 +1,6 @@
 from datetime import timedelta
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from django.utils import timezone
@@ -402,6 +403,33 @@ def test_deep_health_allows_unresolved_legacy_recurring_reservation():
   problems = observability.deep_health_problems(backend_alias="default")
 
   assert not any("recurring execution reservations have no job" in problem for problem in problems)
+
+
+@pytest.mark.parametrize(
+  ("identity", "backend_alias", "unhealthy"),
+  [
+    ("match", "default", False),
+    ("legacy", "default", False),
+    ("mismatch", "default", True),
+    ("mismatch", "other", False),
+  ],
+)
+def test_deep_health_checks_attached_recurring_identity(identity, backend_alias, unhealthy):
+  job = Job.objects.create(
+    task_path="tests.tasks.echo", backend_alias=backend_alias, finished_at=timezone.now()
+  )
+  intended_id = {"match": job.id, "legacy": None, "mismatch": uuid4()}[identity]
+  RecurringExecution.objects.create(
+    backend_alias=backend_alias,
+    task_key="identity",
+    run_at=timezone.now(),
+    intended_job_id=intended_id,
+    job=job,
+  )
+
+  problems = observability.deep_health_problems(backend_alias="default")
+
+  assert ("1 recurring execution rows have mismatched job identity" in problems) is unhealthy
 
 
 def test_configured_backend_aliases_ignore_non_dj_queue_backends(settings):

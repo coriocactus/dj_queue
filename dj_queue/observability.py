@@ -596,6 +596,17 @@ def deep_health_problems(
       f"{recurring_mismatched} recurring execution rows have mismatched backend ownership"
     )
 
+  recurring_identity_mismatched = (
+    RecurringExecution.objects.using(alias)
+    .filter(backend_alias=backend_alias, intended_job_id__isnull=False, job__isnull=False)
+    .exclude(intended_job_id=F("job_id"))
+    .count()
+  )
+  if recurring_identity_mismatched:
+    problems.append(
+      f"{recurring_identity_mismatched} recurring execution rows have mismatched job identity"
+    )
+
   bad_semaphores = (
     Semaphore.objects.using(alias)
     .filter(Q(limit__lt=1) | Q(active_count__lt=0) | Q(value__lt=0) | Q(value__gt=F("limit")))
