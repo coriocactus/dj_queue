@@ -2,6 +2,7 @@ import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from unittest.mock import Mock
 
 import pytest
 from django.db import connection, connections
@@ -413,6 +414,65 @@ def test_execute_failed_job_retries_terminal_deadlock_without_repeating_task(mon
   assert transition_calls == 2
   assert ClaimedExecution.objects.filter(job=job).exists() is False
   assert FailedExecution.objects.filter(job=job, message="expected").exists() is True
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("fails", [False, True])
+def test_terminal_transition_retries_real_lock_timeout_without_repeating_task(monkeypatch, fails):
+  if connection.vendor == "sqlite":
+    pytest.skip("requires row locks")
+  job = make_job(task_path="tests.tasks.fail" if fails else echo.module_path, args=["result"])
+  ClaimedExecution.objects.create(job=job)
+  call_task = Mock(wraps=job_operations._call_task)
+  monkeypatch.setattr(job_operations, "_call_task", call_task)
+  postgres = connection.vendor == "postgresql"
+  timeout_name = "lock_timeout" if postgres else "innodb_lock_wait_timeout"
+  with connection.cursor() as cursor:
+    cursor.execute("SHOW lock_timeout" if postgres else f"SELECT @@SESSION.{timeout_name}")
+    original_timeout = cursor.fetchone()[0]
+    cursor.execute(f"SET SESSION {timeout_name} = %s", ["100ms" if postgres else 1])
+
+  locker = connection.copy()
+  conflicts = []
+
+  def release_after_conflict(execute, sql, params, many, context):
+    try:
+      return execute(sql, params, many, context)
+    except OperationalError as error:
+      conflicts.append(error)
+      locker.rollback()
+      raise
+
+  try:
+    locker.set_autocommit(False)
+    with locker.cursor() as cursor:
+      cursor.execute(
+        "SELECT id FROM dj_queue_claimed_executions WHERE job_id = %s FOR UPDATE",
+        [Job._meta.pk.get_db_prep_value(job.id, locker)],
+      )
+      assert cursor.fetchone() is not None
+    with connection.execute_wrapper(release_after_conflict):
+      execute_claimed_job(job)
+  finally:
+    locker.close()
+    with connection.cursor() as cursor:
+      cursor.execute(f"SET SESSION {timeout_name} = %s", [original_timeout])
+
+  assert len(conflicts) == 1
+  if postgres:
+    assert conflicts[0].__cause__.sqlstate == "55P03"
+  else:
+    assert conflicts[0].args[0] == 1205
+  assert call_task.call_count == 1
+  assert not ClaimedExecution.objects.filter(job=job).exists()
+  job.refresh_from_db()
+  if fails:
+    assert job.finished_at is None
+    assert FailedExecution.objects.get(job=job).message == "result"
+  else:
+    assert job.finished_at is not None
+    assert job.return_value == "result"
+    assert not FailedExecution.objects.filter(job=job).exists()
 
 
 @pytest.mark.django_db
