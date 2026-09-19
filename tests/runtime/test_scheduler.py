@@ -326,7 +326,7 @@ def test_scheduler_persists_next_run_after_fire():
   scheduler.stop()
 
 
-def test_scheduler_enqueues_recurring_job_after_reservation_transaction(monkeypatch):
+def test_scheduler_enqueues_recurring_job_in_publication_transaction(monkeypatch):
   now = fixed_now()
   scheduler = build_scheduler(
     tasks_settings=scheduler_tasks_settings(
@@ -350,11 +350,13 @@ def test_scheduler_enqueues_recurring_job_after_reservation_transaction(monkeypa
 
   monkeypatch.setattr(recurring, "enqueue_job", enqueue_job)
 
-  fired_jobs = scheduler.poll_once(now=now)
+  try:
+    fired_jobs = scheduler.poll_once(now=now)
 
-  assert len(fired_jobs) == 1
-  assert in_atomic_blocks == [False]
-  scheduler.stop()
+    assert len(fired_jobs) == 1
+    assert in_atomic_blocks == [True]
+  finally:
+    scheduler.stop()
 
 
 def test_scheduler_recurring_reservation_uses_configured_skip_locked(monkeypatch):

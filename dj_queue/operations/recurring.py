@@ -343,21 +343,32 @@ def fire_recurring_task(recurring_task, run_at, *, backend_alias="default"):
   if reservation is None:
     return None
 
-  job = retry_transient_database_errors(
-    lambda: _enqueue_reserved_recurring_task(
-      reservation,
-      using=alias,
-      backend_alias=backend_alias,
-    )
-  )
   return retry_transient_database_errors(
-    lambda: _attach_reserved_recurring_job(
+    lambda: _publish_reserved_recurring_task(
       reservation,
-      job,
       using=alias,
       backend_alias=backend_alias,
     )
   )
+
+
+def _publish_reserved_recurring_task(reservation, *, using, backend_alias):
+  config = load_backend_config(backend_alias)
+  with transaction.atomic(using=using):
+    execution = locked_queryset(
+      RecurringExecution.objects.using(using).filter(
+        pk=reservation["execution_id"],
+        backend_alias=backend_alias,
+      ),
+      use_skip_locked=config.use_skip_locked,
+    ).first()
+    if execution is None or execution.job_id is not None:
+      return None
+
+    job = _enqueue_reserved_recurring_task(reservation, using=using, backend_alias=backend_alias)
+    return _attach_reserved_recurring_job(
+      reservation, job, using=using, backend_alias=backend_alias
+    )
 
 
 def _reserve_recurring_task(recurring_task, run_at, *, backend_alias):

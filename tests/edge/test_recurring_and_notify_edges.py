@@ -11,6 +11,8 @@ from dj_queue.api import unschedule_recurring_task
 from dj_queue.cron import latest_cron_run
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import Job, ReadyExecution, RecurringExecution, RecurringTask
+from dj_queue.operations import recurring
+from dj_queue.operations.jobs import claim_ready_jobs, execute_claimed_job
 from dj_queue.runtime.notify import (
   NoopWakeupBackend,
   NotifyWakeupBackend,
@@ -339,6 +341,75 @@ def test_recurring_enqueue_failure_leaves_reservation_recoverable(monkeypatch):
   assert [job.id for job in fired_jobs] == [intended_job_id]
   assert execution.job_id == intended_job_id
   scheduler.stop()
+
+
+def test_recurring_attachment_failure_rolls_back_job_and_notification(monkeypatch):
+  recurring_task = RecurringTask.objects.create(
+    backend_alias="default",
+    key="atomic-publication",
+    task_path="tests.tasks.echo",
+    payload={"args": ["once"], "kwargs": {}},
+    schedule="* * * * *",
+  )
+  run_at = fixed_now().replace(second=0, microsecond=0)
+  notifications = []
+  monkeypatch.setattr("dj_queue.wakeup.supports_listen_notify", lambda alias: True)
+  monkeypatch.setattr(
+    "dj_queue.runtime.notify.notify_ready_queues",
+    lambda *args, **kwargs: notifications.append(args),
+  )
+
+  def fail_attachment(*args, **kwargs):
+    raise RuntimeError("attachment interrupted")
+
+  with monkeypatch.context() as patch:
+    patch.setattr(recurring, "_attach_reserved_recurring_job", fail_attachment)
+    with pytest.raises(RuntimeError, match="attachment interrupted"):
+      recurring.fire_recurring_task(recurring_task, run_at)
+
+  reservation = RecurringExecution.objects.get(task_key=recurring_task.key)
+  assert reservation.job_id is None
+  assert Job.objects.exists() is False
+  assert ReadyExecution.objects.exists() is False
+  assert notifications == []
+
+  execution = recurring.fire_recurring_task(recurring_task, run_at)
+
+  assert execution.job_id == reservation.intended_job_id
+  assert Job.objects.count() == 1
+  assert len(notifications) == 1
+
+
+@pytest.mark.parametrize("preserve_finished_jobs", [False, True])
+def test_stale_recurring_reservation_does_not_replay_completed_job(
+  settings, monkeypatch, preserve_finished_jobs
+):
+  tasks_settings = scheduler_tasks_settings()
+  tasks_settings["default"]["OPTIONS"]["preserve_finished_jobs"] = preserve_finished_jobs
+  settings.TASKS = tasks_settings
+  recurring_task = RecurringTask.objects.create(
+    backend_alias="default",
+    key="stale-publication",
+    task_path="tests.tasks.echo",
+    payload={"args": ["once"], "kwargs": {}},
+    schedule="* * * * *",
+  )
+  run_at = fixed_now().replace(second=0, microsecond=0)
+  stale_reservation = recurring._reserve_recurring_task(
+    recurring_task, run_at, backend_alias="default"
+  )
+  execution = recurring.fire_recurring_task(recurring_task, run_at)
+  claimed_job = claim_ready_jobs(limit=1)[0]
+  assert claimed_job.job.id == execution.job_id
+  execute_claimed_job(claimed_job)
+
+  monkeypatch.setattr(
+    recurring, "_reserve_recurring_task", lambda *args, **kwargs: stale_reservation
+  )
+
+  assert recurring.fire_recurring_task(recurring_task, run_at) is None
+  assert ReadyExecution.objects.exists() is False
+  assert Job.objects.count() == int(preserve_finished_jobs)
 
 
 def test_complete_recurring_reservation_is_a_noop(monkeypatch):
