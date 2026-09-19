@@ -51,7 +51,6 @@ from dj_queue.operations._helpers import (
 from dj_queue.operations.claiming import ClaimedJob, claim_ready_jobs  # noqa: F401
 from dj_queue.operations.concurrency import (
   SlotHandoffMode,
-  claim_next_blocked_job,
   concurrency_settings,
   concurrency_settings_for_job,
   release_recovered_concurrency_slots,
@@ -75,12 +74,6 @@ class DispatchOutcome(StrEnum):
   @property
   def should_notify(self):
     return self is DispatchOutcome.READY
-
-
-@dataclass(frozen=True)
-class ExecutionOutcome:
-  job: Job
-  next_claimed_job: ClaimedJob | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -437,17 +430,6 @@ def execute_claimed_job(
   *,
   backend_alias: str = "default",
 ) -> Job:
-  while True:
-    outcome = _execute_claimed_job_once(job, backend_alias=backend_alias)
-    if not isinstance(outcome, ExecutionOutcome):
-      return outcome
-    if outcome.next_claimed_job is None:
-      return outcome.job
-    job = outcome.next_claimed_job
-    backend_alias = job.job.backend_alias
-
-
-def _execute_claimed_job_once(job, *, backend_alias="default"):
   claimed_job = None
   if isinstance(job, ClaimedJob):
     claimed_job = job
@@ -479,11 +461,8 @@ def _execute_claimed_job_once(job, *, backend_alias="default"):
       failure_kind="result_serialization",
     )
 
-  completion_job = (
-    claimed_job if claimed_job is not None and claimed_job.process_id is not None else job
-  )
   return _complete_claimed_job(
-    completion_job,
+    job,
     return_value,
     backend_alias=job.backend_alias,
     task=task,
@@ -502,7 +481,7 @@ def _call_task(task, claimed_job, job, args, kwargs):
 
 
 def _execution_failure_outcome(job, error, *, task, failure_kind):
-  failed_job = _fail_claimed_job(
+  return _fail_claimed_job(
     job,
     error,
     traceback_text=traceback.format_exc(),
@@ -510,18 +489,14 @@ def _execution_failure_outcome(job, error, *, task, failure_kind):
     task=task,
     failure_kind=failure_kind,
   )
-  return ExecutionOutcome(job=failed_job)
 
 
 def complete_claimed_job(job, return_value, *, backend_alias="default"):
-  return _complete_claimed_job(job, return_value, backend_alias=backend_alias).job
+  return _complete_claimed_job(job, return_value, backend_alias=backend_alias)
 
 
 def _complete_claimed_job(job, return_value, *, backend_alias="default", task=None):
   alias = get_database_alias(backend_alias)
-  claimed_job = job if isinstance(job, ClaimedJob) else None
-  process_id = claimed_job.process_id if claimed_job is not None else None
-  worker_ids = claimed_job.worker_ids if claimed_job is not None else ()
   if isinstance(job, ClaimedJob):
     job = job.job
   job = _resolve_claimed_job(job, alias=alias, backend_alias=backend_alias)
@@ -547,14 +522,9 @@ def _complete_claimed_job(job, return_value, *, backend_alias="default", task=No
         _ensure_no_other_execution_state(alias, job, ignored_models=(ClaimedExecution,))
         job.delete(using=alias)
 
-      return _release_concurrency_slot(
-        job,
-        task=task,
-        process_id=process_id,
-        worker_ids=worker_ids,
-      )
+      _release_concurrency_slot(job, task=task)
 
-  next_claimed_job = retry_transient_database_errors(complete_transition)
+  retry_transient_database_errors(complete_transition)
   if event_logging_enabled(backend_alias=backend_alias):
     log_event(
       "job.executed",
@@ -562,7 +532,7 @@ def _complete_claimed_job(job, return_value, *, backend_alias="default", task=No
       job_id=str(job.id),
       status="success",
     )
-  return ExecutionOutcome(job=job, next_claimed_job=next_claimed_job)
+  return job
 
 
 def fail_claimed_job(job, error, *, traceback_text="", backend_alias="default"):
@@ -1401,35 +1371,16 @@ def _dispatch_job(job, *, backend_alias, now=None, check_conflicts=True, task=No
   return dispatch_outcome
 
 
-def _release_concurrency_slot(job, *, task=None, process_id=None, worker_ids=()):
+def _release_concurrency_slot(job, *, task=None):
   if not job.concurrency_key:
-    return None
+    return
 
-  alias = get_database_alias(job.backend_alias)
   config = load_backend_config(job.backend_alias)
   try:
     limit, duration_seconds, _ = concurrency_settings_for_job(job, task=task)
   except DispatchPolicyError:
     limit = _semaphore_limit(job) or 1
     duration_seconds = config.default_concurrency_duration
-
-  if limit == 1 and process_id is not None:
-    handoff = claim_next_blocked_job(
-      job.concurrency_key,
-      limit=limit,
-      duration_seconds=duration_seconds,
-      process_id=process_id,
-      backend_alias=job.backend_alias,
-      use_skip_locked=config.use_skip_locked,
-    )
-    if handoff is not None:
-      handed_job = Job.objects.using(alias).get(pk=handoff.job_id, backend_alias=job.backend_alias)
-      return ClaimedJob(
-        job=handed_job,
-        claimed_at=handoff.claimed_at,
-        worker_ids=worker_ids,
-        process_id=process_id,
-      )
 
   if (
     unblock_next_blocked_job(
@@ -1442,7 +1393,7 @@ def _release_concurrency_slot(job, *, task=None, process_id=None, worker_ids=())
     )
     is not None
   ):
-    return None
+    return
 
   semaphore_release(
     job.concurrency_key,
@@ -1458,7 +1409,6 @@ def _release_concurrency_slot(job, *, task=None, process_id=None, worker_ids=())
     use_skip_locked=config.use_skip_locked,
     slot_handoff=SlotHandoffMode.CONSUME_RELEASED,
   )
-  return None
 
 
 def _semaphore_limit(job):

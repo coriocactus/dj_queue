@@ -20,7 +20,6 @@ from dj_queue.exceptions import DispatchPolicyError, EnqueueError
 from dj_queue.log import log_event
 from dj_queue.models import (
   BlockedExecution,
-  ClaimedExecution,
   FailedExecution,
   Job,
   Semaphore,
@@ -59,12 +58,6 @@ class BlockedJobRef:
   @property
   def pk(self):
     return self.id
-
-
-@dataclass(frozen=True, slots=True)
-class ClaimedHandoffRef:
-  job_id: object
-  claimed_at: object
 
 
 @dataclass(frozen=True, slots=True)
@@ -510,68 +503,6 @@ def unblock_next_blocked_job(
   return job_ref
 
 
-def claim_next_blocked_job(
-  key,
-  *,
-  limit,
-  duration_seconds,
-  process_id,
-  backend_alias="default",
-  use_skip_locked=True,
-):
-  if process_id is None or limit != 1:
-    return None
-
-  alias = get_database_alias(backend_alias)
-  now = timezone.now()
-  promoted_job_ref = None
-  claimed_ref = None
-
-  with _operation_atomic(alias):
-    blocked_slot = _consume_blocked_job_for_slot(
-      alias,
-      backend_alias=backend_alias,
-      key=key,
-      limit=limit,
-      duration_seconds=duration_seconds,
-      now=now,
-      use_skip_locked=use_skip_locked,
-      slot_handoff=SlotHandoffMode.RELEASE_CLAIMED,
-    )
-    if blocked_slot is None or not blocked_slot.slot_acquired:
-      return None
-
-    job_ref = blocked_slot.job
-    if _lock_active_pauses(alias, backend_alias, {job_ref.queue_name}):
-      _create_ready_execution_after_blocked_consume(
-        alias,
-        job=job_ref,
-        backend_alias=backend_alias,
-        queue_name=job_ref.queue_name,
-        priority=job_ref.priority,
-        ready_at=now,
-      )
-      promoted_job_ref = job_ref
-    else:
-      _create_claimed_execution_after_blocked_consume(
-        alias,
-        job=job_ref,
-        process_id=process_id,
-        claimed_at=now,
-      )
-      claimed_ref = ClaimedHandoffRef(job_id=job_ref.id, claimed_at=now)
-
-  if promoted_job_ref is not None:
-    log_event(
-      "job.unblocked",
-      backend_alias=backend_alias,
-      job_id=str(promoted_job_ref.id),
-      concurrency_key=key,
-    )
-    notify_ready_queues_on_commit((promoted_job_ref.queue_name,), backend_alias=backend_alias)
-  return claimed_ref
-
-
 def _consume_blocked_job_for_slot(
   alias,
   *,
@@ -726,15 +657,6 @@ def _create_ready_execution_after_blocked_consume(
   )
   if created != 1:
     raise EnqueueError(f"job {job.id} already has an execution-state row")
-
-
-def _create_claimed_execution_after_blocked_consume(alias, *, job, process_id, claimed_at):
-  _ensure_no_other_execution_state(alias, job, ignored_models=(BlockedExecution,))
-  ClaimedExecution.objects.using(alias).create(
-    job_id=job.id,
-    process_id=process_id,
-    created_at=claimed_at,
-  )
 
 
 def cleanup_expired_semaphores(*, batch_size=500, backend_alias="default"):

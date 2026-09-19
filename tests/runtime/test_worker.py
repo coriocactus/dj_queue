@@ -340,7 +340,7 @@ def test_worker_does_not_claim_after_stop_requested():
   worker.stop()
 
 
-def test_worker_direct_handoff_executes_next_blocked_job_without_repoll():
+def test_worker_promotes_next_blocked_job_for_next_poll():
   first = limited.enqueue(1, value="first")
   second = limited.enqueue(1, value="second")
   worker = make_worker(
@@ -354,15 +354,75 @@ def test_worker_direct_handoff_executes_next_blocked_job_without_repoll():
   )
   worker.start()
 
-  submitted_jobs = worker.poll_once()
+  try:
+    submitted_jobs = worker.poll_once()
 
-  assert [str(claimed_job.job.id) for claimed_job in submitted_jobs] == [first.id]
-  assert Job.objects.get(pk=first.id).return_value == "first"
-  assert Job.objects.get(pk=second.id).return_value == "second"
-  assert ReadyExecution.objects.filter(job_id__in=[first.id, second.id]).exists() is False
-  assert BlockedExecution.objects.filter(job_id__in=[first.id, second.id]).exists() is False
-  assert ClaimedExecution.objects.filter(job_id__in=[first.id, second.id]).exists() is False
-  worker.stop()
+    assert [str(claimed_job.job.id) for claimed_job in submitted_jobs] == [first.id]
+    assert Job.objects.get(pk=first.id).return_value == "first"
+    assert Job.objects.get(pk=second.id).finished_at is None
+    assert ReadyExecution.objects.filter(job_id=second.id).exists() is True
+    assert BlockedExecution.objects.filter(job_id=second.id).exists() is False
+    assert ClaimedExecution.objects.filter(job_id=second.id).exists() is False
+
+    submitted_jobs = worker.poll_once()
+
+    assert [str(claimed_job.job.id) for claimed_job in submitted_jobs] == [second.id]
+    assert Job.objects.get(pk=second.id).return_value == "second"
+  finally:
+    worker.stop()
+
+
+def test_worker_does_not_execute_waiter_outside_queue_selectors():
+  first = limited.using(queue_name="emails").enqueue(1, value="first")
+  second = limited.using(queue_name="reports").enqueue(1, value="second")
+  worker = make_worker(
+    config=WorkerConfig(
+      queues=("emails",),
+      threads=1,
+      processes=1,
+      polling_interval=0.1,
+      prefetch_multiplier=1,
+    )
+  )
+
+  try:
+    submitted_jobs = worker.poll_once()
+
+    assert [str(claimed_job.job.id) for claimed_job in submitted_jobs] == [first.id]
+    assert Job.objects.get(pk=first.id).return_value == "first"
+    assert Job.objects.get(pk=second.id).finished_at is None
+    assert ReadyExecution.objects.filter(job_id=second.id).exists() is True
+    assert worker.poll_once() == []
+  finally:
+    worker.stop()
+
+
+def test_worker_does_not_execute_blocked_waiter_after_stop_request(monkeypatch):
+  first = limited.enqueue(1, value="first")
+  second = limited.enqueue(1, value="second")
+  worker = make_worker()
+  from dj_queue.operations import jobs
+
+  original_call_task = jobs._call_task
+
+  def call_and_stop(*args, **kwargs):
+    result = original_call_task(*args, **kwargs)
+    worker.request_stop()
+    return result
+
+  monkeypatch.setattr(jobs, "_call_task", call_and_stop)
+
+  try:
+    submitted_jobs = worker.poll_once()
+
+    assert [str(claimed_job.job.id) for claimed_job in submitted_jobs] == [first.id]
+    assert worker.stop_requested()
+    assert Job.objects.get(pk=first.id).return_value == "first"
+    assert Job.objects.get(pk=second.id).finished_at is None
+    assert ReadyExecution.objects.filter(job_id=second.id).exists() is True
+    assert worker.poll_once() == []
+  finally:
+    worker.stop()
 
 
 def test_worker_executes_success_path():
