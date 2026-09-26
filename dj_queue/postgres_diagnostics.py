@@ -1,3 +1,6 @@
+from contextlib import nullcontext
+
+from django.db import connections, transaction
 from django.db.utils import DatabaseError
 from django.utils import timezone
 
@@ -61,14 +64,18 @@ def postgres_diagnostics_for_backend(*, backend_alias, max_age=None, now=None):
     max_age = load_backend_config(backend_alias).process_alive_threshold
 
   try:
-    return {
-      "queue_tables": postgres_queue_table_rows(backend_alias=backend_alias),
-      "xmin_activity": postgres_xmin_activity_rows(backend_alias=backend_alias),
-      "replication_slots": postgres_replication_slot_rows(backend_alias=backend_alias),
-      "prepared_transactions": postgres_prepared_transaction_rows(backend_alias=backend_alias),
-      "long_transaction_threshold_seconds": float(max_age),
-      "captured_at": now,
-    }
+    boundary = (
+      nullcontext() if connections[alias].get_autocommit() else transaction.atomic(using=alias)
+    )
+    with boundary:
+      return {
+        "queue_tables": postgres_queue_table_rows(backend_alias=backend_alias),
+        "xmin_activity": postgres_xmin_activity_rows(backend_alias=backend_alias),
+        "replication_slots": postgres_replication_slot_rows(backend_alias=backend_alias),
+        "prepared_transactions": postgres_prepared_transaction_rows(backend_alias=backend_alias),
+        "long_transaction_threshold_seconds": float(max_age),
+        "captured_at": now,
+      }
   except DatabaseError as error:
     return {"error": str(error), "captured_at": now}
 

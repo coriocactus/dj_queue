@@ -2,10 +2,11 @@ from importlib import import_module
 from types import SimpleNamespace
 
 import pytest
-from django.db import DatabaseError
+from django.db import DatabaseError, connections, transaction
 from django.utils import timezone
 
 from dj_queue import health, observability, postgres_diagnostics
+from dj_queue.models import Job
 from dj_queue.queue_state import empty_queue_state_summary
 
 pytestmark = pytest.mark.django_db
@@ -96,6 +97,36 @@ def test_old_transaction_alone_is_not_unhealthy(monkeypatch):
     },
   )
   assert observability.postgres_health_problems(backend_alias="default") == ()
+
+
+@pytest.mark.postgres
+@pytest.mark.django_db(transaction=True)
+def test_diagnostic_sql_failure_preserves_callers_transaction(monkeypatch):
+  def unavailable(**kwargs):
+    with connections["default"].cursor() as cursor:
+      cursor.execute("SELECT 1 / 0")
+
+  monkeypatch.setattr(postgres_diagnostics, "postgres_queue_table_rows", unavailable)
+  now = timezone.now()
+  with transaction.atomic():
+    job = Job.objects.create(
+      task_path="tests.tasks.echo", backend_alias="default", finished_at=now
+    )
+    payload = observability.stats_payload(now=now)
+    diagnostics = payload["backends"][0]["postgres_diagnostics"]
+    assert "division by zero" in diagnostics["error"]
+    assert diagnostics["captured_at"] == now
+    assert Job.objects.filter(pk=job.pk).exists()
+  assert Job.objects.filter(pk=job.pk).exists()
+
+
+@pytest.mark.postgres
+@pytest.mark.django_db(transaction=True)
+def test_autocommit_diagnostics_keep_four_query_budget(django_assert_num_queries):
+  connections["default"].ensure_connection()
+  with django_assert_num_queries(4):
+    diagnostics = postgres_diagnostics.postgres_diagnostics_for_backend(backend_alias="default")
+  assert "error" not in diagnostics
 
 
 @pytest.mark.postgres
