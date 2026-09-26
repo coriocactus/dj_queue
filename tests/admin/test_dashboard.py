@@ -584,7 +584,7 @@ def test_dashboard_recurring_timestamps_use_compact_format(admin_client):
   assert response.status_code == 200
   content = response.content.decode()
   assert timezone.localtime(now).strftime("%Y-%m-%d %H:%M:%S") in content
-  expected_next_run = timezone.localtime(dashboard._next_run_at(task.schedule, now)).strftime(
+  expected_next_run = timezone.localtime(dashboard.controls.next_run_at(task.schedule, now)).strftime(
     "%Y-%m-%d %H:%M:%S"
   )
   assert expected_next_run in content
@@ -1250,7 +1250,7 @@ def test_dashboard_queue_view_sorts_supported_fields_in_database(admin_client, m
   def fail_python_sort(**_kwargs):
     raise AssertionError("queue sort should stay in the database")
 
-  monkeypatch.setattr(dashboard, "_sort_rows_by_keys", fail_python_sort)
+  monkeypatch.setattr(dashboard.tables, "_sort_rows_by_keys", fail_python_sort)
 
   response = admin_client.get(
     reverse("admin:dj_queue_dashboard_queue", args=["alpha"]),

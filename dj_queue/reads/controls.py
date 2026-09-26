@@ -1,5 +1,6 @@
 from django.db.models import (
   Count,
+  DateTimeField,
   IntegerField,
   Max,
   OuterRef,
@@ -27,19 +28,39 @@ def recurring_rows_for_backend(*, backend_alias, now):
     .annotate(last_run_at=Max("run_at"))
   )
   return [
-    {
-      "key": task.key,
-      "task_path": task.task_path,
-      "queue_name": task.queue_name,
-      "schedule": task.schedule,
-      "static": task.static,
-      "last_run_at": last_runs.get(task.key),
-      "next_run_at": task.next_run_at or next_run_at(task.schedule, now),
-    }
+    recurring_row(task, now=now, last_run_at=last_runs.get(task.key))
     for task in RecurringTask.objects.using(alias)
     .filter(backend_alias=backend_alias)
     .order_by("key")
   ]
+
+
+def recurring_tasks_with_last_run(*, backend_alias):
+  alias = get_database_alias(backend_alias)
+  last_run_at = (
+    RecurringExecution.objects.using(alias)
+    .filter(backend_alias=backend_alias, task_key=OuterRef("key"))
+    .values("task_key")
+    .annotate(value=Max("run_at"))
+    .values("value")[:1]
+  )
+  return (
+    RecurringTask.objects.using(alias)
+    .filter(backend_alias=backend_alias)
+    .annotate(last_run_at=Subquery(last_run_at, output_field=DateTimeField()))
+  )
+
+
+def recurring_row(task, *, now, last_run_at):
+  return {
+    "key": task.key,
+    "task_path": task.task_path,
+    "queue_name": task.queue_name,
+    "schedule": task.schedule,
+    "static": task.static,
+    "last_run_at": last_run_at,
+    "next_run_at": task.next_run_at or next_run_at(task.schedule, now),
+  }
 
 
 def semaphore_rows_for_backend(*, backend_alias):
@@ -49,18 +70,29 @@ def semaphore_rows_for_backend(*, backend_alias):
     field_name="concurrency_key",
   )
   return [
-    {
-      "scope": "queue_database",
-      "queue_database_alias": alias,
-      "key": semaphore.key,
-      "active_count": semaphore.occupied_count,
-      "available_slots": semaphore.available_count,
-      "limit": semaphore.limit,
-      "blocked_waiters": waiters.get(semaphore.key, 0),
-      "expires_at": semaphore.expires_at,
-    }
+    semaphore_row(semaphore, alias=alias, blocked_waiters=waiters.get(semaphore.key, 0))
     for semaphore in Semaphore.objects.using(alias).order_by("key")
   ]
+
+
+def semaphores_with_waiter_counts(*, backend_alias):
+  alias = get_database_alias(backend_alias)
+  return Semaphore.objects.using(alias).annotate(
+    blocked_waiters=semaphore_blocked_waiter_count_expression(alias)
+  )
+
+
+def semaphore_row(semaphore, *, alias, blocked_waiters):
+  return {
+    "scope": "queue_database",
+    "queue_database_alias": alias,
+    "key": semaphore.key,
+    "active_count": semaphore.occupied_count,
+    "available_slots": semaphore.available_count,
+    "limit": semaphore.limit,
+    "blocked_waiters": blocked_waiters,
+    "expires_at": semaphore.expires_at,
+  }
 
 
 def semaphore_blocked_waiter_count_expression(alias):
