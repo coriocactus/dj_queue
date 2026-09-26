@@ -347,18 +347,18 @@ class HiddenSidebarAdminMixin:
     operation,
     success_message,
     error_message,
-    success_redirect,
-    error_redirect,
+    success_url,
+    error_url,
   ):
     try:
       result = operation()
     except ADMIN_ACTION_ERRORS as exc:
       self.message_user(request, f"{error_message}: {exc}", level=messages.ERROR)
-      return error_redirect()
+      return HttpResponseRedirect(error_url)
 
     message = success_message(result) if callable(success_message) else success_message
     self.message_user(request, message, level=messages.SUCCESS)
-    return success_redirect(result)
+    return HttpResponseRedirect(success_url)
 
   def _change_redirect(self, *, object_id, backend_alias):
     return HttpResponseRedirect(self._change_url(object_id=object_id, backend_alias=backend_alias))
@@ -638,92 +638,68 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     return tuple(actions)
 
   def handle_change_action(self, request, obj, action):
+    backend_alias = obj.backend_alias
+    object_url = self._change_url(object_id=obj.pk, backend_alias=backend_alias)
     if action == "run_now":
-      try:
-        _job, dispatch_outcome = dispatch_scheduled_job_now(
-          obj.pk, backend_alias=obj.backend_alias
-        )
-      except ADMIN_ACTION_ERRORS as exc:
-        self.message_user(request, f"Could not dispatch job now: {exc}", level=messages.ERROR)
-        return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
-
-      message = "Dispatched scheduled job for immediate execution"
-      if dispatch_outcome is DispatchOutcome.BLOCKED:
-        message = "Dispatched scheduled job immediately and it is now blocked"
-      if dispatch_outcome is DispatchOutcome.DISCARDED:
-        message = "Dispatched scheduled job immediately and it was discarded"
-      self.message_user(request, message, level=messages.SUCCESS)
-      return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
-
-    if action == "enqueue_copy_now":
-      try:
-        new_job = enqueue_job_again(obj.pk, backend_alias=obj.backend_alias, run_after=None)
-      except ADMIN_ACTION_ERRORS as exc:
-        self.message_user(request, f"Could not enqueue job: {exc}", level=messages.ERROR)
-        return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
-
-      self.message_user(
+      return self._run_change_operation(
         request,
-        format_html(
-          'Enqueued immediate copy <a href="{}">{}</a>.',
+        operation=lambda: dispatch_scheduled_job_now(obj.pk, backend_alias=backend_alias),
+        success_message=lambda result: {
+          DispatchOutcome.BLOCKED: "Dispatched scheduled job immediately and it is now blocked",
+          DispatchOutcome.DISCARDED: "Dispatched scheduled job immediately and it was discarded",
+        }.get(result[1], "Dispatched scheduled job for immediate execution"),
+        error_message="Could not dispatch job now",
+        success_url=object_url,
+        error_url=object_url,
+      )
+
+    if action in {"enqueue", "enqueue_copy_now"}:
+      immediate = action == "enqueue_copy_now"
+      options = {"run_after": None} if immediate else {}
+      label = "Enqueued immediate copy" if immediate else "Enqueued job"
+      return self._run_change_operation(
+        request,
+        operation=lambda: enqueue_job_again(obj.pk, backend_alias=backend_alias, **options),
+        success_message=lambda new_job: format_html(
+          '{} <a href="{}">{}</a>.',
+          label,
           self._change_url(object_id=new_job.pk, backend_alias=new_job.backend_alias),
           new_job.pk,
         ),
-        level=messages.SUCCESS,
+        error_message="Could not enqueue job",
+        success_url=object_url,
+        error_url=object_url,
       )
-      return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
-
-    if action == "enqueue":
-      try:
-        new_job = enqueue_job_again(obj.pk, backend_alias=obj.backend_alias)
-      except ADMIN_ACTION_ERRORS as exc:
-        self.message_user(request, f"Could not enqueue job: {exc}", level=messages.ERROR)
-        return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
-
-      self.message_user(
-        request,
-        format_html(
-          'Enqueued job <a href="{}">{}</a>.',
-          self._change_url(object_id=new_job.pk, backend_alias=new_job.backend_alias),
-          new_job.pk,
-        ),
-        level=messages.SUCCESS,
-      )
-      return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
 
     if obj.status != "failed":
       self.message_user(request, "This job is not failed", level=messages.ERROR)
-      return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
+      return HttpResponseRedirect(object_url)
 
     if action == "retry":
       return self._run_change_operation(
         request,
         operation=lambda: retry_failed_job(
-          obj.failed_execution.job_id, backend_alias=obj.backend_alias
+          obj.failed_execution.job_id, backend_alias=backend_alias
         ),
         success_message="Retried failed job",
         error_message="Could not retry failed job",
-        success_redirect=lambda _result: self._current_object_redirect(
-          obj, backend_alias=obj.backend_alias
-        ),
-        error_redirect=lambda: self._current_object_redirect(obj, backend_alias=obj.backend_alias),
+        success_url=object_url,
+        error_url=object_url,
       )
 
     if action == "discard":
       return self._run_change_operation(
         request,
         operation=lambda: discard_failed_job(
-          obj.failed_execution.job_id, backend_alias=obj.backend_alias
+          obj.failed_execution.job_id, backend_alias=backend_alias
         ),
         success_message="Discarded failed job",
         error_message="Could not discard failed job",
-        success_redirect=lambda _result: HttpResponseRedirect(
-          self._changelist_url(backend_alias=obj.backend_alias)
-        ),
-        error_redirect=lambda: self._current_object_redirect(obj, backend_alias=obj.backend_alias),
+        success_url=self._changelist_url(backend_alias=backend_alias),
+        error_url=object_url,
       )
 
-    return self._current_object_redirect(obj, backend_alias=obj.backend_alias)
+    return HttpResponseRedirect(object_url)
 
 
 @admin.register(FailedExecution)
@@ -750,9 +726,10 @@ class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   def retry_jobs(self, request, queryset):
     require_action_permission(request.user, "retry")
     try:
+      job_ids = list(queryset.values_list("job_id", flat=True))
       retried = retry_failed_jobs(
-        job_ids=list(queryset.values_list("job_id", flat=True)),
-        batch_size=queryset.count() or 1,
+        job_ids=job_ids,
+        batch_size=max(len(job_ids), 1),
         backend_alias=self._backend_alias(request),
       )
     except ADMIN_ACTION_ERRORS as exc:
@@ -805,10 +782,8 @@ class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
         operation=lambda: retry_failed_job(job_id, backend_alias=backend_alias),
         success_message="Retried failed job",
         error_message="Could not retry failed job",
-        success_redirect=lambda _result: HttpResponseRedirect(
-          f"{reverse('admin:dj_queue_job_change', args=[job_id])}?{urlencode({'backend': backend_alias})}"
-        ),
-        error_redirect=lambda: self._current_object_redirect(obj, backend_alias=backend_alias),
+        success_url=f"{reverse('admin:dj_queue_job_change', args=[job_id])}?{urlencode({'backend': backend_alias})}",
+        error_url=self._change_url(object_id=obj.pk, backend_alias=backend_alias),
       )
 
     if action == "discard":
@@ -817,10 +792,8 @@ class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
         operation=lambda: discard_failed_job(obj.job_id, backend_alias=backend_alias),
         success_message="Discarded failed job",
         error_message="Could not discard failed job",
-        success_redirect=lambda _result: HttpResponseRedirect(
-          self._changelist_url(backend_alias=backend_alias)
-        ),
-        error_redirect=lambda: self._current_object_redirect(obj, backend_alias=backend_alias),
+        success_url=self._changelist_url(backend_alias=backend_alias),
+        error_url=self._change_url(object_id=obj.pk, backend_alias=backend_alias),
       )
 
     return self._current_object_redirect(obj, backend_alias=backend_alias)
@@ -972,21 +945,18 @@ class PauseAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   def handle_change_action(self, request, obj, action):
     backend_alias = self._backend_alias(request)
     if action == "resume":
-      try:
-        QueueInfo(obj.queue_name, backend_alias=backend_alias).resume()
-      except ADMIN_ACTION_ERRORS as exc:
-        self.message_user(request, f"Could not resume queue: {exc}", level=messages.ERROR)
-        return self._current_object_redirect(obj, backend_alias=backend_alias)
-      self.message_user(
+      return self._run_change_operation(
         request,
-        format_html(
+        operation=lambda: QueueInfo(obj.queue_name, backend_alias=backend_alias).resume(),
+        success_message=lambda _result: format_html(
           'Resumed queue <a href="{}">{}</a>',
           f"{reverse('admin:dj_queue_dashboard_queue', args=[obj.queue_name])}?{urlencode({'backend': backend_alias})}",
           obj.queue_name,
         ),
-        level=messages.SUCCESS,
+        error_message="Could not resume queue",
+        success_url=self._changelist_url(backend_alias=backend_alias),
+        error_url=self._change_url(object_id=obj.pk, backend_alias=backend_alias),
       )
-      return HttpResponseRedirect(self._changelist_url(backend_alias=backend_alias))
 
     return self._current_object_redirect(obj, backend_alias=backend_alias)
 

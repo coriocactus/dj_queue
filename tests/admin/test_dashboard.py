@@ -584,9 +584,9 @@ def test_dashboard_recurring_timestamps_use_compact_format(admin_client):
   assert response.status_code == 200
   content = response.content.decode()
   assert timezone.localtime(now).strftime("%Y-%m-%d %H:%M:%S") in content
-  expected_next_run = timezone.localtime(dashboard.controls.next_run_at(task.schedule, now)).strftime(
-    "%Y-%m-%d %H:%M:%S"
-  )
+  expected_next_run = timezone.localtime(
+    dashboard.controls.next_run_at(task.schedule, now)
+  ).strftime("%Y-%m-%d %H:%M:%S")
   assert expected_next_run in content
   assert "a.m." not in content
   assert "p.m." not in content
