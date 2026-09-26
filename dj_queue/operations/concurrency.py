@@ -710,54 +710,60 @@ def promote_expired_blocked_jobs(
   alias = get_database_alias(backend_alias, config=config)
   if use_skip_locked is None:
     use_skip_locked = resolve_backend_config(backend_alias, config).use_skip_locked
-  now = timezone.now()
-  promoted_jobs = []
-  policy_failures = []
-  task_settings = {}
   uses_serialized_writes = database_capabilities(alias).uses_serialized_writes
 
-  with transaction.atomic(using=alias):
-    queryset = (
-      BlockedExecution.objects.using(alias)
-      .select_related("job")
-      .filter(backend_alias=backend_alias, expires_at__lte=now)
-      .order_by("expires_at", "-priority", "id")
-    )
-    blocked_rows = list(locked_queryset(queryset, use_skip_locked=use_skip_locked)[:batch_size])
-    if not blocked_rows:
-      return []
-    _ensure_state_rows_belong_to_backend(blocked_rows, backend_alias)
-    if uses_serialized_writes:
-      blocked_rows = _consume_selected_rows(alias, BlockedExecution, blocked_rows)
+  def promote_transition():
+    now = timezone.now()
+    promoted_jobs = []
+    policy_failures = []
+    task_settings = {}
+    with transaction.atomic(using=alias):
+      queryset = (
+        BlockedExecution.objects.using(alias)
+        .select_related("job")
+        .filter(backend_alias=backend_alias, expires_at__lte=now)
+        .order_by("expires_at", "-priority", "id")
+      )
+      blocked_rows = list(locked_queryset(queryset, use_skip_locked=use_skip_locked)[:batch_size])
       if not blocked_rows:
-        return []
+        return [], []
+      _ensure_state_rows_belong_to_backend(blocked_rows, backend_alias)
+      if uses_serialized_writes:
+        blocked_rows = _consume_selected_rows(alias, BlockedExecution, blocked_rows)
+        if not blocked_rows:
+          return [], []
 
-    for blocked in blocked_rows:
-      job = blocked.job
-      try:
-        limit, duration_seconds = _blocked_concurrency_settings(job, task_settings, config=config)
-      except DispatchPolicyError as error:
-        if _fail_blocked_policy(alias, blocked, error, consumed=uses_serialized_writes):
-          policy_failures.append((job, error))
-        continue
+      for blocked in blocked_rows:
+        job = blocked.job
+        try:
+          limit, duration_seconds = _blocked_concurrency_settings(
+            job, task_settings, config=config
+          )
+        except DispatchPolicyError as error:
+          if _fail_blocked_policy(alias, blocked, error, consumed=uses_serialized_writes):
+            policy_failures.append((job, error))
+          continue
 
-      if not semaphore_acquire(
-        blocked.concurrency_key,
-        limit=limit,
-        duration_seconds=duration_seconds,
-        backend_alias=backend_alias,
-        config=config,
-      ):
-        _renew_blocked_execution(
-          alias,
-          blocked,
-          expires_at=now + timedelta(seconds=duration_seconds),
-          consumed=uses_serialized_writes,
-        )
-        continue
+        if not semaphore_acquire(
+          blocked.concurrency_key,
+          limit=limit,
+          duration_seconds=duration_seconds,
+          backend_alias=backend_alias,
+          config=config,
+        ):
+          _renew_blocked_execution(
+            alias,
+            blocked,
+            expires_at=now + timedelta(seconds=duration_seconds),
+            consumed=uses_serialized_writes,
+          )
+          continue
 
-      _promote_blocked_execution(alias, blocked, ready_at=now, consumed=uses_serialized_writes)
-      promoted_jobs.append(job)
+        _promote_blocked_execution(alias, blocked, ready_at=now, consumed=uses_serialized_writes)
+        promoted_jobs.append(job)
+    return promoted_jobs, policy_failures
+
+  promoted_jobs, policy_failures = retry_transient_database_errors(promote_transition, using=alias)
 
   for job in promoted_jobs:
     log_event(
