@@ -1,4 +1,5 @@
 <div class="{{ controls_class|default:'djq-queue-controls' }}">
+  {% if paused and perms.dj_queue.delete_pause or not paused and perms.dj_queue.add_pause %}
   <form method="post" action="{% url 'admin:dj_queue_dashboard_queue_action' queue_name %}">
     {% csrf_token %}
     <input type="hidden" name="backend" value="{{ backend_alias }}">
@@ -6,7 +7,8 @@
     <input type="hidden" name="action" value="{% if paused %}resume{% else %}pause{% endif %}">
     <button type="submit" class="{% if paused %}{{ pause_toggle_resume_class }}{% else %}{{ pause_toggle_pause_class }}{% endif %}">{% if paused %}resume{% else %}pause{% endif %}</button>
   </form>
-  {% if show_clear %}
+  {% endif %}
+  {% if show_clear and perms.dj_queue.delete_job %}
     <form method="post" action="{% url 'admin:dj_queue_dashboard_queue_action' queue_name %}">
       {% csrf_token %}
       <input type="hidden" name="backend" value="{{ backend_alias }}">

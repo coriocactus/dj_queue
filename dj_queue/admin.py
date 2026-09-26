@@ -11,6 +11,11 @@ from django.utils.html import format_html
 from django.utils.http import url_has_allowed_host_and_scheme
 
 from dj_queue import dashboard, dashboard_actions, observability
+from dj_queue.admin_permissions import (
+  has_action_permission,
+  permitted_actions,
+  require_action_permission,
+)
 from dj_queue.api import QueueInfo, unschedule_recurring_task
 from dj_queue.db import get_database_alias
 from dj_queue.exceptions import EnqueueError
@@ -26,6 +31,7 @@ from dj_queue.models import (
 from dj_queue.operations.jobs import (
   DispatchOutcome,
   discard_failed_job,
+  discard_failed_jobs,
   dispatch_scheduled_job_now,
   enqueue_job_again,
   retry_failed_job,
@@ -160,7 +166,9 @@ class DashboardAdmin(admin.ModelAdmin):
     context = {
       **self.admin_site.each_context(request),
       **queue_context,
-      "job_actions": dashboard_actions.job_actions_for_state(state),
+      "job_actions": permitted_actions(
+        request.user, dashboard_actions.job_actions_for_state(state)
+      ),
       "title": "dj_queue",
       "subtitle": queue_name,
     }
@@ -198,6 +206,9 @@ class DashboardAdmin(admin.ModelAdmin):
   def _post_action_response(self, request, operation, fallback_url):
     if request.method != "POST":
       return HttpResponseNotAllowed(["POST"])
+    action = request.POST.get("action")
+    if action:
+      require_action_permission(request.user, action)
     try:
       message = operation()
     except ADMIN_POST_ACTION_ERRORS as exc:
@@ -243,13 +254,14 @@ class HiddenSidebarAdminMixin:
     if request.method == "POST":
       action = request.POST.get("_djq_object_action")
       if action and obj is not None:
+        require_action_permission(request.user, action)
         return self.handle_change_action(request, obj, action)
 
     extra_context = {
       **(extra_context or {}),
       "dashboard_url": self._dashboard_url(request),
       "changelist_url": self._changelist_url(backend_alias=self._backend_alias(request)),
-      "change_actions": self.get_change_actions(request, obj),
+      "change_actions": permitted_actions(request.user, self.get_change_actions(request, obj)),
     }
     return super().changeform_view(
       request,
@@ -727,8 +739,15 @@ class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   readonly_fields = ("job", "exception_class", "message", "traceback", "retry_at", "created_at")
   search_fields = ("job__id", "job__task_path", "message", "exception_class")
 
-  @admin.action(description="Retry selected failed jobs")
+  def has_retry_jobs_permission(self, request):
+    return has_action_permission(request.user, "retry")
+
+  def has_discard_jobs_permission(self, request):
+    return has_action_permission(request.user, "discard")
+
+  @admin.action(description="Retry selected failed jobs", permissions=["retry_jobs"])
   def retry_jobs(self, request, queryset):
+    require_action_permission(request.user, "retry")
     try:
       retried = retry_failed_jobs(
         job_ids=list(queryset.values_list("job_id", flat=True)),
@@ -740,14 +759,16 @@ class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
       return
     self.message_user(request, f"Retried {retried} failed jobs", level=messages.SUCCESS)
 
-  @admin.action(description="Discard selected failed jobs")
+  @admin.action(description="Discard selected failed jobs", permissions=["discard_jobs"])
   def discard_jobs(self, request, queryset):
+    require_action_permission(request.user, "discard")
     try:
-      discarded = 0
-      for execution in queryset.select_related("job"):
-        discarded += discard_failed_job(
-          execution.job_id, backend_alias=execution.job.backend_alias
-        )
+      job_ids = list(queryset.values_list("job_id", flat=True))
+      discarded = discard_failed_jobs(
+        job_ids=job_ids,
+        batch_size=max(len(job_ids), 1),
+        backend_alias=self._backend_alias(request),
+      )
     except ADMIN_ACTION_ERRORS as exc:
       self.message_user(request, f"Could not discard failed jobs: {exc}", level=messages.ERROR)
       return
@@ -868,8 +889,14 @@ class RecurringTaskAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   )
   search_fields = ("key", "task_path", "queue_name")
 
-  @admin.action(description="Unschedule selected recurring tasks")
+  def has_unschedule_tasks_permission(self, request):
+    return has_action_permission(request.user, "unschedule")
+
+  @admin.action(
+    description="Unschedule selected recurring tasks", permissions=["unschedule_tasks"]
+  )
   def unschedule_tasks(self, request, queryset):
+    require_action_permission(request.user, "unschedule")
     backend_alias = self._backend_alias(request)
     unscheduled = 0
     static_failures = 0

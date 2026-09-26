@@ -21,6 +21,12 @@ QUEUE_JOB_ACTIONS = {
   "finished": ({"name": "enqueue", "label": "enqueue selected again"},),
   "invalid": (),
 }
+DISCARD_OPERATIONS = {
+  "ready": discard_ready_jobs,
+  "scheduled": discard_scheduled_jobs,
+  "blocked": discard_blocked_jobs,
+  "failed": discard_failed_jobs,
+}
 
 
 def apply_queue_action(*, backend_alias, queue_name, action):
@@ -40,101 +46,26 @@ def apply_queue_action(*, backend_alias, queue_name, action):
 def apply_job_action(*, backend_alias, queue_name, state, action, job_ids):
   if not action:
     raise ValueError("No action selected.")
-
   if not job_ids:
     raise ValueError("select at least one job")
+  if action not in {entry["name"] for entry in QUEUE_JOB_ACTIONS.get(state, ())}:
+    raise ValueError(f"unsupported {state!r} job action {action!r}")
 
-  if state == "ready" and action == "discard":
-    job_ids = _queue_scoped_job_ids(
-      backend_alias=backend_alias,
-      queue_name=queue_name,
-      state=state,
-      job_ids=job_ids,
-    )
-    deleted = discard_ready_jobs(
-      job_ids=job_ids,
-      batch_size=max(len(job_ids), 1),
-      backend_alias=backend_alias,
-    )
-    return f"discarded {deleted} ready jobs from {queue_name}"
-
-  if state == "scheduled" and action == "discard":
-    job_ids = _queue_scoped_job_ids(
-      backend_alias=backend_alias,
-      queue_name=queue_name,
-      state=state,
-      job_ids=job_ids,
-    )
-    deleted = discard_scheduled_jobs(
-      job_ids=job_ids,
-      batch_size=max(len(job_ids), 1),
-      backend_alias=backend_alias,
-    )
-    return f"discarded {deleted} scheduled jobs from {queue_name}"
-
-  if state == "blocked" and action == "discard":
-    job_ids = _queue_scoped_job_ids(
-      backend_alias=backend_alias,
-      queue_name=queue_name,
-      state=state,
-      job_ids=job_ids,
-    )
-    deleted = discard_blocked_jobs(
-      job_ids=job_ids,
-      batch_size=max(len(job_ids), 1),
-      backend_alias=backend_alias,
-    )
-    return f"discarded {deleted} blocked jobs from {queue_name}"
-
-  if state == "failed" and action == "retry":
-    job_ids = _queue_scoped_job_ids(
-      backend_alias=backend_alias,
-      queue_name=queue_name,
-      state=state,
-      job_ids=job_ids,
-    )
-    retried = retry_failed_jobs(
-      job_ids=job_ids,
-      batch_size=max(len(job_ids), 1),
-      backend_alias=backend_alias,
-    )
-    return f"retried {retried} failed jobs from {queue_name}"
-
-  if state == "failed" and action == "discard":
-    job_ids = _queue_scoped_job_ids(
-      backend_alias=backend_alias,
-      queue_name=queue_name,
-      state=state,
-      job_ids=job_ids,
-    )
-    discarded = discard_failed_jobs(
-      job_ids=job_ids,
-      batch_size=max(len(job_ids), 1),
-      backend_alias=backend_alias,
-    )
-    return f"discarded {discarded} failed jobs from {queue_name}"
-
-  if state == "finished" and action == "enqueue":
-    job_ids = _queue_scoped_job_ids(
-      backend_alias=backend_alias,
-      queue_name=queue_name,
-      state=state,
-      job_ids=job_ids,
-    )
-    for job_id in job_ids:
-      enqueue_job_again(job_id, backend_alias=backend_alias)
-    return f"enqueued {len(job_ids)} finished jobs again from {queue_name}"
-
-  raise ValueError(f"unsupported {state!r} job action {action!r}")
-
-
-def job_actions_for_state(state):
-  return QUEUE_JOB_ACTIONS[state]
-
-
-def _queue_scoped_job_ids(*, backend_alias, queue_name, state, job_ids):
-  return list(
+  job_ids = list(
     queue_state_queryset(backend_alias=backend_alias, queue_name=queue_name, state=state)
     .filter(pk__in=job_ids)
     .values_list("pk", flat=True)
   )
+  if action == "enqueue":
+    for job_id in job_ids:
+      enqueue_job_again(job_id, backend_alias=backend_alias)
+    return f"enqueued {len(job_ids)} finished jobs again from {queue_name}"
+
+  operation = retry_failed_jobs if action == "retry" else DISCARD_OPERATIONS[state]
+  count = operation(job_ids=job_ids, batch_size=max(len(job_ids), 1), backend_alias=backend_alias)
+  verb = "retried" if action == "retry" else "discarded"
+  return f"{verb} {count} {state} jobs from {queue_name}"
+
+
+def job_actions_for_state(state):
+  return QUEUE_JOB_ACTIONS[state]
