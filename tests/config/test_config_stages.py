@@ -86,6 +86,13 @@ def test_failed_validation_is_not_cached(tmp_path):
   assert load_backend_config(tasks_settings={}, env=env).shutdown_timeout == 2
 
 
+def test_invalid_scalar_is_reported_before_empty_topology():
+  tasks = backend_settings({"workers": [], "dispatchers": [], "shutdown_timeout": -1})
+
+  with pytest.raises(ImproperlyConfigured, match="shutdown_timeout"):
+    load_backend_config(tasks_settings=tasks, cli_overrides={"skip_recurring": True}, env={})
+
+
 def test_scheduler_only_and_empty_topology():
   tasks = backend_settings({"workers": [], "dispatchers": [], "clear_failed_jobs_after": 0})
   config = load_backend_config(tasks_settings=tasks, env={})
