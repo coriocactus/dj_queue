@@ -100,7 +100,11 @@ def queue_cursor(backend_alias: str = "default") -> Iterator:
     yield cursor
 
 
-def retry_transient_database_errors(operation):
+def retry_transient_database_errors(operation, *, using=DEFAULT_DB_ALIAS):
+  """Retry complete transactions, never work inside a caller-owned one."""
+  connection = connections[using]
+  if connection.in_atomic_block or not connection.get_autocommit():
+    return operation()
   for attempt in range(TRANSIENT_DATABASE_RETRY_ATTEMPTS):
     try:
       return operation()

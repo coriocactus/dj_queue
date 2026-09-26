@@ -142,7 +142,7 @@ def _complete_claimed_job(job, return_value, *, backend_alias="default", task=No
       release_concurrency_slot(job, task=task, config=config)
     return completed
 
-  completed = retry_transient_database_errors(complete_transition)
+  completed = retry_transient_database_errors(complete_transition, using=alias)
   if event_logging_enabled(backend_alias=backend_alias):
     log_event(
       "job.executed",
@@ -191,7 +191,7 @@ def _fail_claimed_job(
 
       release_concurrency_slot(job, task=task, config=config)
 
-  retry_transient_database_errors(fail_transition)
+  retry_transient_database_errors(fail_transition, using=alias)
   if event_logging_enabled(backend_alias=backend_alias):
     log_event(
       "job.failed",

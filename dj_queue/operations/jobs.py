@@ -156,7 +156,7 @@ def promote_scheduled_jobs(
     return promoted_jobs, ready_queue_names, policy_failures
 
   promoted_jobs, ready_queue_names, policy_failures = retry_transient_database_errors(
-    promote_transition
+    promote_transition, using=alias
   )
 
   if ready_queue_names:
@@ -250,7 +250,7 @@ def retry_failed_job(job_id: UUID | str, *, backend_alias: str = "default", conf
       )
       return jobs[0], ready_queue_names
 
-  job, ready_queue_names = retry_transient_database_errors(retry_transition)
+  job, ready_queue_names = retry_transient_database_errors(retry_transition, using=alias)
 
   if ready_queue_names:
     notify_ready_queues_on_commit(
@@ -303,7 +303,9 @@ def retry_failed_jobs(
         config=config,
       )
 
-  jobs, ready_queue_names, policy_failures = retry_transient_database_errors(retry_transition)
+  jobs, ready_queue_names, policy_failures = retry_transient_database_errors(
+    retry_transition, using=alias
+  )
 
   if ready_queue_names:
     notify_ready_queues_on_commit(
@@ -353,7 +355,9 @@ def promote_failed_job_retries(
         config=config,
       )
 
-  jobs, ready_queue_names, policy_failures = retry_transient_database_errors(promote_transition)
+  jobs, ready_queue_names, policy_failures = retry_transient_database_errors(
+    promote_transition, using=alias
+  )
 
   if ready_queue_names:
     notify_ready_queues_on_commit(

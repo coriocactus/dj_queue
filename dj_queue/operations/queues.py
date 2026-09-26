@@ -61,6 +61,6 @@ def resume_queue(queue_name, *, backend_alias="default", resumed_at=None, config
         output_field=DateTimeField(),
       ),
     )
-    pause.delete()
+    pause.delete(using=alias)
   log_event("queue.resumed", backend_alias=backend_alias, queue_name=queue_name)
   return True

@@ -273,7 +273,7 @@ def test_enqueue_future_uses_scheduled_path():
   assert ReadyExecution.objects.exists() is False
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_enqueue_retries_transient_database_deadlock(monkeypatch):
   import dj_queue.operations.enqueue as job_operations
 
@@ -330,7 +330,7 @@ def test_enqueue_bulk_immediate_query_budget_stays_batch_sized():
   assert ReadyExecution.objects.count() == 100
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_enqueue_bulk_retries_transient_database_deadlock(monkeypatch):
   import dj_queue.operations.enqueue as job_operations
 
@@ -357,7 +357,7 @@ def test_enqueue_bulk_retries_transient_database_deadlock(monkeypatch):
   assert ReadyExecution.objects.filter(job_id__in=[result.id for result in results]).count() == 3
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_enqueue_bulk_mixed_retries_transient_database_deadlock(monkeypatch):
   import dj_queue.operations.enqueue as job_operations
 

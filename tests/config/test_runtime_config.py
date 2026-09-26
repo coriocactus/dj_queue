@@ -7,8 +7,9 @@ from django.utils import timezone
 
 from dj_queue.config import load_backend_config
 from dj_queue.management.commands.dj_queue import build_supervisor
-from dj_queue.models import Job, Process, ReadyExecution, ScheduledExecution, Semaphore
+from dj_queue.models import Job, Pause, Process, ReadyExecution, ScheduledExecution, Semaphore
 from dj_queue.operations.jobs import enqueue_job
+from dj_queue.operations.queues import pause_queue, resume_queue
 from tests.config.test_queue_db_runtime import (
   _dj_queue_tables,
   _queue_tasks,
@@ -43,8 +44,9 @@ polling_interval = 0.01
   supervisor = build_supervisor(backend_alias="default", cli_overrides={"config": str(path)})
   supervisor.standalone = False
 
-  with django_db_blocker.unblock(), override_settings(DATABASE_ROUTERS=[]):
-    call_command("migrate", "dj_queue", database="queue", verbosity=0)
+  with django_db_blocker.unblock():
+    with override_settings(DATABASE_ROUTERS=[]):
+      call_command("migrate", "dj_queue", database="queue", verbosity=0)
     now = timezone.now()
     for value in ("first", "second"):
       job = Job.objects.using("queue").create(
@@ -92,11 +94,18 @@ def test_explicit_config_does_not_change_other_callers(
   path = tmp_path / "queue.toml"
   path.write_text('database_alias = "queue"\n')
   config = load_backend_config(cli_overrides={"config": str(path)})
-  with django_db_blocker.unblock(), override_settings(DATABASE_ROUTERS=[]):
-    for alias in ("default", "queue"):
-      call_command("migrate", "dj_queue", database=alias, verbosity=0)
+  with django_db_blocker.unblock():
+    with override_settings(DATABASE_ROUTERS=[]):
+      for alias in ("default", "queue"):
+        call_command("migrate", "dj_queue", database=alias, verbosity=0)
     explicit = enqueue_job(limited, [1], {}, config=config)
     ordinary = enqueue_job(limited, [2], {})
     assert ReadyExecution.objects.using("queue").filter(job_id=explicit.pk).exists()
     assert ReadyExecution.objects.using("default").filter(job_id=ordinary.pk).exists()
     assert load_backend_config().database_alias == "default"
+
+    pause_queue("default")
+    pause_queue("default", config=config)
+    assert resume_queue("default", config=config) is True
+    assert not Pause.objects.using("queue").exists()
+    assert Pause.objects.using("default").exists()

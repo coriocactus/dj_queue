@@ -348,7 +348,8 @@ def fire_recurring_task(recurring_task, run_at, *, backend_alias="default", conf
   reservation = retry_transient_database_errors(
     lambda: _reserve_recurring_task(
       recurring_task, run_at, backend_alias=backend_alias, config=config
-    )
+    ),
+    using=alias,
   )
   if reservation is None:
     return None
@@ -359,7 +360,8 @@ def fire_recurring_task(recurring_task, run_at, *, backend_alias="default", conf
       using=alias,
       backend_alias=backend_alias,
       config=config,
-    )
+    ),
+    using=alias,
   )
 
 

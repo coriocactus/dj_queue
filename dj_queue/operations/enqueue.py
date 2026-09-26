@@ -88,7 +88,7 @@ def enqueue_job_with_dispatch(
       )
       return job, dispatch_outcome
 
-  job, dispatch_outcome = retry_transient_database_errors(enqueue_transition)
+  job, dispatch_outcome = retry_transient_database_errors(enqueue_transition, using=alias)
 
   if dispatch_outcome.should_notify:
     notify_ready_queues_on_commit((job.queue_name,), backend_alias=backend_alias, config=config)
@@ -146,7 +146,8 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True, con
   prepared, ready_queue_names = retry_transient_database_errors(
     lambda: _enqueue_bulk_once(
       submissions, alias=alias, backend_alias=backend_alias, config=config
-    )
+    ),
+    using=alias,
   )
   notify_ready_queues_on_commit(ready_queue_names, backend_alias=backend_alias, config=config)
   _log_bulk_enqueued((entry.outcome for entry in prepared), backend_alias=backend_alias)

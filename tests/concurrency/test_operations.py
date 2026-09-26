@@ -341,7 +341,7 @@ def test_execute_claimed_job_uses_terminal_update_query_budget():
   assert len(ctx.captured_queries) == expected_queries
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_execute_claimed_job_retries_terminal_deadlock_without_repeating_task(monkeypatch):
   job = make_job(args=["done"])
   ReadyExecution.objects.create(
@@ -379,7 +379,7 @@ def test_execute_claimed_job_retries_terminal_deadlock_without_repeating_task(mo
   assert Job.objects.get(pk=job.id).return_value == "done"
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_execute_failed_job_retries_terminal_deadlock_without_repeating_task(monkeypatch):
   job = make_job(task_path="tests.tasks.fail", args=["expected"])
   ReadyExecution.objects.create(
@@ -690,7 +690,7 @@ def test_concurrent_failed_retry_promotion_consumes_each_due_row_once():
   assert ReadyExecution.objects.filter(job__in=jobs).count() == len(jobs)
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_retry_failed_jobs_retries_transient_database_deadlock(monkeypatch):
   job = make_job(args=["retry"])
   FailedExecution.objects.create(
@@ -1793,7 +1793,7 @@ def test_promote_scheduled_jobs_rejects_job_with_conflicting_execution_state():
     promote_scheduled_jobs(batch_size=10)
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_promote_scheduled_jobs_retries_transient_database_deadlock(monkeypatch):
   job = make_job(scheduled_at=timezone.now() - timedelta(seconds=1))
   ScheduledExecution.objects.create(
@@ -1958,7 +1958,7 @@ def test_cleanup_expired_semaphores_respects_batch_size():
   assert Semaphore.objects.filter(expires_at__lte=now).count() == 1
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_cleanup_expired_semaphores_retries_transient_database_deadlock(monkeypatch):
   Semaphore.objects.create(
     key="expired",

@@ -8,7 +8,7 @@ from dj_queue.operations import dispatch, enqueue, execution, jobs
 from tests.tasks import echo, limited_discard
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("preserve_finished", [False, True])
 def test_completion_retry_keeps_identity_and_executes_task_once(
   settings, monkeypatch, preserve_finished
@@ -37,7 +37,7 @@ def test_completion_retry_keeps_identity_and_executes_task_once(
     assert Job.objects.get(pk=job_id).return_value == "done"
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_bulk_retry_rebuilds_discarded_jobs_when_capacity_changes(monkeypatch):
   bulk_create = enqueue._bulk_create
   acquire = dispatch.semaphore_acquire_many

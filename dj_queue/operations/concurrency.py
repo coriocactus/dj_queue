@@ -701,7 +701,7 @@ def cleanup_expired_semaphores(*, batch_size=500, backend_alias="default", confi
       deleted, _ = Semaphore.objects.using(alias).filter(pk__in=semaphore_ids).delete()
       return deleted
 
-  return retry_transient_database_errors(cleanup_transition)
+  return retry_transient_database_errors(cleanup_transition, using=alias)
 
 
 def promote_expired_blocked_jobs(

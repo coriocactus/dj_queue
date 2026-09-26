@@ -64,7 +64,8 @@ def claim_ready_jobs(
       backend_alias=backend_alias,
       use_skip_locked=use_skip_locked,
       alias=alias,
-    )
+    ),
+    using=alias,
   )
 
   if event_logging_enabled(backend_alias=backend_alias):
