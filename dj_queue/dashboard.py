@@ -785,7 +785,7 @@ def _recurring_sort_requires_python(sort):
 
 def _semaphore_sort_requires_python(sort):
   return any(
-    part.removeprefix("-") in {"active_count", "blocked_waiters"}
+    part.removeprefix("-") in {"active", "blocked_waiters"}
     for part in _parse_sort_fields(sort)
   )
 
