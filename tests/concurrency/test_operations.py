@@ -1095,6 +1095,33 @@ def test_promote_expired_blocked_jobs_rejects_conflicting_execution_state():
 
 
 @pytest.mark.django_db
+def test_blocked_maintenance_rolls_back_prior_promotions_and_slot_changes(monkeypatch):
+  notify = Mock()
+  monkeypatch.setattr(concurrency_operations, "notify_ready_queues_on_commit", notify)
+  expired_at = timezone.now() - timedelta(seconds=10)
+  jobs = [make_job(task=limited, concurrency_key=f"rollback:{index}") for index in range(2)]
+  for index, job in enumerate(jobs):
+    BlockedExecution.objects.create(
+      job=job,
+      backend_alias=job.backend_alias,
+      queue_name=job.queue_name,
+      priority=job.priority,
+      concurrency_key=job.concurrency_key,
+      expires_at=expired_at + timedelta(seconds=index),
+    )
+  FailedExecution.objects.create(job=jobs[1], exception_class="builtins.ValueError", message="bad")
+
+  with pytest.raises(EnqueueError, match="already has an execution-state row"):
+    promote_expired_blocked_jobs(batch_size=10)
+
+  assert BlockedExecution.objects.count() == 2
+  assert not ReadyExecution.objects.exists()
+  assert not ClaimedExecution.objects.exists()
+  assert not Semaphore.objects.exists()
+  notify.assert_not_called()
+
+
+@pytest.mark.django_db
 def test_expired_semaphore_cleanup_preserves_active_claimed_key():
   first = limited.enqueue(1, value="first")
   second = limited.enqueue(1, value="second")

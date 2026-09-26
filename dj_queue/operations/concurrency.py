@@ -735,73 +735,29 @@ def promote_expired_blocked_jobs(
     for blocked in blocked_rows:
       job = blocked.job
       try:
-        historical_policy = all(
-          value is None
-          for value in (
-            job.concurrency_limit,
-            job.concurrency_duration,
-            job.concurrency_on_conflict,
-          )
-        )
-        settings = task_settings.get(job.task_path) if historical_policy else None
-        if settings is None:
-          limit, duration_seconds, _ = concurrency_settings_for_job(job, config=config)
-          if historical_policy:
-            task_settings[job.task_path] = (limit, duration_seconds)
-        else:
-          limit, duration_seconds = settings
+        limit, duration_seconds = _blocked_concurrency_settings(job, task_settings, config=config)
       except DispatchPolicyError as error:
-        if not uses_serialized_writes:
-          consumed = _consume_selected_rows(alias, BlockedExecution, [blocked])
-          if not consumed:
-            continue
-        _ensure_no_other_execution_state(alias, job, ignored_models=(BlockedExecution,))
-        FailedExecution.objects.using(alias).create(
-          job_id=job.id,
-          exception_class=(f"{error.__class__.__module__}.{error.__class__.__qualname__}"),
-          message=str(error),
-          traceback="",
-        )
-        policy_failures.append((job, error))
+        if _fail_blocked_policy(alias, blocked, error, consumed=uses_serialized_writes):
+          policy_failures.append((job, error))
         continue
 
-      if semaphore_acquire(
+      if not semaphore_acquire(
         blocked.concurrency_key,
         limit=limit,
         duration_seconds=duration_seconds,
         backend_alias=backend_alias,
         config=config,
       ):
-        queue_name = blocked.queue_name
-        priority = blocked.priority
-        if not uses_serialized_writes:
-          blocked.delete(using=alias)
-        _create_ready_execution_locked(
+        _renew_blocked_execution(
           alias,
-          job=job,
-          backend_alias=backend_alias,
-          queue_name=queue_name,
-          priority=priority,
-          ready_at=now,
-          check_conflicts=True,
+          blocked,
+          expires_at=now + timedelta(seconds=duration_seconds),
+          consumed=uses_serialized_writes,
         )
-        promoted_jobs.append(job)
-      else:
-        expires_at = now + timedelta(seconds=duration_seconds)
-        if uses_serialized_writes:
-          _create_blocked_execution(
-            alias,
-            job,
-            backend_alias=backend_alias,
-            queue_name=blocked.queue_name,
-            priority=blocked.priority,
-            concurrency_key=blocked.concurrency_key,
-            expires_at=expires_at,
-            check_conflicts=True,
-          )
-        else:
-          blocked.expires_at = expires_at
-          blocked.save(using=alias, update_fields=["expires_at"])
+        continue
+
+      _promote_blocked_execution(alias, blocked, ready_at=now, consumed=uses_serialized_writes)
+      promoted_jobs.append(job)
 
   for job in promoted_jobs:
     log_event(
@@ -821,6 +777,68 @@ def promote_expired_blocked_jobs(
       message=str(error),
     )
   return promoted_jobs
+
+
+def _blocked_concurrency_settings(job, task_settings, *, config):
+  historical_policy = all(
+    value is None
+    for value in (
+      job.concurrency_limit,
+      job.concurrency_duration,
+      job.concurrency_on_conflict,
+    )
+  )
+  if historical_policy and job.task_path in task_settings:
+    return task_settings[job.task_path]
+
+  limit, duration_seconds, _ = concurrency_settings_for_job(job, config=config)
+  if historical_policy:
+    task_settings[job.task_path] = (limit, duration_seconds)
+  return limit, duration_seconds
+
+
+def _fail_blocked_policy(alias, blocked, error, *, consumed):
+  if not consumed and not _consume_selected_rows(alias, BlockedExecution, [blocked]):
+    return False
+  _ensure_no_other_execution_state(alias, blocked.job, ignored_models=(BlockedExecution,))
+  FailedExecution.objects.using(alias).create(
+    job_id=blocked.job_id,
+    exception_class=f"{error.__class__.__module__}.{error.__class__.__qualname__}",
+    message=str(error),
+    traceback="",
+  )
+  return True
+
+
+def _promote_blocked_execution(alias, blocked, *, ready_at, consumed):
+  if not consumed:
+    blocked.delete(using=alias)
+  _create_ready_execution_locked(
+    alias,
+    job=blocked.job,
+    backend_alias=blocked.backend_alias,
+    queue_name=blocked.queue_name,
+    priority=blocked.priority,
+    ready_at=ready_at,
+    check_conflicts=True,
+  )
+
+
+def _renew_blocked_execution(alias, blocked, *, expires_at, consumed):
+  if consumed:
+    _create_blocked_execution(
+      alias,
+      blocked.job,
+      backend_alias=blocked.backend_alias,
+      queue_name=blocked.queue_name,
+      priority=blocked.priority,
+      concurrency_key=blocked.concurrency_key,
+      expires_at=expires_at,
+      check_conflicts=True,
+    )
+    return
+  blocked.expires_at = expires_at
+  blocked.save(using=alias, update_fields=["expires_at"])
 
 
 def _positive_int_option(value, name):
