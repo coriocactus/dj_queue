@@ -14,6 +14,7 @@ from django.utils import timezone
 import dj_queue.db as database
 import dj_queue.operations.claiming as claiming_operations
 import dj_queue.operations.concurrency as concurrency_operations
+import dj_queue.operations.execution as execution_operations
 import dj_queue.operations.jobs as job_operations
 from dj_queue.api import QueueInfo
 from dj_queue.models import (
@@ -352,8 +353,8 @@ def test_execute_claimed_job_retries_terminal_deadlock_without_repeating_task(mo
   claimed_job = claim_ready_jobs(limit=1)[0]
   task_calls = 0
   transition_calls = 0
-  original_call_task = job_operations._call_task
-  original_release = job_operations._release_concurrency_slot
+  original_call_task = execution_operations._call_task
+  original_release = execution_operations.release_concurrency_slot
 
   def call_task(*args, **kwargs):
     nonlocal task_calls
@@ -367,8 +368,8 @@ def test_execute_claimed_job_retries_terminal_deadlock_without_repeating_task(mo
       raise OperationalError("deadlock found when trying to get lock")
     return original_release(*args, **kwargs)
 
-  monkeypatch.setattr(job_operations, "_call_task", call_task)
-  monkeypatch.setattr(job_operations, "_release_concurrency_slot", release_with_deadlock_once)
+  monkeypatch.setattr(execution_operations, "_call_task", call_task)
+  monkeypatch.setattr(execution_operations, "release_concurrency_slot", release_with_deadlock_once)
 
   execute_claimed_job(claimed_job)
 
@@ -390,8 +391,8 @@ def test_execute_failed_job_retries_terminal_deadlock_without_repeating_task(mon
   claimed_job = claim_ready_jobs(limit=1)[0]
   task_calls = 0
   transition_calls = 0
-  original_call_task = job_operations._call_task
-  original_release = job_operations._release_concurrency_slot
+  original_call_task = execution_operations._call_task
+  original_release = execution_operations.release_concurrency_slot
 
   def call_task(*args, **kwargs):
     nonlocal task_calls
@@ -405,8 +406,8 @@ def test_execute_failed_job_retries_terminal_deadlock_without_repeating_task(mon
       raise OperationalError("deadlock found when trying to get lock")
     return original_release(*args, **kwargs)
 
-  monkeypatch.setattr(job_operations, "_call_task", call_task)
-  monkeypatch.setattr(job_operations, "_release_concurrency_slot", release_with_deadlock_once)
+  monkeypatch.setattr(execution_operations, "_call_task", call_task)
+  monkeypatch.setattr(execution_operations, "release_concurrency_slot", release_with_deadlock_once)
 
   execute_claimed_job(claimed_job)
 
@@ -423,8 +424,8 @@ def test_terminal_transition_retries_real_lock_timeout_without_repeating_task(mo
     pytest.skip("requires row locks")
   job = make_job(task_path="tests.tasks.fail" if fails else echo.module_path, args=["result"])
   ClaimedExecution.objects.create(job=job)
-  call_task = Mock(wraps=job_operations._call_task)
-  monkeypatch.setattr(job_operations, "_call_task", call_task)
+  call_task = Mock(wraps=execution_operations._call_task)
+  monkeypatch.setattr(execution_operations, "_call_task", call_task)
   postgres = connection.vendor == "postgresql"
   timeout_name = "lock_timeout" if postgres else "innodb_lock_wait_timeout"
   with connection.cursor() as cursor:
@@ -844,13 +845,13 @@ def test_execute_claimed_job_reuses_loaded_task_for_concurrency_release(monkeypa
   second = limited.enqueue(1, value="second")
   claimed_job = claim_ready_jobs(limit=1)[0]
   seen = []
-  original_import_string = job_operations.import_string
+  original_import_string = execution_operations.import_string
 
   def capture(path):
     seen.append(path)
     return original_import_string(path)
 
-  monkeypatch.setattr(job_operations, "import_string", capture)
+  monkeypatch.setattr(execution_operations, "import_string", capture)
 
   execute_claimed_job(claimed_job)
 
@@ -880,7 +881,7 @@ def test_complete_claimed_job_rolls_back_when_concurrency_release_fails(monkeypa
   def fail_release(*args, **kwargs):
     raise RuntimeError("release failed")
 
-  monkeypatch.setattr(job_operations, "semaphore_release", fail_release)
+  monkeypatch.setattr(concurrency_operations, "semaphore_release", fail_release)
 
   with pytest.raises(RuntimeError, match="release failed"):
     complete_claimed_job(first.id, "done")

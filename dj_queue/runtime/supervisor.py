@@ -12,7 +12,7 @@ from django.utils import timezone
 from dj_queue.config import load_backend_config
 from dj_queue.exceptions import ProcessExitError, ProcessMissingError, ProcessPrunedError
 from dj_queue.log import log_event
-from dj_queue.operations.jobs import (
+from dj_queue.operations.recovery import (
   fail_claimed_jobs_for_child,
   fail_claimed_jobs_for_pid,
   fail_claimed_jobs_for_process,

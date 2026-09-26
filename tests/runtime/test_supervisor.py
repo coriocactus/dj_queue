@@ -11,7 +11,7 @@ from django.db.utils import OperationalError
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
-import dj_queue.operations.jobs as job_operations
+import dj_queue.operations.recovery as recovery_operations
 from dj_queue.config import load_backend_config
 from dj_queue.exceptions import ProcessExitError, ProcessMissingError, ProcessPrunedError
 from dj_queue.models import (
@@ -614,10 +614,10 @@ def test_fail_claimed_jobs_rolls_back_terminalization_when_recovered_release_fai
   def fail_release(*args, **kwargs):
     raise RuntimeError("release failed")
 
-  monkeypatch.setattr(job_operations, "release_recovered_concurrency_slots", fail_release)
+  monkeypatch.setattr(recovery_operations, "release_recovered_concurrency_slots", fail_release)
 
   with pytest.raises(RuntimeError, match="release failed"):
-    job_operations.fail_claimed_jobs_for_process(
+    recovery_operations.fail_claimed_jobs_for_process(
       process,
       ProcessPrunedError("process heartbeat expired"),
       traceback_text="process heartbeat expired",

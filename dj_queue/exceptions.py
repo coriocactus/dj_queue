@@ -24,3 +24,7 @@ class ProcessMissingError(DjQueueError):
 
 class ProcessPrunedError(DjQueueError):
   pass
+
+
+def exception_path(error):
+  return f"{error.__class__.__module__}.{error.__class__.__qualname__}"

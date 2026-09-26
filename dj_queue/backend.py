@@ -6,8 +6,8 @@ from django.tasks.exceptions import TaskResultDoesNotExist
 from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias
 from dj_queue.models import Job
-from dj_queue.operations.jobs import (
-  DispatchOutcome,
+from dj_queue.operations.dispatch import DispatchOutcome
+from dj_queue.operations.enqueue import (
   enqueue_job_with_dispatch,
   enqueue_jobs_bulk,
   validate_priority,

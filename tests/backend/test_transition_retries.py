@@ -4,7 +4,7 @@ import pytest
 from django.db import OperationalError
 
 from dj_queue.models import ClaimedExecution, Job, ScheduledExecution
-from dj_queue.operations import jobs
+from dj_queue.operations import dispatch, enqueue, execution, jobs
 from tests.tasks import echo, limited_discard
 
 
@@ -22,10 +22,10 @@ def test_completion_retry_keeps_identity_and_executes_task_once(
   job = jobs.enqueue_job(echo, ["done"], {})
   job_id = job.pk
   claimed = jobs.claim_ready_jobs(limit=1)[0]
-  call_task = Mock(wraps=jobs._call_task)
+  call_task = Mock(wraps=execution._call_task)
   release = Mock(side_effect=[OperationalError("database is locked"), None])
-  monkeypatch.setattr(jobs, "_call_task", call_task)
-  monkeypatch.setattr(jobs, "_release_concurrency_slot", release)
+  monkeypatch.setattr(execution, "_call_task", call_task)
+  monkeypatch.setattr(execution, "release_concurrency_slot", release)
 
   jobs.execute_claimed_job(claimed)
 
@@ -39,8 +39,8 @@ def test_completion_retry_keeps_identity_and_executes_task_once(
 
 @pytest.mark.django_db
 def test_bulk_retry_rebuilds_discarded_jobs_when_capacity_changes(monkeypatch):
-  bulk_create = jobs._bulk_create
-  acquire = jobs.semaphore_acquire_many
+  bulk_create = enqueue._bulk_create
+  acquire = dispatch.semaphore_acquire_many
   attempts = 0
   job_ids = []
 
@@ -59,8 +59,8 @@ def test_bulk_retry_rebuilds_discarded_jobs_when_capacity_changes(monkeypatch):
       return 0
     return acquire(*args, **kwargs)
 
-  monkeypatch.setattr(jobs, "_bulk_create", create_with_conflict)
-  monkeypatch.setattr(jobs, "semaphore_acquire_many", acquire_after_retry)
+  monkeypatch.setattr(enqueue, "_bulk_create", create_with_conflict)
+  monkeypatch.setattr(dispatch, "semaphore_acquire_many", acquire_after_retry)
 
   [(job, _task, outcome)] = jobs.enqueue_jobs_bulk([(limited_discard, [1], {})])
 

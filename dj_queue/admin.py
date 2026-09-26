@@ -28,8 +28,8 @@ from dj_queue.models import (
   RecurringTask,
   Semaphore,
 )
+from dj_queue.operations.dispatch import DispatchOutcome
 from dj_queue.operations.jobs import (
-  DispatchOutcome,
   discard_failed_job,
   discard_failed_jobs,
   dispatch_scheduled_job_now,

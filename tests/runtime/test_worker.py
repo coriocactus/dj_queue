@@ -401,16 +401,16 @@ def test_worker_does_not_execute_blocked_waiter_after_stop_request(monkeypatch):
   first = limited.enqueue(1, value="first")
   second = limited.enqueue(1, value="second")
   worker = make_worker()
-  from dj_queue.operations import jobs
+  from dj_queue.operations import execution
 
-  original_call_task = jobs._call_task
+  original_call_task = execution._call_task
 
   def call_and_stop(*args, **kwargs):
     result = original_call_task(*args, **kwargs)
     worker.request_stop()
     return result
 
-  monkeypatch.setattr(jobs, "_call_task", call_and_stop)
+  monkeypatch.setattr(execution, "_call_task", call_and_stop)
 
   try:
     submitted_jobs = worker.poll_once()
@@ -529,7 +529,7 @@ def test_execute_claimed_job_completes_already_loaded_job_object(monkeypatch):
   def complete_job(claimed_job, return_value, *, backend_alias, task=None, config=None):
     seen.append((claimed_job, return_value, backend_alias))
 
-  monkeypatch.setattr("dj_queue.operations.jobs._complete_claimed_job", complete_job)
+  monkeypatch.setattr("dj_queue.operations.execution._complete_claimed_job", complete_job)
 
   execute_claimed_job(ClaimedJob(job=job, claimed_at=timezone.now(), worker_ids=(process.name,)))
 
@@ -598,9 +598,9 @@ def test_execute_claimed_job_logs_task_failure_kind(monkeypatch):
   events = []
   make_ready_job(task=fail, args=["boom"])
   claimed_job = claim_ready_jobs(limit=1)[0]
-  monkeypatch.setattr("dj_queue.operations.jobs.event_logging_enabled", lambda **kwargs: True)
+  monkeypatch.setattr("dj_queue.operations.execution.event_logging_enabled", lambda **kwargs: True)
   monkeypatch.setattr(
-    "dj_queue.operations.jobs.log_event",
+    "dj_queue.operations.execution.log_event",
     lambda event, **fields: events.append((event, fields)),
   )
 
@@ -614,9 +614,9 @@ def test_execute_claimed_job_logs_result_serialization_failure_kind(monkeypatch)
   events = []
   make_ready_job(task=non_json_result)
   claimed_job = claim_ready_jobs(limit=1)[0]
-  monkeypatch.setattr("dj_queue.operations.jobs.event_logging_enabled", lambda **kwargs: True)
+  monkeypatch.setattr("dj_queue.operations.execution.event_logging_enabled", lambda **kwargs: True)
   monkeypatch.setattr(
-    "dj_queue.operations.jobs.log_event",
+    "dj_queue.operations.execution.log_event",
     lambda event, **fields: events.append((event, fields)),
   )
 

@@ -838,3 +838,46 @@ def _positive_int_option(value, name):
 
 def _operation_atomic(alias):
   return transaction.atomic(using=alias, savepoint=not connections[alias].in_atomic_block)
+
+
+def release_concurrency_slot(job, *, task=None, config=None):
+  if not job.concurrency_key:
+    return
+
+  config = resolve_backend_config(job.backend_alias, config)
+  try:
+    limit, duration_seconds, _ = concurrency_settings_for_job(job, task=task, config=config)
+  except DispatchPolicyError:
+    limit = _semaphore_limit(config.database_alias, job.concurrency_key) or 1
+    duration_seconds = config.default_concurrency_duration
+
+  if (
+    unblock_next_blocked_job(
+      job.concurrency_key,
+      limit=limit,
+      duration_seconds=duration_seconds,
+      backend_alias=job.backend_alias,
+      use_skip_locked=config.use_skip_locked,
+      slot_handoff=SlotHandoffMode.RELEASE_CLAIMED,
+      config=config,
+    )
+    is not None
+  ):
+    return
+
+  semaphore_release(
+    job.concurrency_key,
+    limit=limit,
+    duration_seconds=duration_seconds,
+    backend_alias=job.backend_alias,
+    config=config,
+  )
+  unblock_next_blocked_job(
+    job.concurrency_key,
+    limit=limit,
+    duration_seconds=duration_seconds,
+    backend_alias=job.backend_alias,
+    use_skip_locked=config.use_skip_locked,
+    slot_handoff=SlotHandoffMode.CONSUME_RELEASED,
+    config=config,
+  )

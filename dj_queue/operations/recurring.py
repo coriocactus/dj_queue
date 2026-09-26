@@ -14,7 +14,7 @@ from dj_queue.exceptions import EnqueueError
 from dj_queue.models import Job, RecurringExecution, RecurringTask
 from dj_queue.operations._helpers import _normalize_payload
 from dj_queue.operations._insert import create_ignore_conflicts
-from dj_queue.operations.jobs import enqueue_job, validate_priority, validate_queue_allowed
+from dj_queue.operations.enqueue import enqueue_job, validate_priority, validate_queue_allowed
 
 
 def validate_recurring_task_definition(

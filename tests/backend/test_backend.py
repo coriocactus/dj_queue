@@ -275,9 +275,9 @@ def test_enqueue_future_uses_scheduled_path():
 
 @pytest.mark.django_db
 def test_enqueue_retries_transient_database_deadlock(monkeypatch):
-  import dj_queue.operations.jobs as job_operations
+  import dj_queue.operations.enqueue as job_operations
 
-  original_dispatch_job = job_operations._dispatch_job
+  original_dispatch_job = job_operations.dispatch_job
   calls = 0
 
   def dispatch_with_deadlock_once(*args, **kwargs):
@@ -287,7 +287,7 @@ def test_enqueue_retries_transient_database_deadlock(monkeypatch):
       raise OperationalError("deadlock found when trying to get lock")
     return original_dispatch_job(*args, **kwargs)
 
-  monkeypatch.setattr(job_operations, "_dispatch_job", dispatch_with_deadlock_once)
+  monkeypatch.setattr(job_operations, "dispatch_job", dispatch_with_deadlock_once)
 
   result = echo.enqueue("retried")
 
@@ -332,7 +332,7 @@ def test_enqueue_bulk_immediate_query_budget_stays_batch_sized():
 
 @pytest.mark.django_db
 def test_enqueue_bulk_retries_transient_database_deadlock(monkeypatch):
-  import dj_queue.operations.jobs as job_operations
+  import dj_queue.operations.enqueue as job_operations
 
   original_create_ready = job_operations._bulk_create_ready_executions_locked
   calls = 0
@@ -359,7 +359,7 @@ def test_enqueue_bulk_retries_transient_database_deadlock(monkeypatch):
 
 @pytest.mark.django_db
 def test_enqueue_bulk_mixed_retries_transient_database_deadlock(monkeypatch):
-  import dj_queue.operations.jobs as job_operations
+  import dj_queue.operations.enqueue as job_operations
 
   original_bulk_create = job_operations._bulk_create
   calls = 0
@@ -412,9 +412,9 @@ def test_enqueue_bulk_immediate_logs_one_aggregate_event(monkeypatch):
   backend = echo.get_backend()
   calls = []
 
-  monkeypatch.setattr("dj_queue.operations.jobs.event_logging_enabled", lambda **kwargs: True)
+  monkeypatch.setattr("dj_queue.operations.enqueue.event_logging_enabled", lambda **kwargs: True)
   monkeypatch.setattr(
-    "dj_queue.operations.jobs.log_event",
+    "dj_queue.operations.enqueue.log_event",
     lambda event, **fields: calls.append((event, fields)),
   )
 
@@ -475,9 +475,9 @@ def test_enqueue_bulk_mixed_logs_outcome_counts(monkeypatch):
   future = timezone.now() + timedelta(minutes=5)
   calls = []
 
-  monkeypatch.setattr("dj_queue.operations.jobs.event_logging_enabled", lambda **kwargs: True)
+  monkeypatch.setattr("dj_queue.operations.enqueue.event_logging_enabled", lambda **kwargs: True)
   monkeypatch.setattr(
-    "dj_queue.operations.jobs.log_event",
+    "dj_queue.operations.enqueue.log_event",
     lambda event, **fields: calls.append((event, fields)),
   )
 
@@ -509,7 +509,8 @@ def test_enqueue_bulk_mixed_logs_outcome_counts(monkeypatch):
 def test_enqueue_bulk_caches_formatted_concurrency_key_signature(monkeypatch):
   backend = limited.get_backend()
   calls = []
-  job_operations = __import__("dj_queue.operations.jobs", fromlist=["inspect"])
+  from dj_queue.operations import enqueue as job_operations
+
   job_operations._task_call_signature.cache_clear()
   original_signature = job_operations.inspect.signature
 
@@ -517,7 +518,7 @@ def test_enqueue_bulk_caches_formatted_concurrency_key_signature(monkeypatch):
     calls.append(func)
     return original_signature(func)
 
-  monkeypatch.setattr("dj_queue.operations.jobs.inspect.signature", counted_signature)
+  monkeypatch.setattr("dj_queue.operations.enqueue.inspect.signature", counted_signature)
 
   backend.enqueue_all(
     [
@@ -550,9 +551,9 @@ def test_enqueue_bulk_groups_concurrency_slot_acquisition(monkeypatch):
   def acquire_one(*args, **kwargs):
     raise AssertionError("single acquire used")
 
-  monkeypatch.setattr("dj_queue.operations.jobs.semaphore_acquire_many", acquire_many)
+  monkeypatch.setattr("dj_queue.operations.dispatch.semaphore_acquire_many", acquire_many)
   monkeypatch.setattr(
-    "dj_queue.operations.jobs.semaphore_acquire",
+    "dj_queue.operations.dispatch.semaphore_acquire",
     acquire_one,
   )
 

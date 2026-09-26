@@ -14,6 +14,7 @@ from dj_queue.models import (
   ScheduledExecution,
 )
 from dj_queue.models.jobs import job_status_relation_names
+from dj_queue.sql import common as sql_common
 from dj_queue.sql.state import EXECUTION_STATE_MODELS
 
 STATE_RELATIONS = {
@@ -372,3 +373,20 @@ def _bulk_create(alias, model, objects):
     batch_size = len(objects)
   model.objects.using(alias).bulk_create(objects, batch_size=batch_size)
   return
+
+
+def _finish_job_if_no_execution_state(
+  alias, job, return_value, *, finished_at, include_claimed=False
+):
+  updated = sql_common.finish_job_if_no_execution_state(
+    alias,
+    job,
+    return_value,
+    finished_at=finished_at,
+    include_claimed=include_claimed,
+  )
+  if updated != 1:
+    raise EnqueueError(f"job {job.id} already has an execution-state row")
+  job.finished_at = finished_at
+  job.return_value = return_value
+  job.updated_at = finished_at

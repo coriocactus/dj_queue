@@ -7,6 +7,7 @@ from django.tasks import Task
 
 from dj_queue import observability
 from dj_queue.operations.claiming import ClaimedJob, claim_ready_jobs
+from dj_queue.operations.execution import execute_claimed_job
 from dj_queue.operations.jobs import (
   discard_blocked_jobs,
   discard_failed_job,
@@ -14,7 +15,6 @@ from dj_queue.operations.jobs import (
   discard_ready_jobs,
   discard_ready_jobs_for_queue,
   discard_scheduled_jobs,
-  execute_claimed_job,
   retry_failed_job,
   retry_failed_jobs,
   schedule_failed_job_retry,
