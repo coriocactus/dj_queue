@@ -220,7 +220,19 @@ def _load_backend_config_uncached(
   ensure_dj_queue_backend_alias(tasks_settings, backend_alias)
   backend_block = _backend_block(tasks_settings, backend_alias)
   resolved_options = _resolved_options(backend_alias, backend_block, cli_overrides, env)
+  config = _build_backend_config(
+    backend_alias, backend_block, resolved_options, cli_overrides, env
+  )
+  return _select_runtime_topology(config)
 
+
+def _build_backend_config(
+  backend_alias: str,
+  backend_block: Mapping[str, Any],
+  resolved_options: Mapping[str, Any],
+  cli_overrides: Mapping[str, Any],
+  env: Mapping[str, str],
+) -> BackendConfig:
   mode = resolved_options["mode"]
   if mode not in {"fork", "async"}:
     raise ImproperlyConfigured(f"dj_queue mode must be 'fork' or 'async', got {mode!r}")
@@ -244,27 +256,6 @@ def _load_backend_config_uncached(
   scheduler = _build_scheduler_config(resolved_options.get("scheduler", DEFAULT_SCHEDULER))
   workers = _build_worker_configs(resolved_options.get("workers", []), mode)
   dispatchers = _build_dispatcher_configs(resolved_options.get("dispatchers", []))
-
-  if only_work:
-    dispatchers = ()
-    scheduler = None
-  elif only_dispatch:
-    workers = ()
-    scheduler = None
-  elif skip_recurring or not _scheduler_has_work(
-    scheduler,
-    recurring,
-    preserve_finished_jobs=preserve_finished_jobs,
-    clear_finished_jobs_after=resolved_options["clear_finished_jobs_after"],
-    clear_failed_jobs_after=resolved_options["clear_failed_jobs_after"],
-    clear_recurring_executions_after=resolved_options["clear_recurring_executions_after"],
-  ):
-    scheduler = None
-
-  if not workers and not dispatchers and scheduler is None:
-    raise ImproperlyConfigured(
-      "dj_queue requires at least one worker, dispatcher, or scheduler workload"
-    )
 
   return BackendConfig(
     backend_alias=backend_alias,
@@ -314,6 +305,21 @@ def _load_backend_config_uncached(
     only_work=only_work,
     only_dispatch=only_dispatch,
   )
+
+
+def _select_runtime_topology(config: BackendConfig) -> BackendConfig:
+  if config.only_work:
+    config = replace(config, dispatchers=(), scheduler=None)
+  elif config.only_dispatch:
+    config = replace(config, workers=(), scheduler=None)
+  elif config.skip_recurring or not _scheduler_has_work(config):
+    config = replace(config, scheduler=None)
+
+  if not config.workers and not config.dispatchers and config.scheduler is None:
+    raise ImproperlyConfigured(
+      "dj_queue requires at least one worker, dispatcher, or scheduler workload"
+    )
+  return config
 
 
 def _backend_block(
@@ -662,21 +668,13 @@ def _build_recurring_config(
   return recurring
 
 
-def _scheduler_has_work(
-  scheduler: SchedulerConfig,
-  recurring: Mapping[str, RecurringTaskConfig],
-  *,
-  preserve_finished_jobs: bool,
-  clear_finished_jobs_after: Any,
-  clear_failed_jobs_after: Any,
-  clear_recurring_executions_after: Any,
-) -> bool:
+def _scheduler_has_work(config: BackendConfig) -> bool:
   has_cleanup = (
-    (preserve_finished_jobs and clear_finished_jobs_after is not None)
-    or clear_failed_jobs_after is not None
-    or clear_recurring_executions_after is not None
+    (config.preserve_finished_jobs and config.clear_finished_jobs_after is not None)
+    or config.clear_failed_jobs_after is not None
+    or config.clear_recurring_executions_after is not None
   )
-  return scheduler.dynamic_tasks_enabled or bool(recurring) or has_cleanup
+  return config.scheduler.dynamic_tasks_enabled or bool(config.recurring) or has_cleanup
 
 
 def _as_queue_selectors(value: Any) -> tuple[str, ...]:
