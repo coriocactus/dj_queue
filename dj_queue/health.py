@@ -1,7 +1,4 @@
-from django.db.models import (
-  F,
-  Q,
-)
+from django.db.models import Count, F, Q
 from django.utils import timezone
 
 from dj_queue.config import load_backend_config
@@ -117,9 +114,15 @@ def _job_health_problems(*, alias, backend_alias):
     problems.append(f"{invalid_policies} jobs have invalid concurrency policy")
 
   for label, model in _backend_owned_state_models():
-    mismatched = _state_backend_mismatch_count(model, alias=alias, backend_alias=backend_alias)
-    if mismatched:
-      problems.append(f"{mismatched} {label} execution rows have mismatched backend ownership")
+    mismatched = _state_ownership_mismatch_counts(model, alias=alias, backend_alias=backend_alias)
+    if mismatched["backend"]:
+      problems.append(
+        f"{mismatched['backend']} {label} execution rows have mismatched backend ownership"
+      )
+    if mismatched["queue"]:
+      problems.append(
+        f"{mismatched['queue']} {label} execution rows have mismatched queue ownership"
+      )
   return problems
 
 
@@ -244,10 +247,12 @@ def _backend_owned_state_models():
   )
 
 
-def _state_backend_mismatch_count(model, *, alias, backend_alias):
+def _state_ownership_mismatch_counts(model, *, alias, backend_alias):
   return (
     model.objects.using(alias)
     .filter(Q(backend_alias=backend_alias) | Q(job__backend_alias=backend_alias))
-    .exclude(backend_alias=F("job__backend_alias"))
-    .count()
+    .aggregate(
+      backend=Count("id", filter=~Q(backend_alias=F("job__backend_alias"))),
+      queue=Count("id", filter=~Q(queue_name=F("job__queue_name"))),
+    )
   )
