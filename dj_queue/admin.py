@@ -10,7 +10,7 @@ from django.utils import timezone
 from django.utils.html import format_html
 from django.utils.http import url_has_allowed_host_and_scheme
 
-from dj_queue import dashboard, dashboard_actions, observability
+from dj_queue import dashboard, dashboard_actions
 from dj_queue.admin_permissions import (
   has_action_permission,
   permitted_actions,
@@ -43,6 +43,7 @@ from dj_queue.queue_state import (
   is_queue_state,
   status_rank_expression,
 )
+from dj_queue.reads import controls, processes
 
 ADMIN_ACTION_ERRORS = (
   EnqueueError,
@@ -465,10 +466,10 @@ class ProcessStatusListFilter(admin.SimpleListFilter):
     value = self.value()
     if not value:
       return queryset
-    cutoff = observability.process_cutoff_for_backend(
+    cutoff = processes.process_cutoff_for_backend(
       dashboard.resolve_backend_alias(request.GET.get("backend"))
     )
-    return observability.filter_process_status(queryset, value, process_cutoff=cutoff)
+    return processes.filter_process_status(queryset, value, process_cutoff=cutoff)
 
 
 @admin.register(Job)
@@ -853,8 +854,8 @@ class ProcessAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
 
   def get_queryset(self, request):
     queryset = super().get_queryset(request)
-    cutoff = observability.process_cutoff_for_backend(self._backend_alias(request))
-    return queryset.annotate(live_rank=observability.process_live_rank_expression(cutoff))
+    cutoff = processes.process_cutoff_for_backend(self._backend_alias(request))
+    return queryset.annotate(live_rank=processes.process_live_rank_expression(cutoff))
 
   @admin.display(description="status", ordering="live_rank")
   def display_status(self, obj):
@@ -1016,7 +1017,7 @@ class SemaphoreAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     queryset = super().get_queryset(request)
     alias = self._backend_database_alias(request)
     return queryset.annotate(
-      blocked_waiter_count=observability.semaphore_blocked_waiter_count_expression(alias)
+      blocked_waiter_count=controls.semaphore_blocked_waiter_count_expression(alias)
     )
 
   @admin.display(description="active")

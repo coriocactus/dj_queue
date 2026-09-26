@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 from django.utils import timezone
 
-from dj_queue import observability
+from dj_queue import health, observability, postgres_diagnostics
 from dj_queue.models import (
   FailedExecution,
   Job,
@@ -130,27 +130,27 @@ def test_stats_payload_can_include_postgres_diagnostics(monkeypatch):
   now = timezone.now()
 
   monkeypatch.setattr(
-    observability,
+    postgres_diagnostics,
     "database_capabilities",
     lambda alias: SimpleNamespace(backend_family="postgresql"),
   )
   monkeypatch.setattr(
-    observability,
+    postgres_diagnostics,
     "postgres_queue_table_rows",
     lambda *, backend_alias: ({"table_name": "dj_queue_jobs", "dead_tuples": 12},),
   )
   monkeypatch.setattr(
-    observability,
+    postgres_diagnostics,
     "postgres_xmin_activity_rows",
     lambda *, backend_alias: ({"pid": 101, "state": "idle in transaction"},),
   )
   monkeypatch.setattr(
-    observability,
+    postgres_diagnostics,
     "postgres_replication_slot_rows",
     lambda *, backend_alias: (),
   )
   monkeypatch.setattr(
-    observability,
+    postgres_diagnostics,
     "postgres_prepared_transaction_rows",
     lambda *, backend_alias: (),
   )
@@ -229,7 +229,7 @@ def test_postgres_health_problems_report_bloat_and_xmin_blockers(monkeypatch):
     "long_transaction_threshold_seconds": 300.0,
   }
   monkeypatch.setattr(
-    observability,
+    health,
     "postgres_diagnostics_for_backend",
     lambda **_kwargs: diagnostics,
   )

@@ -1,7 +1,8 @@
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import BaseCommand, CommandError
 
-from dj_queue import observability
+from dj_queue import health
+from dj_queue.reads import processes
 
 
 class Command(BaseCommand):
@@ -36,10 +37,10 @@ class Command(BaseCommand):
       raise CommandError("--max-age must be positive")
 
     try:
-      healthy = observability.has_live_processes(backend_alias=backend_alias, max_age=max_age)
+      healthy = processes.has_live_processes(backend_alias=backend_alias, max_age=max_age)
       problems = ()
       if healthy and (options["deep"] or required_version is not None):
-        problems = observability.deep_health_problems(
+        problems = health.deep_health_problems(
           backend_alias=backend_alias,
           max_age=max_age,
           required_process_version=required_version,

@@ -20,6 +20,7 @@ from dj_queue.queue_state import (
   queue_state_count_key,
   queue_state_queryset,
 )
+from dj_queue.reads import controls, processes, queues
 
 PAGE_SIZE = 100
 OVERVIEW_PAGE_SIZES = {
@@ -258,17 +259,17 @@ def dashboard_context(*, backend_alias, query_params=None):
 
   now = timezone.now()
   queue_database_alias = get_database_alias(backend_alias)
-  process_cutoff = observability.process_cutoff_for_backend(
+  process_cutoff = processes.process_cutoff_for_backend(
     backend_alias,
     now=now,
     max_age=config.process_alive_threshold,
   )
-  queue_rows = observability.queue_rows(
+  queue_rows = queues.queue_rows(
     backend_alias=backend_alias,
     now=now,
     process_cutoff=process_cutoff,
   )
-  process_rows = observability.process_rows(
+  process_rows = processes.process_rows(
     backend_alias=backend_alias,
     now=now,
     process_cutoff=process_cutoff,
@@ -336,7 +337,7 @@ def queue_page_context(*, backend_alias, queue_name, state, page_number, query_p
   alias = get_database_alias(backend_alias)
   config = load_backend_config(backend_alias)
   now = timezone.now()
-  process_cutoff = observability.process_cutoff_for_backend(
+  process_cutoff = processes.process_cutoff_for_backend(
     backend_alias,
     now=now,
     max_age=config.process_alive_threshold,
@@ -354,7 +355,7 @@ def queue_page_context(*, backend_alias, queue_name, state, page_number, query_p
 
   paginator = Paginator(jobs, PAGE_SIZE)
   page_obj = paginator.get_page(query_params.get("page", page_number))
-  queue_row = observability.queue_snapshot(
+  queue_row = queues.queue_snapshot(
     backend_alias=backend_alias,
     queue_name=queue_name,
     now=now,
@@ -704,7 +705,7 @@ def _recurring_overview_page(*, backend_alias, now, page_size, page_number, sort
   if _recurring_sort_requires_python(sort):
     rows = [
       _recurring_row_with_jobs_url(row, backend_alias=backend_alias)
-      for row in observability.recurring_rows_for_backend(backend_alias=backend_alias, now=now)
+      for row in controls.recurring_rows_for_backend(backend_alias=backend_alias, now=now)
     ]
     rows = _sort_overview_rows(rows=rows, section="recurring", sort=sort)
     return _paginate_standard_rows(rows=rows, page_size=page_size, page_number=page_number)
@@ -745,7 +746,7 @@ def _semaphore_overview_page(*, backend_alias, page_size, page_number, sort):
   if _semaphore_sort_requires_python(sort):
     rows = [
       _semaphore_row_with_jobs_url(row, backend_alias=backend_alias)
-      for row in observability.semaphore_rows_for_backend(backend_alias=backend_alias)
+      for row in controls.semaphore_rows_for_backend(backend_alias=backend_alias)
     ]
     rows = _sort_overview_rows(
       rows=rows,
@@ -756,7 +757,7 @@ def _semaphore_overview_page(*, backend_alias, page_size, page_number, sort):
 
   queryset = (
     Semaphore.objects.using(alias)
-    .annotate(blocked_waiters=observability.semaphore_blocked_waiter_count_expression(alias))
+    .annotate(blocked_waiters=controls.semaphore_blocked_waiter_count_expression(alias))
     .order_by(
       *_overview_queryset_ordering(
         section="semaphores",
@@ -785,8 +786,7 @@ def _recurring_sort_requires_python(sort):
 
 def _semaphore_sort_requires_python(sort):
   return any(
-    part.removeprefix("-") in {"active", "blocked_waiters"}
-    for part in _parse_sort_fields(sort)
+    part.removeprefix("-") in {"active", "blocked_waiters"} for part in _parse_sort_fields(sort)
   )
 
 
@@ -1336,7 +1336,7 @@ def _jobs_for_queue_state(*, backend_alias, queue_name, state):
 
 
 def _next_run_at(schedule, now):
-  return observability.next_run_at(schedule, now)
+  return controls.next_run_at(schedule, now)
 
 
 def _queue_matches_selectors(queue_name, selectors):

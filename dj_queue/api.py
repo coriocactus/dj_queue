@@ -5,7 +5,6 @@ from typing import Any, Literal, Self, TypeVar
 from django.db import transaction
 from django.tasks import Task
 
-from dj_queue import observability
 from dj_queue.operations.claiming import ClaimedJob, claim_ready_jobs
 from dj_queue.operations.execution import execute_claimed_job
 from dj_queue.operations.jobs import (
@@ -21,6 +20,7 @@ from dj_queue.operations.jobs import (
 )
 from dj_queue.operations.queues import pause_queue, resume_queue
 from dj_queue.operations.recurring import schedule_recurring_task, unschedule_recurring_task
+from dj_queue.reads import queues
 
 __all__ = [
   "ClaimedJob",
@@ -79,7 +79,7 @@ class QueueInfo:
   def size(self) -> int:
     if self._snapshot is not None:
       return self._snapshot["ready_count"]
-    return observability.queue_ready_count(
+    return queues.queue_ready_count(
       backend_alias=self.backend_alias,
       queue_name=self.queue_name,
     )
@@ -92,14 +92,14 @@ class QueueInfo:
         return 0.0
       return latency
 
-    paused = observability.queue_is_paused(
+    paused = queues.queue_is_paused(
       backend_alias=self.backend_alias,
       queue_name=self.queue_name,
     )
     if paused:
       return None
 
-    latency = observability.queue_latency_seconds(
+    latency = queues.queue_latency_seconds(
       backend_alias=self.backend_alias,
       queue_name=self.queue_name,
       paused=False,
@@ -110,7 +110,7 @@ class QueueInfo:
   def paused(self) -> bool:
     if self._snapshot is not None:
       return self._snapshot["paused"]
-    return observability.queue_is_paused(
+    return queues.queue_is_paused(
       backend_alias=self.backend_alias,
       queue_name=self.queue_name,
     )
@@ -138,7 +138,7 @@ class QueueInfo:
 
   @classmethod
   def all(cls, *, backend_alias: str = "default") -> list[Self]:
-    queue_rows = observability.queue_rows_for_backend(backend_alias=backend_alias)
+    queue_rows = queues.queue_rows_for_backend(backend_alias=backend_alias)
     return [cls(row["name"], backend_alias=backend_alias, snapshot=row) for row in queue_rows]
 
 

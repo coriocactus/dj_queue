@@ -2,7 +2,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connections
 
-from dj_queue import observability
+from dj_queue import postgres_diagnostics
 from dj_queue.config import load_backend_config
 from dj_queue.db import database_capabilities
 
@@ -29,5 +29,5 @@ class Command(BaseCommand):
     connection = connections[database_alias]
     self.stdout.write("-- dj_queue PostgreSQL autovacuum guidance")
     self.stdout.write("-- review before applying; dj_queue does not apply these in migrations")
-    for statement in observability.postgres_autovacuum_sql(connection):
+    for statement in postgres_diagnostics.postgres_autovacuum_sql(connection):
       self.stdout.write(statement)
