@@ -1257,6 +1257,37 @@ def test_blocked_promotion_isolates_unresolvable_historical_policy():
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+  "partial_policy",
+  ({"concurrency_duration": 60}, {"concurrency_on_conflict": "block"}),
+)
+def test_blocked_policy_cache_does_not_hide_incomplete_policy(partial_policy):
+  jobs = [
+    make_job(task=limited, concurrency_key=f"account:{index}", **policy)
+    for index, policy in enumerate(({}, partial_policy, {}))
+  ]
+  expired_at = timezone.now() - timedelta(seconds=10)
+  for index, job in enumerate(jobs):
+    BlockedExecution.objects.create(
+      job=job,
+      backend_alias=job.backend_alias,
+      queue_name=job.queue_name,
+      priority=job.priority,
+      concurrency_key=job.concurrency_key,
+      expires_at=expired_at + timedelta(seconds=index),
+    )
+
+  promoted = promote_expired_blocked_jobs(batch_size=10)
+
+  assert [job.id for job in promoted] == [jobs[0].id, jobs[2].id]
+  failure = FailedExecution.objects.get(job=jobs[1])
+  assert failure.exception_class == "dj_queue.exceptions.DispatchPolicyError"
+  assert "incomplete persisted concurrency policy" in failure.message
+  assert not BlockedExecution.objects.exists()
+  assert not Semaphore.objects.filter(key=jobs[1].concurrency_key).exists()
+
+
+@pytest.mark.django_db
 def test_discarding_ready_job_releases_waiter():
   first = limited.enqueue(1, value="first")
   second = limited.enqueue(1, value="second")

@@ -735,12 +735,18 @@ def promote_expired_blocked_jobs(
     for blocked in blocked_rows:
       job = blocked.job
       try:
-        settings = None
-        if job.concurrency_limit is None:
-          settings = task_settings.get(job.task_path)
+        historical_policy = all(
+          value is None
+          for value in (
+            job.concurrency_limit,
+            job.concurrency_duration,
+            job.concurrency_on_conflict,
+          )
+        )
+        settings = task_settings.get(job.task_path) if historical_policy else None
         if settings is None:
           limit, duration_seconds, _ = concurrency_settings_for_job(job, config=config)
-          if job.concurrency_limit is None:
+          if historical_policy:
             task_settings[job.task_path] = (limit, duration_seconds)
         else:
           limit, duration_seconds = settings
