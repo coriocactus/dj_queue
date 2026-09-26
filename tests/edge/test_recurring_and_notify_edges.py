@@ -8,6 +8,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from dj_queue.api import unschedule_recurring_task
+from dj_queue.config import BackendConfig
 from dj_queue.cron import latest_cron_run
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import Job, ReadyExecution, RecurringExecution, RecurringTask
@@ -88,7 +89,8 @@ def test_static_recurring_task_cannot_be_unscheduled_via_dynamic_api():
 def test_ready_notification_waits_for_outer_transaction_commit(monkeypatch):
   notified = []
 
-  def capture(queue_names, *, backend_alias="default"):
+  def capture(queue_names, *, backend_alias="default", config=None):
+    assert config.database_alias == "default"
     notified.append((tuple(queue_names), backend_alias))
 
   monkeypatch.setattr("dj_queue.wakeup.supports_listen_notify", lambda alias: True)
@@ -104,17 +106,14 @@ def test_ready_notification_waits_for_outer_transaction_commit(monkeypatch):
 def test_ready_notification_skips_on_commit_when_listen_notify_disabled(monkeypatch):
   on_commit_calls = []
 
-  monkeypatch.setattr(
-    "dj_queue.wakeup.load_backend_config",
-    lambda backend_alias: SimpleNamespace(listen_notify=False, database_alias="default"),
-  )
+  config = BackendConfig(listen_notify=False)
   monkeypatch.setattr("dj_queue.wakeup.supports_listen_notify", lambda alias: True)
   monkeypatch.setattr(
     "dj_queue.wakeup.transaction.on_commit",
     lambda func, *, using: on_commit_calls.append((func, using)),
   )
 
-  notify_ready_queues_on_commit(("default",), backend_alias="default")
+  notify_ready_queues_on_commit(("default",), backend_alias="default", config=config)
 
   assert on_commit_calls == []
 
@@ -122,17 +121,14 @@ def test_ready_notification_skips_on_commit_when_listen_notify_disabled(monkeypa
 def test_ready_notification_skips_on_commit_without_notify_support(monkeypatch):
   on_commit_calls = []
 
-  monkeypatch.setattr(
-    "dj_queue.wakeup.load_backend_config",
-    lambda backend_alias: SimpleNamespace(listen_notify=True, database_alias="default"),
-  )
+  config = BackendConfig(listen_notify=True)
   monkeypatch.setattr("dj_queue.wakeup.supports_listen_notify", lambda alias: False)
   monkeypatch.setattr(
     "dj_queue.wakeup.transaction.on_commit",
     lambda func, *, using: on_commit_calls.append((func, using)),
   )
 
-  notify_ready_queues_on_commit(("default",), backend_alias="default")
+  notify_ready_queues_on_commit(("default",), backend_alias="default", config=config)
 
   assert on_commit_calls == []
 
@@ -555,10 +551,11 @@ def test_notify_connection_uses_django_backend_connection_params(monkeypatch):
     def get_connection_params(self):
       return {"dbname": "queue", "sslmode": "require", "service": "primary"}
 
-  monkeypatch.setattr("dj_queue.runtime.notify.get_database_alias", lambda backend_alias: "queue")
   monkeypatch.setattr("dj_queue.runtime.notify.connections", {"queue": FakeWrapper()})
 
-  backend = NotifyWakeupBackend(backend_alias="default", wake_up=lambda: None)
+  backend = NotifyWakeupBackend(
+    backend_alias="default", wake_up=lambda: None, config=BackendConfig(database_alias="queue")
+  )
 
   connection = backend._open_connection()
 
@@ -748,11 +745,10 @@ def test_notify_ready_queues_sends_one_queue_payload(monkeypatch):
 
   monkeypatch.setattr("dj_queue.runtime.notify.supports_listen_notify", lambda alias: True)
   monkeypatch.setattr(
-    "dj_queue.runtime.notify.get_database_alias", lambda backend_alias: "default"
-  )
-  monkeypatch.setattr(
     "dj_queue.runtime.notify._notify",
-    lambda channel, payload, *, backend_alias: sent.append((channel, payload, backend_alias)),
+    lambda channel, payload, *, backend_alias, config: sent.append(
+      (channel, payload, backend_alias)
+    ),
   )
 
   notify_ready_queues(("alpha", "alpha", "beta"), backend_alias="default")
@@ -772,9 +768,6 @@ def test_notify_ready_queues_reports_send_failures(monkeypatch):
       raise RuntimeError("notify failed")
 
   monkeypatch.setattr("dj_queue.runtime.notify.supports_listen_notify", lambda alias: True)
-  monkeypatch.setattr(
-    "dj_queue.runtime.notify.get_database_alias", lambda backend_alias: "default"
-  )
   monkeypatch.setattr("dj_queue.runtime.notify.connections", {"default": BrokenConnection()})
   monkeypatch.setattr(
     "dj_queue.runtime.notify.handle_thread_error",

@@ -5,8 +5,6 @@ import traceback
 
 from django.utils import timezone
 
-from dj_queue.config import load_backend_config
-from dj_queue.db import get_database_alias
 from dj_queue.exceptions import ProcessExitError
 from dj_queue.models import Process
 from dj_queue.operations.claiming import claim_ready_jobs
@@ -35,6 +33,7 @@ class Worker(BaseRunner):
     heartbeat_interval=None,
     process_alive_threshold=None,
     supervisor=None,
+    backend_config=None,
   ):
     resolved_name = name or f"worker-{os.getpid()}"
     resolved_pid = pid or os.getpid()
@@ -49,6 +48,7 @@ class Worker(BaseRunner):
       heartbeat_interval=heartbeat_interval,
       process_alive_threshold=process_alive_threshold,
       supervisor=supervisor,
+      backend_config=backend_config,
     )
     self.pool = pool or WorkerPool(config.threads, wake_up=self.sleeper.wake_up)
     self.wakeup_backend = wakeup_backend or build_wakeup_backend(
@@ -82,6 +82,7 @@ class Worker(BaseRunner):
         queues=self.config.queues,
         process=self.process,
         backend_alias=self.backend_alias,
+        config=self.backend_config,
       )
 
     submitted_jobs = []
@@ -99,7 +100,7 @@ class Worker(BaseRunner):
 
   def stop(self, *, timeout=None):
     if timeout is None:
-      timeout = load_backend_config(self.backend_alias).shutdown_timeout
+      timeout = self.backend_config.shutdown_timeout
 
     process = self._begin_stop(stop_heartbeat=False)
     if process is None:
@@ -153,13 +154,15 @@ class Worker(BaseRunner):
     if active_jobs is not None:
       metadata["active_jobs"] = active_jobs
     process.metadata = metadata
-    alias = get_database_alias(self.backend_alias)
+    alias = self.backend_config.database_alias
     with app_executor():
       Process.objects.using(alias).filter(pk=process.pk).update(metadata=metadata)
 
   def _execute_job(self, claimed_job):
     with app_executor():
-      return execute_claimed_job(claimed_job, backend_alias=self.backend_alias)
+      return execute_claimed_job(
+        claimed_job, backend_alias=self.backend_alias, config=self.backend_config
+      )
 
   def _handle_future(self, future, claimed_job=None):
     try:
@@ -168,7 +171,12 @@ class Worker(BaseRunner):
       with app_executor():
         if claimed_job is not None:
           self._fail_claimed_job_after_worker_error(claimed_job, exc)
-        handle_thread_error(exc, context="worker.execute", backend_alias=self.backend_alias)
+        handle_thread_error(
+          exc,
+          context="worker.execute",
+          backend_alias=self.backend_alias,
+          config=self.backend_config,
+        )
       self.request_stop()
 
   def _handle_submit_error(self, claimed_job, error):
@@ -177,7 +185,12 @@ class Worker(BaseRunner):
         claimed_job,
         ProcessExitError("worker stopped before job submission"),
       )
-      handle_thread_error(error, context="worker.submit", backend_alias=self.backend_alias)
+      handle_thread_error(
+        error,
+        context="worker.submit",
+        backend_alias=self.backend_alias,
+        config=self.backend_config,
+      )
     self.request_stop()
 
   def _fail_claimed_job_after_worker_error(self, claimed_job, error):
@@ -189,10 +202,12 @@ class Worker(BaseRunner):
           traceback.format_exception(type(error), error, error.__traceback__)
         ),
         backend_alias=self.backend_alias,
+        config=self.backend_config,
       )
     except Exception as cleanup_error:
       handle_thread_error(
         cleanup_error,
         context="worker.execute.cleanup",
         backend_alias=self.backend_alias,
+        config=self.backend_config,
       )

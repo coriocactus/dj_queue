@@ -7,7 +7,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Exists, OuterRef, Q
 from django.utils.module_loading import import_string
 
-from dj_queue.config import load_backend_config
+from dj_queue.config import resolve_backend_config
 from dj_queue.cron import is_valid_cron, latest_cron_run, next_cron_run
 from dj_queue.db import get_database_alias, locked_queryset, retry_transient_database_errors
 from dj_queue.exceptions import EnqueueError
@@ -24,6 +24,7 @@ def validate_recurring_task_definition(
   priority,
   backend_alias,
   schedule=None,
+  config=None,
 ):
   task_path = _recurring_string(task_path, "task_path")
   queue_name = _recurring_string(queue_name, "queue_name")
@@ -37,7 +38,7 @@ def validate_recurring_task_definition(
     raise EnqueueError(f"task_path must be importable: {task_path}") from exc
   if not hasattr(task, "using"):
     raise EnqueueError("task_path must reference a Django task")
-  validate_queue_allowed(queue_name, backend_alias=backend_alias)
+  validate_queue_allowed(queue_name, backend_alias=backend_alias, config=config)
   validate_priority(priority)
   return task
 
@@ -54,8 +55,8 @@ def _recurring_optional_string(value, name):
   return value
 
 
-def upsert_static_recurring_tasks(recurring_configs, *, backend_alias="default"):
-  alias = get_database_alias(backend_alias)
+def upsert_static_recurring_tasks(recurring_configs, *, backend_alias="default", config=None):
+  alias = get_database_alias(backend_alias, config=config)
   active_keys = set()
   configured_keys = tuple(recurring_configs)
   desired_by_key = {}
@@ -68,6 +69,7 @@ def upsert_static_recurring_tasks(recurring_configs, *, backend_alias="default")
       priority=recurring_config.priority,
       backend_alias=backend_alias,
       schedule=recurring_config.schedule,
+      config=config,
     )
     desired_by_key[recurring_config.key] = {
       "task_path": recurring_config.task_path,
@@ -179,8 +181,9 @@ def schedule_recurring_task(
   priority: int = 0,
   description: str = "",
   backend_alias: str = "default",
+  config=None,
 ) -> RecurringTask:
-  alias = get_database_alias(backend_alias)
+  alias = get_database_alias(backend_alias, config=config)
   if kwargs is None:
     kwargs = {}
   key = _recurring_string(key, "key")
@@ -192,9 +195,10 @@ def schedule_recurring_task(
     priority=priority,
     backend_alias=backend_alias,
     schedule=schedule,
+    config=config,
   )
   payload = _normalize_payload(args, kwargs)
-  if key in load_backend_config(backend_alias).recurring:
+  if key in resolve_backend_config(backend_alias, config).recurring:
     raise EnqueueError(f"recurring task key {key!r} is already managed statically")
 
   with transaction.atomic(using=alias):
@@ -246,8 +250,8 @@ def schedule_recurring_task(
     return recurring_task
 
 
-def unschedule_recurring_task(key: str, *, backend_alias: str = "default") -> int:
-  alias = get_database_alias(backend_alias)
+def unschedule_recurring_task(key: str, *, backend_alias: str = "default", config=None) -> int:
+  alias = get_database_alias(backend_alias, config=config)
   queryset = RecurringTask.objects.using(alias).filter(
     backend_alias=backend_alias,
     key=key,
@@ -263,8 +267,9 @@ def fire_due_recurring_tasks(
   include_dynamic_tasks=False,
   backend_alias="default",
   batch_size=500,
+  config=None,
 ):
-  alias = get_database_alias(backend_alias)
+  alias = get_database_alias(backend_alias, config=config)
   unbackfilled = RecurringExecution.objects.using(alias).filter(
     backend_alias=backend_alias,
     task_key=OuterRef("key"),
@@ -312,6 +317,7 @@ def fire_due_recurring_tasks(
         recurring_task,
         pending_execution.run_at,
         backend_alias=backend_alias,
+        config=config,
       )
       if execution is not None and execution.job_id is not None:
         fired_jobs.append(execution.job)
@@ -325,7 +331,9 @@ def fire_due_recurring_tasks(
     run_at = latest_cron_run(recurring_task.schedule, now)
     if run_at is None:
       continue
-    execution = fire_recurring_task(recurring_task, run_at, backend_alias=backend_alias)
+    execution = fire_recurring_task(
+      recurring_task, run_at, backend_alias=backend_alias, config=config
+    )
     if execution is not None and execution.job_id is not None:
       fired_jobs.append(execution.job)
     if remaining is not None:
@@ -335,10 +343,12 @@ def fire_due_recurring_tasks(
   return fired_jobs
 
 
-def fire_recurring_task(recurring_task, run_at, *, backend_alias="default"):
-  alias = get_database_alias(backend_alias)
+def fire_recurring_task(recurring_task, run_at, *, backend_alias="default", config=None):
+  alias = get_database_alias(backend_alias, config=config)
   reservation = retry_transient_database_errors(
-    lambda: _reserve_recurring_task(recurring_task, run_at, backend_alias=backend_alias)
+    lambda: _reserve_recurring_task(
+      recurring_task, run_at, backend_alias=backend_alias, config=config
+    )
   )
   if reservation is None:
     return None
@@ -348,12 +358,13 @@ def fire_recurring_task(recurring_task, run_at, *, backend_alias="default"):
       reservation,
       using=alias,
       backend_alias=backend_alias,
+      config=config,
     )
   )
 
 
-def _publish_reserved_recurring_task(reservation, *, using, backend_alias):
-  config = load_backend_config(backend_alias)
+def _publish_reserved_recurring_task(reservation, *, using, backend_alias, config=None):
+  config = resolve_backend_config(backend_alias, config)
   with transaction.atomic(using=using):
     execution = locked_queryset(
       RecurringExecution.objects.using(using).filter(
@@ -365,15 +376,17 @@ def _publish_reserved_recurring_task(reservation, *, using, backend_alias):
     if execution is None or execution.job_id is not None:
       return None
 
-    job = _enqueue_reserved_recurring_task(reservation, using=using, backend_alias=backend_alias)
+    job = _enqueue_reserved_recurring_task(
+      reservation, using=using, backend_alias=backend_alias, config=config
+    )
     return _attach_reserved_recurring_job(
       reservation, job, using=using, backend_alias=backend_alias
     )
 
 
-def _reserve_recurring_task(recurring_task, run_at, *, backend_alias):
-  alias = get_database_alias(backend_alias)
-  config = load_backend_config(backend_alias)
+def _reserve_recurring_task(recurring_task, run_at, *, backend_alias, config=None):
+  alias = get_database_alias(backend_alias, config=config)
+  config = resolve_backend_config(backend_alias, config)
   with transaction.atomic(using=alias):
     recurring_task = locked_queryset(
       RecurringTask.objects.using(alias).filter(pk=recurring_task.pk, backend_alias=backend_alias),
@@ -436,7 +449,7 @@ def _recurring_reservation(execution, recurring_task, next_run_at):
   }
 
 
-def _enqueue_reserved_recurring_task(reservation, *, using, backend_alias):
+def _enqueue_reserved_recurring_task(reservation, *, using, backend_alias, config=None):
   existing_job = Job.objects.using(using).filter(pk=reservation["intended_job_id"]).first()
   if existing_job is not None:
     return _validated_reserved_job(reservation, existing_job, using=using)
@@ -454,6 +467,7 @@ def _enqueue_reserved_recurring_task(reservation, *, using, backend_alias):
       payload.get("kwargs", {}),
       backend_alias=backend_alias,
       job_id=reservation["intended_job_id"],
+      config=config,
     )
   except IntegrityError:
     existing_job = Job.objects.using(using).filter(pk=reservation["intended_job_id"]).first()

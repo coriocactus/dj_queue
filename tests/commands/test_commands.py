@@ -58,6 +58,20 @@ def make_process(**overrides):
   )
 
 
+def test_dj_queue_command_honors_skip_recurring_environment(monkeypatch):
+  configs = []
+  monkeypatch.setenv("DJ_QUEUE_SKIP_RECURRING", "true")
+
+  def build_supervisor(*, backend_alias, cli_overrides):
+    configs.append(load_backend_config(backend_alias, cli_overrides=cli_overrides))
+    return SimpleNamespace(run=lambda: None)
+
+  monkeypatch.setattr("dj_queue.management.commands.dj_queue.build_supervisor", build_supervisor)
+  call_command("dj_queue")
+  assert configs[0].skip_recurring is True
+  assert configs[0].scheduler is None
+
+
 def test_dj_queue_command_starts_default_runtime(monkeypatch):
   started = []
 
@@ -81,7 +95,6 @@ def test_dj_queue_command_starts_default_runtime(monkeypatch):
         "mode": None,
         "only_work": False,
         "only_dispatch": False,
-        "skip_recurring": False,
       },
     ),
     "run",
@@ -111,7 +124,6 @@ def test_dj_queue_command_mode_async(monkeypatch):
         "mode": "async",
         "only_work": False,
         "only_dispatch": False,
-        "skip_recurring": False,
       },
     ),
     "run",
@@ -150,7 +162,6 @@ def test_dj_queue_command_waits_for_migrations_before_runtime(monkeypatch):
         "mode": None,
         "only_work": False,
         "only_dispatch": False,
-        "skip_recurring": False,
       },
     ),
     "run",

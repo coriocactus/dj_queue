@@ -9,8 +9,8 @@ from django.db import close_old_connections
 from django.db.utils import OperationalError
 from django.utils import timezone
 
-from dj_queue.config import load_backend_config
-from dj_queue.db import database_capabilities, get_database_alias
+from dj_queue.config import BackendConfig, resolve_backend_config
+from dj_queue.db import database_capabilities
 from dj_queue.hooks import fire_hooks
 from dj_queue.models import Process
 from dj_queue.runtime.errors import handle_thread_error
@@ -82,8 +82,12 @@ class BaseRunner:
     heartbeat_interval=None,
     process_alive_threshold=None,
     supervisor=None,
+    backend_config=None,
   ):
     self.config = config
+    if backend_config is None and isinstance(config, BackendConfig):
+      backend_config = config
+    self.backend_config = resolve_backend_config(backend_alias, backend_config)
     self.backend_alias = backend_alias
     self.name = name
     self.pid = pid
@@ -96,7 +100,7 @@ class BaseRunner:
     self._heartbeat_stop_event = threading.Event()
     self._heartbeat_thread = None
     if heartbeat_interval is None:
-      heartbeat_interval = load_backend_config(backend_alias).process_heartbeat_interval
+      heartbeat_interval = self.backend_config.process_heartbeat_interval
     self._heartbeat_interval = heartbeat_interval
     if process_alive_threshold is None:
       process_alive_threshold = getattr(config, "process_alive_threshold", None)
@@ -181,7 +185,7 @@ class BaseRunner:
     if not self._liveness_check_due():
       return True
 
-    alias = get_database_alias(self.backend_alias)
+    alias = self.backend_config.database_alias
     with app_executor():
       exists = Process.objects.using(alias).filter(pk=self.process.pk).exists()
     self._last_liveness_check_at = time.monotonic()
@@ -208,6 +212,7 @@ class BaseRunner:
         error,
         context=f"{self.hook_prefix}.run",
         backend_alias=self.backend_alias,
+        config=self.backend_config,
       )
       return False
     return True
@@ -220,6 +225,7 @@ class BaseRunner:
         error,
         context=f"{self.hook_prefix}.liveness",
         backend_alias=self.backend_alias,
+        config=self.backend_config,
       )
       return None
 
@@ -241,7 +247,12 @@ class BaseRunner:
     self.request_stop()
     process = self.process
     if process is not None and self._started:
-      fire_hooks(f"{self.hook_prefix}.stop", process, backend_alias=self.backend_alias)
+      fire_hooks(
+        f"{self.hook_prefix}.stop",
+        process,
+        backend_alias=self.backend_alias,
+        config=self.backend_config,
+      )
     if stop_heartbeat:
       self._stop_heartbeat_thread()
     return process
@@ -249,14 +260,19 @@ class BaseRunner:
   def _finish_stop(self, process):
     self._deregister_process()
     if process is not None and self._started:
-      fire_hooks(f"{self.hook_prefix}.exit", process, backend_alias=self.backend_alias)
+      fire_hooks(
+        f"{self.hook_prefix}.exit",
+        process,
+        backend_alias=self.backend_alias,
+        config=self.backend_config,
+      )
 
     close = getattr(self.sleeper, "close", None)
     if callable(close):
       close()
 
   def _register_process(self):
-    alias = get_database_alias(self.backend_alias)
+    alias = self.backend_config.database_alias
     with _process_write_context(alias):
       return sqlite_retry(
         lambda: Process.objects.using(alias).create(
@@ -277,7 +293,12 @@ class BaseRunner:
       self.process = self._register_process()
       if start_heartbeat:
         self._start_heartbeat_thread()
-      fire_hooks(f"{self.hook_prefix}.start", self.process, backend_alias=self.backend_alias)
+      fire_hooks(
+        f"{self.hook_prefix}.start",
+        self.process,
+        backend_alias=self.backend_alias,
+        config=self.backend_config,
+      )
       self._started = True
     return self.process
 
@@ -285,7 +306,7 @@ class BaseRunner:
     if self.process is None:
       return
 
-    alias = get_database_alias(self.backend_alias)
+    alias = self.backend_config.database_alias
     with _process_write_context(alias):
       sqlite_retry(
         lambda: Process.objects.using(alias).filter(pk=self.process.pk).delete(), alias=alias
@@ -328,6 +349,7 @@ class BaseRunner:
           error,
           context=f"{self.hook_prefix}.heartbeat",
           backend_alias=self.backend_alias,
+          config=self.backend_config,
         )
         self.request_stop()
         return
@@ -337,7 +359,7 @@ class BaseRunner:
         return
 
   def _touch_process_row(self):
-    alias = get_database_alias(self.backend_alias)
+    alias = self.backend_config.database_alias
     with app_executor(), _process_write_context(alias):
       return sqlite_retry(
         lambda: (
@@ -359,7 +381,7 @@ class BaseRunner:
 
     threshold = self._process_alive_threshold
     if threshold is None:
-      threshold = load_backend_config(self.backend_alias).process_alive_threshold
+      threshold = self.backend_config.process_alive_threshold
     try:
       threshold = float(threshold)
     except (TypeError, ValueError):
@@ -377,7 +399,7 @@ class BaseRunner:
   def _liveness_check_interval(self):
     threshold = self._process_alive_threshold
     if threshold is None:
-      threshold = load_backend_config(self.backend_alias).process_alive_threshold
+      threshold = self.backend_config.process_alive_threshold
     try:
       threshold = float(threshold)
     except (TypeError, ValueError):

@@ -94,6 +94,7 @@ class Command(BaseCommand):
     parser.add_argument(
       "--skip-recurring",
       action="store_true",
+      default=None,
       help="start without the scheduler",
     )
     parser.add_argument(
@@ -109,8 +110,9 @@ class Command(BaseCommand):
       "mode": options["mode"],
       "only_work": options["only_work"],
       "only_dispatch": options["only_dispatch"],
-      "skip_recurring": options["skip_recurring"],
     }
+    if options["skip_recurring"] is not None:
+      cli_overrides["skip_recurring"] = options["skip_recurring"]
     try:
       config = load_backend_config(
         options["backend"],

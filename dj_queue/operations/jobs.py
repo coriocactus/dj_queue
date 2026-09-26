@@ -13,7 +13,7 @@ from django.tasks import TaskContext
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
-from dj_queue.config import load_allowed_queues, load_backend_config
+from dj_queue.config import load_allowed_queues, resolve_backend_config
 from dj_queue.db import (
   database_capabilities,
   get_database_alias,
@@ -100,13 +100,14 @@ class _PreparedJob:
   dispatch_outcome: DispatchOutcome | None = None
 
 
-def enqueue_job(task, args, kwargs, *, backend_alias="default", job_id=None):
+def enqueue_job(task, args, kwargs, *, backend_alias="default", job_id=None, config=None):
   job, _ = enqueue_job_with_dispatch(
     task,
     args,
     kwargs,
     backend_alias=backend_alias,
     job_id=job_id,
+    config=config,
   )
   return job
 
@@ -119,11 +120,18 @@ def enqueue_job_with_dispatch(
   backend_alias="default",
   validate=True,
   job_id=None,
+  config=None,
 ):
   submission = _prepare_submission(
-    task, args, kwargs, backend_alias=backend_alias, validate=validate, job_id=job_id
+    task,
+    args,
+    kwargs,
+    backend_alias=backend_alias,
+    validate=validate,
+    job_id=job_id,
+    config=config,
   )
-  alias = get_database_alias(backend_alias)
+  alias = get_database_alias(backend_alias, config=config)
 
   def enqueue_transition():
     with transaction.atomic(using=alias):
@@ -133,13 +141,14 @@ def enqueue_job_with_dispatch(
         task=task,
         backend_alias=backend_alias,
         check_conflicts=False,
+        config=config,
       )
       return job, dispatch_outcome
 
   job, dispatch_outcome = retry_transient_database_errors(enqueue_transition)
 
   if dispatch_outcome.should_notify:
-    notify_ready_queues_on_commit((job.queue_name,), backend_alias=backend_alias)
+    notify_ready_queues_on_commit((job.queue_name,), backend_alias=backend_alias, config=config)
 
   if event_logging_enabled(backend_alias=backend_alias):
     log_event(
@@ -153,14 +162,14 @@ def enqueue_job_with_dispatch(
   return job, dispatch_outcome
 
 
-def _prepare_submission(task, args, kwargs, *, backend_alias, validate, job_id=None):
+def _prepare_submission(task, args, kwargs, *, backend_alias, validate, job_id=None, config=None):
   if validate:
-    validate_queue_allowed(task.queue_name, backend_alias=backend_alias)
+    validate_queue_allowed(task.queue_name, backend_alias=backend_alias, config=config)
     validate_priority(task.priority)
   payload = _normalize_payload(args, kwargs)
   concurrency_key = _resolve_concurrency_key(task, args, kwargs)
   limit, duration, on_conflict = _concurrency_policy(
-    task, concurrency_key, backend_alias=backend_alias
+    task, concurrency_key, backend_alias=backend_alias, config=config
   )
   return _JobSubmission(
     task,
@@ -180,24 +189,28 @@ def _prepare_submission(task, args, kwargs, *, backend_alias, validate, job_id=N
   )
 
 
-def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True):
+def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True, config=None):
   submissions = [
-    _prepare_submission(task, args, kwargs, backend_alias=backend_alias, validate=validate)
+    _prepare_submission(
+      task, args, kwargs, backend_alias=backend_alias, validate=validate, config=config
+    )
     for task, args, kwargs in task_calls
   ]
   if not submissions:
     return []
 
-  alias = get_database_alias(backend_alias)
+  alias = get_database_alias(backend_alias, config=config)
   prepared, ready_queue_names = retry_transient_database_errors(
-    lambda: _enqueue_bulk_once(submissions, alias=alias, backend_alias=backend_alias)
+    lambda: _enqueue_bulk_once(
+      submissions, alias=alias, backend_alias=backend_alias, config=config
+    )
   )
-  notify_ready_queues_on_commit(ready_queue_names, backend_alias=backend_alias)
+  notify_ready_queues_on_commit(ready_queue_names, backend_alias=backend_alias, config=config)
   _log_bulk_enqueued((entry.dispatch_outcome for entry in prepared), backend_alias=backend_alias)
   return [(entry.job, entry.task, entry.dispatch_outcome) for entry in prepared]
 
 
-def _enqueue_bulk_once(submissions, *, alias, backend_alias):
+def _enqueue_bulk_once(submissions, *, alias, backend_alias, config=None):
   now = timezone.now()
   prepared = []
   for submission in submissions:
@@ -206,14 +219,16 @@ def _enqueue_bulk_once(submissions, *, alias, backend_alias):
       _PreparedJob(
         task=submission.task,
         job=job,
-        dispatch_decision=_dispatch_decision(job, backend_alias=backend_alias, now=now),
+        dispatch_decision=_dispatch_decision(
+          job, backend_alias=backend_alias, now=now, config=config
+        ),
       )
     )
 
   with transaction.atomic(using=alias):
     _bulk_create(alias, Job, [entry.job for entry in prepared])
     ready_rows, scheduled_rows, blocked_rows, discarded_jobs, ready_queue_names = (
-      _bulk_dispatch_rows(prepared, backend_alias=backend_alias, now=now)
+      _bulk_dispatch_rows(prepared, backend_alias=backend_alias, now=now, config=config)
     )
     _bulk_create_ready_executions_locked(
       alias, ready_rows, backend_alias=backend_alias, check_conflicts=False
@@ -227,7 +242,7 @@ def _enqueue_bulk_once(submissions, *, alias, backend_alias):
   return prepared, tuple(dict.fromkeys(ready_queue_names))
 
 
-def _bulk_dispatch_rows(prepared, *, backend_alias, now):
+def _bulk_dispatch_rows(prepared, *, backend_alias, now, config=None):
   ready_rows = []
   scheduled_rows = []
   blocked_rows = []
@@ -271,6 +286,7 @@ def _bulk_dispatch_rows(prepared, *, backend_alias, now):
     ready_queue_names=ready_queue_names,
     backend_alias=backend_alias,
     now=now,
+    config=config,
   )
   return ready_rows, scheduled_rows, blocked_rows, discarded_jobs, ready_queue_names
 
@@ -303,6 +319,7 @@ def _dispatch_bulk_concurrency_entries(
   ready_queue_names,
   backend_alias,
   now,
+  config=None,
 ):
   groups = {}
   for entry in entries:
@@ -319,6 +336,7 @@ def _dispatch_bulk_concurrency_entries(
       limit=limit,
       duration_seconds=duration_seconds,
       backend_alias=backend_alias,
+      config=config,
     )
     for index, entry in enumerate(group):
       job = entry.job
@@ -365,27 +383,33 @@ def execute_claimed_job(
   job: ClaimedJob | Job | UUID | str,
   *,
   backend_alias: str = "default",
+  config=None,
 ) -> Job:
   claimed_job = None
   if isinstance(job, ClaimedJob):
     claimed_job = job
     job = claimed_job.job
   elif not isinstance(job, Job):
-    claimed_job = _load_claimed_job(job, backend_alias=backend_alias)
+    claimed_job = _load_claimed_job(job, backend_alias=backend_alias, config=config)
     job = claimed_job.job
 
+  config = resolve_backend_config(job.backend_alias, config)
   task = None
   try:
     task = import_string(job.task_path)
     args = list(job.payload.get("args", []))
     kwargs = dict(job.payload.get("kwargs", {}))
   except Exception as exc:
-    return _execution_failure_outcome(job, exc, task=task, failure_kind="task_import")
+    return _execution_failure_outcome(
+      job, exc, task=task, failure_kind="task_import", config=config
+    )
 
   try:
-    return_value = _call_task(task, claimed_job, job, args, kwargs)
+    return_value = _call_task(task, claimed_job, job, args, kwargs, config=config)
   except Exception as exc:
-    return _execution_failure_outcome(job, exc, task=task, failure_kind="task_execution")
+    return _execution_failure_outcome(
+      job, exc, task=task, failure_kind="task_execution", config=config
+    )
 
   try:
     return_value = _normalize_return_value(return_value)
@@ -395,6 +419,7 @@ def execute_claimed_job(
       exc,
       task=task,
       failure_kind="result_serialization",
+      config=config,
     )
 
   return _complete_claimed_job(
@@ -402,13 +427,14 @@ def execute_claimed_job(
     return_value,
     backend_alias=job.backend_alias,
     task=task,
+    config=config,
   )
 
 
-def _call_task(task, claimed_job, job, args, kwargs):
+def _call_task(task, claimed_job, job, args, kwargs, config=None):
   if task.takes_context:
     if claimed_job is None:
-      claimed_job = _load_claimed_job(job.id, backend_alias=job.backend_alias)
+      claimed_job = _load_claimed_job(job.id, backend_alias=job.backend_alias, config=config)
     if not isinstance(claimed_job, ClaimedJob):
       raise RuntimeError("ClaimedJob is required for task context execution")
     context = TaskContext(task_result=task_result_for_claimed_job(task, claimed_job))
@@ -416,7 +442,7 @@ def _call_task(task, claimed_job, job, args, kwargs):
   return task.call(*args, **kwargs)
 
 
-def _execution_failure_outcome(job, error, *, task, failure_kind):
+def _execution_failure_outcome(job, error, *, task, failure_kind, config=None):
   return _fail_claimed_job(
     job,
     error,
@@ -424,24 +450,26 @@ def _execution_failure_outcome(job, error, *, task, failure_kind):
     backend_alias=job.backend_alias,
     task=task,
     failure_kind=failure_kind,
+    config=config,
   )
 
 
-def complete_claimed_job(job, return_value, *, backend_alias="default"):
-  return _complete_claimed_job(job, return_value, backend_alias=backend_alias)
+def complete_claimed_job(job, return_value, *, backend_alias="default", config=None):
+  return _complete_claimed_job(job, return_value, backend_alias=backend_alias, config=config)
 
 
-def _complete_claimed_job(job, return_value, *, backend_alias="default", task=None):
-  alias = get_database_alias(backend_alias)
+def _complete_claimed_job(job, return_value, *, backend_alias="default", task=None, config=None):
+  alias = get_database_alias(backend_alias, config=config)
   if isinstance(job, ClaimedJob):
     job = job.job
   job = _resolve_claimed_job(job, alias=alias, backend_alias=backend_alias)
+
+  config = resolve_backend_config(job.backend_alias, config)
 
   def complete_transition():
     completed = copy(job)
     with transaction.atomic(using=alias):
       now = timezone.now()
-      config = load_backend_config(job.backend_alias)
 
       if config.preserve_finished_jobs:
         if database_capabilities(alias).backend_family == "postgresql":
@@ -459,7 +487,7 @@ def _complete_claimed_job(job, return_value, *, backend_alias="default", task=No
         _ensure_no_other_execution_state(alias, job, ignored_models=(ClaimedExecution,))
         completed.delete(using=alias)
 
-      _release_concurrency_slot(job, task=task)
+      _release_concurrency_slot(job, task=task, config=config)
     return completed
 
   completed = retry_transient_database_errors(complete_transition)
@@ -473,12 +501,13 @@ def _complete_claimed_job(job, return_value, *, backend_alias="default", task=No
   return completed
 
 
-def fail_claimed_job(job, error, *, traceback_text="", backend_alias="default"):
+def fail_claimed_job(job, error, *, traceback_text="", backend_alias="default", config=None):
   return _fail_claimed_job(
     job,
     error,
     traceback_text=traceback_text,
     backend_alias=backend_alias,
+    config=config,
   )
 
 
@@ -490,8 +519,9 @@ def _fail_claimed_job(
   backend_alias="default",
   task=None,
   failure_kind="runtime",
+  config=None,
 ):
-  alias = get_database_alias(backend_alias)
+  alias = get_database_alias(backend_alias, config=config)
   if isinstance(job, ClaimedJob):
     job = job.job
   job = _resolve_claimed_job(job, alias=alias, backend_alias=backend_alias)
@@ -507,7 +537,7 @@ def _fail_claimed_job(
         traceback=traceback_text,
       )
 
-      _release_concurrency_slot(job, task=task)
+      _release_concurrency_slot(job, task=task, config=config)
 
   retry_transient_database_errors(fail_transition)
   if event_logging_enabled(backend_alias=backend_alias):
@@ -528,9 +558,10 @@ def fail_orphaned_claimed_jobs(
   traceback_text="",
   backend_alias="default",
   batch_size=500,
+  config=None,
 ):
-  alias = get_database_alias(backend_alias)
-  config = load_backend_config(backend_alias)
+  alias = get_database_alias(backend_alias, config=config)
+  config = resolve_backend_config(backend_alias, config)
   with transaction.atomic(using=alias):
     claimed_rows = list(
       locked_queryset(
@@ -546,6 +577,7 @@ def fail_orphaned_claimed_jobs(
       error,
       traceback_text=traceback_text,
       backend_alias=backend_alias,
+      config=config,
     )
 
 
@@ -556,11 +588,12 @@ def fail_claimed_jobs_for_process(
   traceback_text="",
   backend_alias="default",
   delete_process=False,
+  config=None,
 ):
   if process is None:
     return []
 
-  alias = get_database_alias(backend_alias)
+  alias = get_database_alias(backend_alias, config=config)
   jobs = [
     claimed.job
     for claimed in (
@@ -572,14 +605,17 @@ def fail_claimed_jobs_for_process(
     error,
     traceback_text=traceback_text,
     backend_alias=backend_alias,
+    config=config,
   )
   if delete_process:
     process.delete(using=alias)
   return failed_jobs
 
 
-def fail_claimed_jobs_for_pid(pid, error, *, traceback_text="", backend_alias="default"):
-  alias = get_database_alias(backend_alias)
+def fail_claimed_jobs_for_pid(
+  pid, error, *, traceback_text="", backend_alias="default", config=None
+):
+  alias = get_database_alias(backend_alias, config=config)
   processes = list(Process.objects.using(alias).filter(pid=pid, backend_alias=backend_alias)[:2])
   if len(processes) != 1:
     return []
@@ -590,6 +626,7 @@ def fail_claimed_jobs_for_pid(pid, error, *, traceback_text="", backend_alias="d
     traceback_text=traceback_text,
     backend_alias=backend_alias,
     delete_process=True,
+    config=config,
   )
 
 
@@ -601,8 +638,9 @@ def fail_claimed_jobs_for_child(
   error,
   traceback_text="",
   backend_alias="default",
+  config=None,
 ):
-  alias = get_database_alias(backend_alias)
+  alias = get_database_alias(backend_alias, config=config)
   process = (
     Process.objects.using(alias)
     .filter(
@@ -619,6 +657,7 @@ def fail_claimed_jobs_for_child(
     traceback_text=traceback_text,
     backend_alias=backend_alias,
     delete_process=True,
+    config=config,
   )
 
 
@@ -630,9 +669,10 @@ def prune_stale_processes(
   backend_alias="default",
   exclude_process=None,
   batch_size=500,
+  config=None,
 ):
-  alias = get_database_alias(backend_alias)
-  config = load_backend_config(backend_alias)
+  alias = get_database_alias(backend_alias, config=config)
+  config = resolve_backend_config(backend_alias, config)
   pruned_processes = []
 
   with transaction.atomic(using=alias):
@@ -678,6 +718,7 @@ def prune_stale_processes(
         error,
         traceback_text=traceback_text,
         backend_alias=backend_alias,
+        config=config,
       )
       pruned_processes.append(process)
       remaining -= len(jobs)
@@ -686,10 +727,12 @@ def prune_stale_processes(
     return pruned_processes
 
 
-def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_locked=None):
-  alias = get_database_alias(backend_alias)
+def promote_scheduled_jobs(
+  *, batch_size, backend_alias="default", use_skip_locked=None, config=None
+):
+  alias = get_database_alias(backend_alias, config=config)
   if use_skip_locked is None:
-    use_skip_locked = load_backend_config(backend_alias).use_skip_locked
+    use_skip_locked = resolve_backend_config(backend_alias, config).use_skip_locked
 
   def promote_transition():
     now = timezone.now()
@@ -736,7 +779,7 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
         if job.pk in direct_job_ids:
           continue
         try:
-          dispatch_outcome = _dispatch_existing_job(job)
+          dispatch_outcome = _dispatch_existing_job(job, config=config)
         except DispatchPolicyError as error:
           _record_dispatch_policy_failure(alias, job, error)
           policy_failures.append((job, error))
@@ -752,15 +795,15 @@ def promote_scheduled_jobs(*, batch_size, backend_alias="default", use_skip_lock
 
   if ready_queue_names:
     notify_ready_queues_on_commit(
-      tuple(dict.fromkeys(ready_queue_names)), backend_alias=backend_alias
+      tuple(dict.fromkeys(ready_queue_names)), backend_alias=backend_alias, config=config
     )
   _log_dispatch_policy_failures(policy_failures, backend_alias=backend_alias)
   return promoted_jobs
 
 
-def dispatch_scheduled_job_now(job_id, *, backend_alias="default"):
-  alias = get_database_alias(backend_alias)
-  config = load_backend_config(backend_alias)
+def dispatch_scheduled_job_now(job_id, *, backend_alias="default", config=None):
+  alias = get_database_alias(backend_alias, config=config)
+  config = resolve_backend_config(backend_alias, config)
 
   with transaction.atomic(using=alias):
     scheduled = locked_queryset(
@@ -779,10 +822,10 @@ def dispatch_scheduled_job_now(job_id, *, backend_alias="default"):
     job = scheduled.job
     job.scheduled_at = None
     job.save(using=alias, update_fields=["scheduled_at", "updated_at"])
-    dispatch_outcome = _dispatch_existing_job(job)
+    dispatch_outcome = _dispatch_existing_job(job, config=config)
 
   if dispatch_outcome.should_notify:
-    notify_ready_queues_on_commit((job.queue_name,), backend_alias=backend_alias)
+    notify_ready_queues_on_commit((job.queue_name,), backend_alias=backend_alias, config=config)
 
   if event_logging_enabled(backend_alias=backend_alias):
     log_event(
@@ -801,10 +844,11 @@ def schedule_failed_job_retry(
   *,
   retry_at: datetime,
   backend_alias: str = "default",
+  config=None,
 ) -> Job:
   if retry_at is None:
     raise EnqueueError("retry_at is required")
-  alias = get_database_alias(backend_alias)
+  alias = get_database_alias(backend_alias, config=config)
 
   with transaction.atomic(using=alias):
     failed = (
@@ -818,8 +862,8 @@ def schedule_failed_job_retry(
     return failed.job
 
 
-def retry_failed_job(job_id: UUID | str, *, backend_alias: str = "default") -> Job:
-  alias = get_database_alias(backend_alias)
+def retry_failed_job(job_id: UUID | str, *, backend_alias: str = "default", config=None) -> Job:
+  alias = get_database_alias(backend_alias, config=config)
 
   def retry_transition():
     with transaction.atomic(using=alias):
@@ -836,13 +880,16 @@ def retry_failed_job(job_id: UUID | str, *, backend_alias: str = "default") -> J
         alias,
         failed_rows,
         backend_alias=backend_alias,
+        config=config,
       )
       return jobs[0], ready_queue_names
 
   job, ready_queue_names = retry_transient_database_errors(retry_transition)
 
   if ready_queue_names:
-    notify_ready_queues_on_commit(tuple(ready_queue_names), backend_alias=backend_alias)
+    notify_ready_queues_on_commit(
+      tuple(ready_queue_names), backend_alias=backend_alias, config=config
+    )
 
   _log_jobs_retried((job,), backend_alias=backend_alias)
   return job
@@ -853,9 +900,10 @@ def retry_failed_jobs(
   job_ids: Iterable[UUID | str] | None = None,
   batch_size: int = 500,
   backend_alias: str = "default",
+  config=None,
 ) -> int:
-  alias = get_database_alias(backend_alias)
-  config = load_backend_config(backend_alias)
+  alias = get_database_alias(backend_alias, config=config)
+  config = resolve_backend_config(backend_alias, config)
   if job_ids is not None:
     job_ids = tuple(job_ids)
 
@@ -886,6 +934,7 @@ def retry_failed_jobs(
         failed_rows,
         backend_alias=backend_alias,
         isolate_policy_errors=True,
+        config=config,
       )
 
   jobs, ready_queue_names, policy_failures = retry_transient_database_errors(retry_transition)
@@ -894,6 +943,7 @@ def retry_failed_jobs(
     notify_ready_queues_on_commit(
       tuple(dict.fromkeys(ready_queue_names)),
       backend_alias=backend_alias,
+      config=config,
     )
 
   _log_jobs_retried(jobs, backend_alias=backend_alias)
@@ -901,10 +951,12 @@ def retry_failed_jobs(
   return len(jobs)
 
 
-def promote_failed_job_retries(*, batch_size, backend_alias="default", use_skip_locked=None):
-  alias = get_database_alias(backend_alias)
+def promote_failed_job_retries(
+  *, batch_size, backend_alias="default", use_skip_locked=None, config=None
+):
+  alias = get_database_alias(backend_alias, config=config)
   if use_skip_locked is None:
-    use_skip_locked = load_backend_config(backend_alias).use_skip_locked
+    use_skip_locked = resolve_backend_config(backend_alias, config).use_skip_locked
   now = timezone.now()
 
   def promote_transition():
@@ -932,6 +984,7 @@ def promote_failed_job_retries(*, batch_size, backend_alias="default", use_skip_
         failed_rows,
         backend_alias=backend_alias,
         isolate_policy_errors=True,
+        config=config,
       )
 
   jobs, ready_queue_names, policy_failures = retry_transient_database_errors(promote_transition)
@@ -940,6 +993,7 @@ def promote_failed_job_retries(*, batch_size, backend_alias="default", use_skip_
     notify_ready_queues_on_commit(
       tuple(dict.fromkeys(ready_queue_names)),
       backend_alias=backend_alias,
+      config=config,
     )
 
   _log_jobs_retried(jobs, backend_alias=backend_alias)
@@ -953,6 +1007,7 @@ def _dispatch_consumed_failed_rows(
   *,
   backend_alias,
   isolate_policy_errors=False,
+  config=None,
 ):
   now = timezone.now()
   failed_jobs = [failed.job for failed in failed_rows]
@@ -970,6 +1025,7 @@ def _dispatch_consumed_failed_rows(
         job,
         backend_alias=backend_alias,
         now=now,
+        config=config,
       )
     except DispatchPolicyError as error:
       if not isolate_policy_errors:
@@ -983,6 +1039,7 @@ def _dispatch_consumed_failed_rows(
       prepared,
       backend_alias=backend_alias,
       now=now,
+      config=config,
     )
   )
 
@@ -1055,8 +1112,8 @@ def _log_dispatch_policy_failures(failures, *, backend_alias):
 _KEEP_RUN_AFTER = object()
 
 
-def enqueue_job_again(job_id, *, backend_alias="default", run_after=_KEEP_RUN_AFTER):
-  alias = get_database_alias(backend_alias)
+def enqueue_job_again(job_id, *, backend_alias="default", run_after=_KEEP_RUN_AFTER, config=None):
+  alias = get_database_alias(backend_alias, config=config)
   source_job = Job.objects.using(alias).get(pk=job_id, backend_alias=backend_alias)
   task = import_string(source_job.task_path)
   source_run_after = source_job.scheduled_at if run_after is _KEEP_RUN_AFTER else run_after
@@ -1069,7 +1126,9 @@ def enqueue_job_again(job_id, *, backend_alias="default", run_after=_KEEP_RUN_AF
     )
   args = list(source_job.payload.get("args", []))
   kwargs = dict(source_job.payload.get("kwargs", {}))
-  job, _ = enqueue_job_with_dispatch(task, args, kwargs, backend_alias=source_job.backend_alias)
+  job, _ = enqueue_job_with_dispatch(
+    task, args, kwargs, backend_alias=source_job.backend_alias, config=config
+  )
   return job
 
 
@@ -1082,9 +1141,10 @@ def _discard_state_jobs(
   backend_alias="default",
   release_concurrency=False,
   queue_name=None,
+  config=None,
 ):
-  alias = get_database_alias(backend_alias)
-  config = load_backend_config(backend_alias)
+  alias = get_database_alias(backend_alias, config=config)
+  config = resolve_backend_config(backend_alias, config)
 
   with transaction.atomic(using=alias):
     if model is FailedExecution:
@@ -1123,7 +1183,7 @@ def _discard_state_jobs(
 
     if release_concurrency:
       for job in jobs:
-        _release_concurrency_slot(job)
+        _release_concurrency_slot(job, config=config)
 
   should_log = event_logging_enabled(backend_alias=backend_alias)
   for job in jobs:
@@ -1142,6 +1202,7 @@ def discard_failed_jobs(
   job_ids: Iterable[UUID | str] | None = None,
   batch_size: int = 500,
   backend_alias: str = "default",
+  config=None,
 ) -> int:
   return _discard_state_jobs(
     FailedExecution,
@@ -1149,11 +1210,14 @@ def discard_failed_jobs(
     job_ids=job_ids,
     batch_size=batch_size,
     backend_alias=backend_alias,
+    config=config,
   )
 
 
-def discard_failed_job(job_id: UUID | str, *, backend_alias: str = "default") -> int:
-  return discard_failed_jobs(job_ids=[job_id], batch_size=1, backend_alias=backend_alias)
+def discard_failed_job(job_id: UUID | str, *, backend_alias: str = "default", config=None) -> int:
+  return discard_failed_jobs(
+    job_ids=[job_id], batch_size=1, backend_alias=backend_alias, config=config
+  )
 
 
 def discard_ready_jobs(
@@ -1161,6 +1225,7 @@ def discard_ready_jobs(
   job_ids: Iterable[UUID | str] | None = None,
   batch_size: int = 500,
   backend_alias: str = "default",
+  config=None,
 ) -> int:
   return _discard_state_jobs(
     ReadyExecution,
@@ -1169,10 +1234,13 @@ def discard_ready_jobs(
     batch_size=batch_size,
     backend_alias=backend_alias,
     release_concurrency=True,
+    config=config,
   )
 
 
-def discard_ready_jobs_for_queue(queue_name, *, batch_size=500, backend_alias="default"):
+def discard_ready_jobs_for_queue(
+  queue_name, *, batch_size=500, backend_alias="default", config=None
+):
   return _discard_state_jobs(
     ReadyExecution,
     "ready",
@@ -1180,6 +1248,7 @@ def discard_ready_jobs_for_queue(queue_name, *, batch_size=500, backend_alias="d
     backend_alias=backend_alias,
     release_concurrency=True,
     queue_name=queue_name,
+    config=config,
   )
 
 
@@ -1188,6 +1257,7 @@ def discard_scheduled_jobs(
   job_ids: Iterable[UUID | str] | None = None,
   batch_size: int = 500,
   backend_alias: str = "default",
+  config=None,
 ) -> int:
   return _discard_state_jobs(
     ScheduledExecution,
@@ -1195,6 +1265,7 @@ def discard_scheduled_jobs(
     job_ids=job_ids,
     batch_size=batch_size,
     backend_alias=backend_alias,
+    config=config,
   )
 
 
@@ -1203,6 +1274,7 @@ def discard_blocked_jobs(
   job_ids: Iterable[UUID | str] | None = None,
   batch_size: int = 500,
   backend_alias: str = "default",
+  config=None,
 ) -> int:
   return _discard_state_jobs(
     BlockedExecution,
@@ -1210,21 +1282,26 @@ def discard_blocked_jobs(
     job_ids=job_ids,
     batch_size=batch_size,
     backend_alias=backend_alias,
+    config=config,
   )
 
 
-def _dispatch_existing_job(job, *, check_conflicts=True):
-  return _dispatch_job(job, backend_alias=job.backend_alias, check_conflicts=check_conflicts)
+def _dispatch_existing_job(job, *, check_conflicts=True, config=None):
+  return _dispatch_job(
+    job, backend_alias=job.backend_alias, check_conflicts=check_conflicts, config=config
+  )
 
 
-def _dispatch_decision(job, *, backend_alias, now, task=None):
+def _dispatch_decision(job, *, backend_alias, now, task=None, config=None):
   if job.scheduled_at is not None and job.scheduled_at > now:
     return _DispatchDecision(DispatchOutcome.SCHEDULED)
 
   if not job.concurrency_key:
     return _DispatchDecision(DispatchOutcome.READY)
 
-  limit, duration_seconds, on_conflict = concurrency_settings_for_job(job, task=task)
+  limit, duration_seconds, on_conflict = concurrency_settings_for_job(
+    job, task=task, config=config
+  )
   return _DispatchDecision(
     None,
     concurrency_key=job.concurrency_key,
@@ -1242,11 +1319,13 @@ def _concurrency_dispatch_outcome(decision, *, acquired):
   return DispatchOutcome.BLOCKED
 
 
-def _dispatch_job(job, *, backend_alias, now=None, check_conflicts=True, task=None):
-  alias = get_database_alias(backend_alias)
+def _dispatch_job(job, *, backend_alias, now=None, check_conflicts=True, task=None, config=None):
+  alias = get_database_alias(backend_alias, config=config)
   if now is None:
     now = timezone.now()
-  decision = _dispatch_decision(job, task=task, backend_alias=backend_alias, now=now)
+  decision = _dispatch_decision(
+    job, task=task, backend_alias=backend_alias, now=now, config=config
+  )
 
   if decision.outcome is DispatchOutcome.SCHEDULED:
     _create_scheduled_execution(
@@ -1276,6 +1355,7 @@ def _dispatch_job(job, *, backend_alias, now=None, check_conflicts=True, task=No
       limit=decision.limit,
       duration_seconds=decision.duration_seconds,
       backend_alias=backend_alias,
+      config=config,
     ),
   )
   if dispatch_outcome is DispatchOutcome.READY:
@@ -1309,15 +1389,15 @@ def _dispatch_job(job, *, backend_alias, now=None, check_conflicts=True, task=No
   return dispatch_outcome
 
 
-def _release_concurrency_slot(job, *, task=None):
+def _release_concurrency_slot(job, *, task=None, config=None):
   if not job.concurrency_key:
     return
 
-  config = load_backend_config(job.backend_alias)
+  config = resolve_backend_config(job.backend_alias, config)
   try:
-    limit, duration_seconds, _ = concurrency_settings_for_job(job, task=task)
+    limit, duration_seconds, _ = concurrency_settings_for_job(job, task=task, config=config)
   except DispatchPolicyError:
-    limit = _semaphore_limit(job) or 1
+    limit = _semaphore_limit(job, config=config) or 1
     duration_seconds = config.default_concurrency_duration
 
   if (
@@ -1328,6 +1408,7 @@ def _release_concurrency_slot(job, *, task=None):
       backend_alias=job.backend_alias,
       use_skip_locked=config.use_skip_locked,
       slot_handoff=SlotHandoffMode.RELEASE_CLAIMED,
+      config=config,
     )
     is not None
   ):
@@ -1338,6 +1419,7 @@ def _release_concurrency_slot(job, *, task=None):
     limit=limit,
     duration_seconds=duration_seconds,
     backend_alias=job.backend_alias,
+    config=config,
   )
   unblock_next_blocked_job(
     job.concurrency_key,
@@ -1346,11 +1428,12 @@ def _release_concurrency_slot(job, *, task=None):
     backend_alias=job.backend_alias,
     use_skip_locked=config.use_skip_locked,
     slot_handoff=SlotHandoffMode.CONSUME_RELEASED,
+    config=config,
   )
 
 
-def _semaphore_limit(job):
-  alias = get_database_alias(job.backend_alias)
+def _semaphore_limit(job, config=None):
+  alias = get_database_alias(job.backend_alias, config=config)
   return (
     Semaphore.objects.using(alias)
     .filter(key=job.concurrency_key)
@@ -1359,8 +1442,8 @@ def _semaphore_limit(job):
   )
 
 
-def validate_queue_allowed(queue_name, *, backend_alias="default"):
-  allowed_queues = load_allowed_queues(backend_alias)
+def validate_queue_allowed(queue_name, *, backend_alias="default", config=None):
+  allowed_queues = load_allowed_queues(backend_alias) if config is None else config.allowed_queues
   if allowed_queues and queue_name not in allowed_queues:
     raise EnqueueError(f"queue {queue_name!r} is not allowed for backend {backend_alias!r}")
 
@@ -1390,10 +1473,10 @@ def _resolve_concurrency_key(task, args, kwargs):
   return value
 
 
-def _concurrency_policy(task, concurrency_key, *, backend_alias):
+def _concurrency_policy(task, concurrency_key, *, backend_alias, config=None):
   if concurrency_key is None:
     return None, None, None
-  return concurrency_settings(task, backend_alias=backend_alias)
+  return concurrency_settings(task, backend_alias=backend_alias, config=config)
 
 
 def _bound_arguments(task, args, kwargs):
@@ -1420,8 +1503,8 @@ def _normalize_return_value(return_value):
   )
 
 
-def _load_claimed_job(job_id, *, backend_alias):
-  alias = get_database_alias(backend_alias)
+def _load_claimed_job(job_id, *, backend_alias, config=None):
+  alias = get_database_alias(backend_alias, config=config)
   claimed = (
     ClaimedExecution.objects.using(alias)
     .select_related("job", "process")
@@ -1488,7 +1571,7 @@ def _finish_job_if_no_execution_state(
   job.updated_at = finished_at
 
 
-def _fail_claimed_jobs(jobs, error, *, traceback_text, backend_alias):
+def _fail_claimed_jobs(jobs, error, *, traceback_text, backend_alias, config=None):
   jobs = list(jobs)
   if not jobs:
     return []
@@ -1496,7 +1579,7 @@ def _fail_claimed_jobs(jobs, error, *, traceback_text, backend_alias):
     if job.backend_alias != backend_alias:
       raise ClaimedExecution.DoesNotExist
 
-  alias = get_database_alias(backend_alias)
+  alias = get_database_alias(backend_alias, config=config)
   job_ids = [job.id for job in jobs]
   exception_class = _exception_path(error)
   message = str(error)
@@ -1522,8 +1605,10 @@ def _fail_claimed_jobs(jobs, error, *, traceback_text, backend_alias):
       ]
     )
 
-    for job in release_recovered_concurrency_slots(jobs, backend_alias=backend_alias):
-      _release_concurrency_slot(job)
+    for job in release_recovered_concurrency_slots(
+      jobs, backend_alias=backend_alias, config=config
+    ):
+      _release_concurrency_slot(job, config=config)
 
   if event_logging_enabled(backend_alias=backend_alias):
     for job in jobs:

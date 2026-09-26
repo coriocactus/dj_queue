@@ -68,6 +68,7 @@ def test_hook_failure_is_isolated_and_later_hooks_still_fire():
   assert handle_thread_error.call_args.kwargs == {
     "context": "hook:worker.start",
     "backend_alias": "default",
+    "config": None,
   }
 
   clear_hooks()

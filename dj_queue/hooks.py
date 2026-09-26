@@ -67,7 +67,7 @@ def on_scheduler_exit(fn: Callable[..., Any]):
   return register_hook("scheduler.exit", fn)
 
 
-def fire_hooks(event: str, process: Any, *, backend_alias: str = "default"):
+def fire_hooks(event: str, process: Any, *, backend_alias: str = "default", config=None):
   for hook in tuple(_hooks.get(event, ())):
     try:
       hook(process)
@@ -76,6 +76,7 @@ def fire_hooks(event: str, process: Any, *, backend_alias: str = "default"):
         error,
         context=f"hook:{event}",
         backend_alias=backend_alias,
+        config=config,
       )
 
 

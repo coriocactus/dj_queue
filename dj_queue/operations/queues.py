@@ -7,8 +7,8 @@ from dj_queue.log import log_event
 from dj_queue.models import Pause, ReadyExecution
 
 
-def pause_queue(queue_name, *, backend_alias="default"):
-  alias = get_database_alias(backend_alias)
+def pause_queue(queue_name, *, backend_alias="default", config=None):
+  alias = get_database_alias(backend_alias, config=config)
   with transaction.atomic(using=alias):
     Pause.objects.using(alias).get_or_create(
       backend_alias=backend_alias,
@@ -25,8 +25,8 @@ def pause_queue(queue_name, *, backend_alias="default"):
   log_event("queue.paused", backend_alias=backend_alias, queue_name=queue_name)
 
 
-def resume_queue(queue_name, *, backend_alias="default", resumed_at=None):
-  alias = get_database_alias(backend_alias)
+def resume_queue(queue_name, *, backend_alias="default", resumed_at=None, config=None):
+  alias = get_database_alias(backend_alias, config=config)
   with transaction.atomic(using=alias):
     pause = (
       Pause.objects.using(alias)

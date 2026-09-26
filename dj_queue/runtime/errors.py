@@ -2,13 +2,13 @@ import logging
 
 from django.utils.module_loading import import_string
 
-from dj_queue.config import load_backend_config
+from dj_queue.config import resolve_backend_config
 
 logger = logging.getLogger("dj_queue")
 
 
-def handle_thread_error(error, *, context="", backend_alias="default"):
-  callback_path = load_backend_config(backend_alias).on_thread_error
+def handle_thread_error(error, *, context="", backend_alias="default", config=None):
+  callback_path = resolve_backend_config(backend_alias, config).on_thread_error
   if callback_path:
     try:
       callback = import_string(callback_path)

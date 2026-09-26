@@ -267,7 +267,8 @@ def test_dispatcher_notifies_workers_when_rows_become_ready(monkeypatch):
   )
   dispatcher.start()
 
-  def capture(queue_names, *, backend_alias="default"):
+  def capture(queue_names, *, backend_alias="default", config=None):
+    assert config is dispatcher.backend_config
     notified.append((tuple(queue_names), backend_alias))
 
   monkeypatch.setattr("dj_queue.wakeup.supports_listen_notify", lambda alias: True)

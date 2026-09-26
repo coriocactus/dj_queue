@@ -1477,7 +1477,11 @@ def test_fork_child_bootstrap_error_is_reported_and_exits_nonzero(monkeypatch):
 
   error, kwargs = handled[0]
   assert str(error) == "bootstrap failed"
-  assert kwargs == {"context": "supervisor.child", "backend_alias": "default"}
+  assert kwargs == {
+    "context": "supervisor.child",
+    "backend_alias": "default",
+    "config": supervisor.config,
+  }
   assert exits == [1]
 
 

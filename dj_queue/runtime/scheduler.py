@@ -38,6 +38,7 @@ class Scheduler(BaseRunner):
     heartbeat_interval=None,
     process_alive_threshold=None,
     supervisor=None,
+    backend_config=None,
   ):
     super().__init__(
       config,
@@ -49,6 +50,7 @@ class Scheduler(BaseRunner):
       heartbeat_interval=heartbeat_interval,
       process_alive_threshold=process_alive_threshold,
       supervisor=supervisor,
+      backend_config=backend_config,
     )
     self._static_tasks_synced = False
     self._last_cleanup_at = None
@@ -104,7 +106,9 @@ class Scheduler(BaseRunner):
     }
 
   def sync_static_tasks(self):
-    upsert_static_recurring_tasks(self.config.recurring, backend_alias=self.backend_alias)
+    upsert_static_recurring_tasks(
+      self.config.recurring, backend_alias=self.backend_alias, config=self.backend_config
+    )
 
   def ensure_static_tasks_synced(self):
     if self._static_tasks_synced:
@@ -130,6 +134,7 @@ class Scheduler(BaseRunner):
           include_dynamic_tasks=self.config.scheduler.dynamic_tasks_enabled,
           backend_alias=self.backend_alias,
           batch_size=RECURRING_BATCH_SIZE,
+          config=self.backend_config,
         )
       if self._cleanup_due(now):
         self._run_cleanup(now)
@@ -163,6 +168,7 @@ class Scheduler(BaseRunner):
         batch_size=CLEANUP_BATCH_SIZE,
         backend_alias=self.backend_alias,
         now=now,
+        config=self.backend_config,
       )
     if self.config.clear_failed_jobs_after is not None:
       deleted += clear_failed_jobs(
@@ -170,6 +176,7 @@ class Scheduler(BaseRunner):
         batch_size=CLEANUP_BATCH_SIZE,
         backend_alias=self.backend_alias,
         now=now,
+        config=self.backend_config,
       )
     if self.config.clear_recurring_executions_after is not None:
       deleted += clear_recurring_executions(
@@ -177,5 +184,6 @@ class Scheduler(BaseRunner):
         batch_size=CLEANUP_BATCH_SIZE,
         backend_alias=self.backend_alias,
         now=now,
+        config=self.backend_config,
       )
     return deleted

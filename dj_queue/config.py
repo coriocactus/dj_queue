@@ -151,6 +151,16 @@ class BackendConfig(ConfigValue):
     return self.scheduler is not None
 
 
+def resolve_backend_config(
+  backend_alias: str = "default", config: BackendConfig | None = None
+) -> BackendConfig:
+  if config is None:
+    return load_backend_config(backend_alias)
+  if config.backend_alias != backend_alias:
+    raise ImproperlyConfigured("dj_queue config belongs to a different backend alias")
+  return config
+
+
 def load_backend_config(
   backend_alias: str = "default",
   *,

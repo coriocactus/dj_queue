@@ -3,7 +3,7 @@ from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
 
-from dj_queue.config import load_backend_config
+from dj_queue.config import resolve_backend_config
 from dj_queue.db import get_database_alias, locked_queryset
 from dj_queue.models import FailedExecution, Job, RecurringExecution
 from dj_queue.operations._helpers import (
@@ -19,14 +19,15 @@ def clear_finished_jobs(
   batch_size=500,
   backend_alias="default",
   now=None,
+  config=None,
 ):
-  config = load_backend_config(backend_alias)
+  config = resolve_backend_config(backend_alias, config)
   if older_than is None:
     older_than = config.clear_finished_jobs_after
   if older_than is None:
     return 0
 
-  alias = get_database_alias(backend_alias)
+  alias = get_database_alias(backend_alias, config=config)
   if now is None:
     now = timezone.now()
   cutoff = now - timedelta(seconds=older_than)
@@ -53,14 +54,15 @@ def clear_failed_jobs(
   batch_size=500,
   backend_alias="default",
   now=None,
+  config=None,
 ):
-  config = load_backend_config(backend_alias)
+  config = resolve_backend_config(backend_alias, config)
   if older_than is None:
     older_than = config.clear_failed_jobs_after
   if older_than is None:
     return 0
 
-  alias = get_database_alias(backend_alias)
+  alias = get_database_alias(backend_alias, config=config)
   if now is None:
     now = timezone.now()
   cutoff = now - timedelta(seconds=older_than)
@@ -97,14 +99,15 @@ def clear_recurring_executions(
   batch_size=500,
   backend_alias="default",
   now=None,
+  config=None,
 ):
-  config = load_backend_config(backend_alias)
+  config = resolve_backend_config(backend_alias, config)
   if older_than is None:
     older_than = config.clear_recurring_executions_after
   if older_than is None:
     return 0
 
-  alias = get_database_alias(backend_alias)
+  alias = get_database_alias(backend_alias, config=config)
   if now is None:
     now = timezone.now()
   cutoff = now - timedelta(seconds=older_than)

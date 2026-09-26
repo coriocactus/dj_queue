@@ -8,7 +8,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.db import DEFAULT_DB_ALIAS, connections
 from django.db.utils import OperationalError
 
-from dj_queue.config import load_backend_config
+from dj_queue.config import resolve_backend_config
 
 TRANSIENT_DATABASE_RETRY_ATTEMPTS = 3
 TRANSIENT_DATABASE_RETRY_SLEEP_BASE = 0.01
@@ -45,8 +45,8 @@ class DatabaseCapabilities:
   uses_serialized_writes: bool
 
 
-def get_database_alias(backend_alias: str = "default") -> str:
-  return load_backend_config(backend_alias).database_alias
+def get_database_alias(backend_alias: str = "default", *, config=None) -> str:
+  return resolve_backend_config(backend_alias, config).database_alias
 
 
 def locked_queryset(qs, use_skip_locked: bool = True):

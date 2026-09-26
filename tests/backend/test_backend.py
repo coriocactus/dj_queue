@@ -535,7 +535,7 @@ def test_enqueue_bulk_groups_concurrency_slot_acquisition(monkeypatch):
   backend = limited.get_backend()
   acquire_calls = []
 
-  def acquire_many(key, *, count, limit, duration_seconds, backend_alias):
+  def acquire_many(key, *, count, limit, duration_seconds, backend_alias, config=None):
     acquire_calls.append(
       {
         "key": key,

@@ -74,7 +74,9 @@ def test_enqueue_ready_job_sends_ready_notify(monkeypatch):
 
   monkeypatch.setattr(
     "dj_queue.runtime.notify._notify",
-    lambda channel, payload, *, backend_alias: seen.append((channel, payload, backend_alias)),
+    lambda channel, payload, *, backend_alias, config: seen.append(
+      (channel, payload, backend_alias)
+    ),
   )
 
   echo.enqueue("notify")
@@ -92,7 +94,9 @@ def test_dispatcher_ready_promotion_sends_ready_notify(monkeypatch):
 
   monkeypatch.setattr(
     "dj_queue.runtime.notify._notify",
-    lambda channel, payload, *, backend_alias: seen.append((channel, payload, backend_alias)),
+    lambda channel, payload, *, backend_alias, config: seen.append(
+      (channel, payload, backend_alias)
+    ),
   )
 
   notify_ready_queues(("default",), backend_alias="default")

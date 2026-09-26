@@ -477,7 +477,8 @@ def test_worker_executes_already_claimed_job_object(monkeypatch):
   worker = make_worker()
   worker.start()
 
-  def execute_job(claimed_job, *, backend_alias):
+  def execute_job(claimed_job, *, backend_alias, config=None):
+    assert config is worker.backend_config
     seen.append((claimed_job, backend_alias))
 
   monkeypatch.setattr("dj_queue.runtime.worker.execute_claimed_job", execute_job)
@@ -525,7 +526,7 @@ def test_execute_claimed_job_completes_already_loaded_job_object(monkeypatch):
   ClaimedExecution.objects.create(job=job, process=process)
   seen = []
 
-  def complete_job(claimed_job, return_value, *, backend_alias, task=None):
+  def complete_job(claimed_job, return_value, *, backend_alias, task=None, config=None):
     seen.append((claimed_job, return_value, backend_alias))
 
   monkeypatch.setattr("dj_queue.operations.jobs._complete_claimed_job", complete_job)

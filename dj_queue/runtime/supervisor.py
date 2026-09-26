@@ -121,6 +121,7 @@ class Supervisor(BaseRunner):
           error,
           context="supervisor.housekeeping",
           backend_alias=self.backend_alias,
+          config=self.backend_config,
         )
         self._last_housekeeping_at = time.monotonic()
         return []
@@ -204,6 +205,7 @@ class Supervisor(BaseRunner):
         traceback_text="process no longer registered",
         backend_alias=self.backend_alias,
         batch_size=batch_size,
+        config=self.backend_config,
       )
 
   def prune_stale_process_rows(self, *, now=None, batch_size=SUPERVISOR_RECOVERY_BATCH_SIZE):
@@ -218,6 +220,7 @@ class Supervisor(BaseRunner):
         backend_alias=self.backend_alias,
         exclude_process=self.process,
         batch_size=batch_size,
+        config=self.backend_config,
       )
 
 
@@ -327,6 +330,7 @@ class AsyncSupervisor(Supervisor):
               error,
               context="supervisor.replace",
               backend_alias=self.backend_alias,
+              config=self.backend_config,
             )
             replacement.stop()
             delay = self._restart_backoff_delay(runner.name)
@@ -374,11 +378,13 @@ class AsyncSupervisor(Supervisor):
         ProcessExitError("runner thread crashed"),
         traceback_text="runner thread crashed",
         backend_alias=self.backend_alias,
+        config=self.backend_config,
       )
 
   def _rebuild_runner(self, runner):
     kwargs = {
       "config": runner.config,
+      "backend_config": self.backend_config,
       "backend_alias": self.backend_alias,
       "name": runner.name,
       "pid": self.pid,
@@ -393,6 +399,7 @@ class AsyncSupervisor(Supervisor):
     return [
       definition.runner_class(
         definition.config,
+        backend_config=self.backend_config,
         backend_alias=self.backend_alias,
         name=definition.name,
         pid=self.pid,
@@ -625,6 +632,7 @@ class ForkSupervisor(Supervisor):
         error=ProcessExitError(message),
         traceback_text=message,
         backend_alias=self.backend_alias,
+        config=self.backend_config,
       )
 
   def _fail_claimed_jobs_for_pid(self, pid):
@@ -634,6 +642,7 @@ class ForkSupervisor(Supervisor):
         ProcessExitError("child process exited"),
         traceback_text="child process exited",
         backend_alias=self.backend_alias,
+        config=self.backend_config,
       )
 
   def _build_runner_specs(self):
@@ -647,6 +656,7 @@ class ForkSupervisor(Supervisor):
           "runner_class": definition.runner_class,
           "kwargs": {
             "config": definition.config,
+            "backend_config": self.backend_config,
             "backend_alias": self.backend_alias,
             "name": definition.name,
             "hostname": self.hostname,
@@ -675,6 +685,7 @@ class ForkSupervisor(Supervisor):
           error,
           context="supervisor.child",
           backend_alias=self.backend_alias,
+          config=self.backend_config,
         )
       finally:
         connections.close_all()

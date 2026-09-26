@@ -3,8 +3,8 @@ import threading
 
 from django.db import connections
 
-from dj_queue.config import load_backend_config
-from dj_queue.db import get_database_alias, supports_listen_notify
+from dj_queue.config import resolve_backend_config
+from dj_queue.db import supports_listen_notify
 from dj_queue.log import log_event
 from dj_queue.queue_selectors import any_queue_matches_selectors
 from dj_queue.runtime.errors import handle_thread_error
@@ -33,8 +33,10 @@ class NotifyWakeupBackend:
     queues=("*",),
     reconnect_base_delay=NOTIFY_RECONNECT_BASE_DELAY,
     reconnect_max_delay=NOTIFY_RECONNECT_MAX_DELAY,
+    config=None,
   ):
     self.backend_alias = backend_alias
+    self.config = resolve_backend_config(backend_alias, config)
     self.wake_up = wake_up
     self.queues = tuple(queues or ("*",))
     self.reconnect_base_delay = reconnect_base_delay
@@ -54,14 +56,18 @@ class NotifyWakeupBackend:
     except Exception as error:
       self.failed = True
       self._close_connection()
-      handle_thread_error(error, context="worker.notify", backend_alias=self.backend_alias)
+      handle_thread_error(
+        error, context="worker.notify", backend_alias=self.backend_alias, config=self.config
+      )
     try:
       self._start_watcher()
     except Exception as error:
       self.failed = True
       self._watcher = None
       self._close_connection()
-      handle_thread_error(error, context="worker.notify", backend_alias=self.backend_alias)
+      handle_thread_error(
+        error, context="worker.notify", backend_alias=self.backend_alias, config=self.config
+      )
     return
 
   def stop(self, *, timeout=1):
@@ -102,7 +108,9 @@ class NotifyWakeupBackend:
         failures += 1
         self.failed = True
         self._close_connection()
-        handle_thread_error(error, context="worker.notify", backend_alias=self.backend_alias)
+        handle_thread_error(
+          error, context="worker.notify", backend_alias=self.backend_alias, config=self.config
+        )
 
   def _reconnect(self):
     try:
@@ -110,7 +118,9 @@ class NotifyWakeupBackend:
     except Exception as error:
       self.failed = True
       self._close_connection()
-      handle_thread_error(error, context="worker.notify", backend_alias=self.backend_alias)
+      handle_thread_error(
+        error, context="worker.notify", backend_alias=self.backend_alias, config=self.config
+      )
       return False
 
     self.failed = False
@@ -122,8 +132,7 @@ class NotifyWakeupBackend:
     return min(delay, self.reconnect_max_delay)
 
   def _open_connection(self):
-    alias = get_database_alias(self.backend_alias)
-    wrapper = connections[alias]
+    wrapper = connections[self.config.database_alias]
     connection = wrapper.Database.connect(**wrapper.get_connection_params())
     connection.autocommit = True
     postgres_sql.listen_channel(connection, READY_CHANNEL)
@@ -140,34 +149,37 @@ class NotifyWakeupBackend:
       return
 
 
-def notify_ready_queues(queue_names, *, backend_alias="default"):
-  config = load_backend_config(backend_alias)
+def notify_ready_queues(queue_names, *, backend_alias="default", config=None):
+  config = resolve_backend_config(backend_alias, config)
   if not queue_names or not config.listen_notify:
     return
 
-  alias = get_database_alias(backend_alias)
-  if not supports_listen_notify(alias):
+  if not supports_listen_notify(config.database_alias):
     return
 
   payload = json.dumps(list(dict.fromkeys(queue_names)), separators=(",", ":"))
-  _notify(READY_CHANNEL, payload, backend_alias=backend_alias)
+  _notify(READY_CHANNEL, payload, backend_alias=backend_alias, config=config)
   return
 
 
-def build_wakeup_backend(*, backend_alias="default", queues=(), wake_up=None):
-  config = load_backend_config(backend_alias)
-  alias = get_database_alias(backend_alias)
+def build_wakeup_backend(*, backend_alias="default", queues=(), wake_up=None, config=None):
+  config = resolve_backend_config(backend_alias, config)
+  alias = config.database_alias
   if wake_up is None or not config.listen_notify or not supports_listen_notify(alias):
     return NoopWakeupBackend()
-  return NotifyWakeupBackend(backend_alias=backend_alias, queues=queues, wake_up=wake_up)
+  return NotifyWakeupBackend(
+    backend_alias=backend_alias, queues=queues, wake_up=wake_up, config=config
+  )
 
 
-def _notify(channel, payload, *, backend_alias):
+def _notify(channel, payload, *, backend_alias, config):
   try:
-    alias = get_database_alias(backend_alias)
+    alias = config.database_alias
     postgres_sql.notify_channel(connections[alias], channel, payload)
   except Exception as error:
-    handle_thread_error(error, context="producer.notify", backend_alias=backend_alias)
+    handle_thread_error(
+      error, context="producer.notify", backend_alias=backend_alias, config=config
+    )
     return
   return
 
