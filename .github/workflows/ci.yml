@@ -118,10 +118,10 @@ jobs:
           - mysql-version: "8.0"
             django: "6.0"
             group: django60
-          - mysql-version: "26.7"
-            django: "6.0"
-            group: django60
-          - mysql-version: "26.7"
+          - mysql-version: "9.7"
+            django: "6.1"
+            group: django61
+          - mysql-version: "26.10"
             django: "6.1"
             group: django61
     services:
@@ -162,9 +162,9 @@ jobs:
             django: "6.0"
             group: django60
           - mariadb-version: "12.3"
-            django: "6.0"
-            group: django60
-          - mariadb-version: "12.3"
+            django: "6.1"
+            group: django61
+          - mariadb-version: "13.0"
             django: "6.1"
             group: django61
     services:

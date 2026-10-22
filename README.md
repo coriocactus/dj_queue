@@ -342,7 +342,7 @@ The database floor follows the selected Django release:
 | 6.1 | 15+ | 8.4+ | 10.11+ | 3.37+ |
 
 CI keeps the floors on Django 6.0 and tests newer database lines through
-PostgreSQL 18, MySQL 9.7 and 26.7, and MariaDB 12.3. Django 6.1 only runs with
+PostgreSQL 18, MySQL 9.7 and 26.10, and MariaDB 12.3 and 13.0. Django 6.1 only runs with
 database versions that it supports.
 
 For MySQL or MariaDB, install and configure a Django-compatible driver following Django's database docs.
