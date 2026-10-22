@@ -77,10 +77,10 @@ jobs:
           - ${{ matrix.port }}:${{ matrix.port }}
         options: ${{ matrix.health }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@v8.2.0
+      - uses: astral-sh/setup-uv@v10.3.2
         with:
           version: "0.12.9"
           python-version: "3.14"
@@ -104,7 +104,7 @@ jobs:
           --result-dir "$RESULT_DIR"
       - name: Upload upgrade artifacts
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: prerelease-${{ matrix.database }}
           path: benchmark-results/
