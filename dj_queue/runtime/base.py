@@ -1,4 +1,3 @@
-import math
 import threading
 import time
 import weakref
@@ -27,7 +26,6 @@ def app_executor():
 
 
 _sqlite_process_write_lock = threading.Lock()
-_safe_polling_interval = 1.0
 _liveness_check_min_interval = 1.0
 DJ_QUEUE_VERSION = version("dj-queue")
 ROLLOUT_PROTOCOL_VERSION = 1
@@ -103,7 +101,7 @@ class BaseRunner:
       heartbeat_interval = self.backend_config.process_heartbeat_interval
     self._heartbeat_interval = heartbeat_interval
     if process_alive_threshold is None:
-      process_alive_threshold = getattr(config, "process_alive_threshold", None)
+      process_alive_threshold = self.backend_config.process_alive_threshold
     self._process_alive_threshold = process_alive_threshold
     self._started = False
     self._stopped = False
@@ -111,18 +109,7 @@ class BaseRunner:
 
   @property
   def polling_interval(self):
-    return self._normalized_polling_interval(getattr(self.config, "polling_interval", None))
-
-  @staticmethod
-  def _normalized_polling_interval(value):
-    try:
-      polling_interval = float(value)
-    except (TypeError, ValueError):
-      return _safe_polling_interval
-
-    if not math.isfinite(polling_interval) or polling_interval <= 0:
-      return _safe_polling_interval
-    return polling_interval
+    return self.config.polling_interval
 
   def start(self):
     return self._start_process(start_heartbeat=True)
@@ -371,25 +358,9 @@ class BaseRunner:
       )
 
   def _effective_heartbeat_interval(self):
-    try:
-      heartbeat_interval = float(self._heartbeat_interval)
-    except (TypeError, ValueError):
-      heartbeat_interval = 0
-
-    if math.isfinite(heartbeat_interval) and heartbeat_interval > 0:
-      return heartbeat_interval
-
-    threshold = self._process_alive_threshold
-    if threshold is None:
-      threshold = self.backend_config.process_alive_threshold
-    try:
-      threshold = float(threshold)
-    except (TypeError, ValueError):
-      threshold = 0
-
-    if not math.isfinite(threshold) or threshold <= 0:
-      return 1.0
-    return max(min(threshold / 2, 60.0), 0.01)
+    if self._heartbeat_interval > 0:
+      return self._heartbeat_interval
+    return max(min(self._process_alive_threshold / 2, 60.0), 0.01)
 
   def _liveness_check_due(self):
     if self._last_liveness_check_at is None:
@@ -397,15 +368,5 @@ class BaseRunner:
     return time.monotonic() - self._last_liveness_check_at >= self._liveness_check_interval()
 
   def _liveness_check_interval(self):
-    threshold = self._process_alive_threshold
-    if threshold is None:
-      threshold = self.backend_config.process_alive_threshold
-    try:
-      threshold = float(threshold)
-    except (TypeError, ValueError):
-      threshold = 0
-
-    intervals = [5.0, self._effective_heartbeat_interval()]
-    if math.isfinite(threshold) and threshold > 0:
-      intervals.append(threshold / 10)
+    intervals = (5.0, self._effective_heartbeat_interval(), self._process_alive_threshold / 10)
     return max(min(intervals), self.polling_interval, _liveness_check_min_interval)

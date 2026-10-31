@@ -45,13 +45,6 @@ class PidFile:
       lock_file.close()
 
 
-def _read_pid(path):
-  try:
-    return int(path.read_text().strip())
-  except (OSError, TypeError, ValueError):
-    return None
-
-
 def _read_pid_file(lock_file):
   try:
     lock_file.seek(0)

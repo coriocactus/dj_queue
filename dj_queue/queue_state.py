@@ -154,10 +154,6 @@ def queue_state_queryset(*, backend_alias, queue_name, state):
   return _filter_state_queryset(queryset, definition).order_by(*definition.query_order)
 
 
-def queue_state_counts(*, backend_alias, queue_name):
-  return queue_state_summary(backend_alias=backend_alias, queue_name=queue_name).counts_by_state()
-
-
 def queue_state_summary(*, backend_alias, queue_name):
   alias = get_database_alias(backend_alias)
   if _invalid_execution_state_exists(alias, backend_alias, queue_name=queue_name):
@@ -312,10 +308,6 @@ def status_rank_expression():
     default=Value(99),
     output_field=IntegerField(),
   )
-
-
-def _queue_state_counts(base_queryset):
-  return base_queryset.aggregate(**_state_count_annotations())
 
 
 def _summary_annotations():

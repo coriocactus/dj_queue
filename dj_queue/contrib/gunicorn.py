@@ -68,8 +68,7 @@ def _start_embedded_supervisor(worker, *, backend_alias="default"):
     stop_event = worker._dj_queue_supervisor_poll_stop
     while stop_event.wait(supervisor.polling_interval) is False:
       try:
-        poll_once = getattr(supervisor, "poll_once_if_running", supervisor.poll_once)
-        if poll_once() is False:
+        if supervisor.poll_once_if_running() is False:
           return
       except Exception as error:
         handle_thread_error(

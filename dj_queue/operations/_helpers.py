@@ -154,29 +154,6 @@ def _ready_execution_row(
   )
 
 
-def _create_ready_execution(
-  alias,
-  job,
-  *,
-  backend_alias,
-  queue_name=None,
-  priority=None,
-  ready_at=None,
-  created_at=None,
-):
-  queue_name = _execution_queue_name(job, queue_name)
-  return _create_ready_execution_locked(
-    alias,
-    job,
-    backend_alias=backend_alias,
-    queue_name=queue_name,
-    priority=priority,
-    ready_at=ready_at,
-    created_at=created_at,
-    check_conflicts=True,
-  )
-
-
 def _create_ready_execution_locked(
   alias,
   job,

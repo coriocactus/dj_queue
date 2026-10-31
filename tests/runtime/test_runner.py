@@ -64,11 +64,12 @@ def test_runner_heartbeat_updates_and_stop_deregisters():
 
 def test_runner_heartbeat_uses_fallback_interval_when_disabled():
   runner = FallbackRunner(
-    SimpleNamespace(polling_interval=0.01, process_alive_threshold=0.05),
+    SimpleNamespace(polling_interval=0.01),
     name=f"fallback-heartbeat-runner-{uuid4()}",
     pid=12345,
     hostname="localhost",
     heartbeat_interval=0,
+    process_alive_threshold=0.05,
   )
   process = runner.start()
   initial_heartbeat = process.last_heartbeat_at
@@ -146,11 +147,12 @@ def test_runner_liveness_check_keeps_minimum_cadence(monkeypatch):
 
   monkeypatch.setattr("dj_queue.runtime.base.app_executor", executor)
   runner = FallbackRunner(
-    SimpleNamespace(polling_interval=0.01, process_alive_threshold=0.05),
+    SimpleNamespace(polling_interval=0.01),
     name=f"minimum-cadence-runner-{uuid4()}",
     pid=12345,
     hostname="localhost",
     heartbeat_interval=60,
+    process_alive_threshold=0.05,
   )
   runner.start()
 
@@ -284,21 +286,3 @@ def test_runner_registers_backend_alias_on_process():
     "rollout_protocol": 1,
   }
   runner.stop()
-
-
-@pytest.mark.parametrize("polling_interval", (None, 0, -1, "fast"))
-def test_runner_uses_safe_polling_interval_when_config_is_missing_or_invalid(polling_interval):
-  if polling_interval is None:
-    config = SimpleNamespace()
-  else:
-    config = SimpleNamespace(polling_interval=polling_interval)
-
-  runner = FallbackRunner(
-    config,
-    name=f"fallback-runner-{uuid4()}",
-    pid=12345,
-    hostname="localhost",
-    heartbeat_interval=0.01,
-  )
-
-  assert runner.polling_interval == 1.0

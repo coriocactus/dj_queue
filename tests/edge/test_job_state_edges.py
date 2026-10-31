@@ -14,7 +14,11 @@ from dj_queue.models import (
   Semaphore,
 )
 from dj_queue.operations.cleanup import clear_failed_jobs, clear_finished_jobs
-from dj_queue.operations.concurrency import promote_expired_blocked_jobs, unblock_next_blocked_job
+from dj_queue.operations.concurrency import (
+  SlotHandoffMode,
+  promote_expired_blocked_jobs,
+  unblock_next_blocked_job,
+)
 from dj_queue.operations.jobs import (
   EnqueueError,
   discard_blocked_jobs,
@@ -195,7 +199,13 @@ def test_unblock_next_blocked_job_rejects_mismatched_state_backend_alias():
   )
 
   with pytest.raises(EnqueueError, match="belongs to backend 'secondary'"):
-    unblock_next_blocked_job("account:1", limit=1, duration_seconds=60, backend_alias="default")
+    unblock_next_blocked_job(
+      "account:1",
+      limit=1,
+      duration_seconds=60,
+      slot_handoff=SlotHandoffMode.CONSUME_RELEASED,
+      backend_alias="default",
+    )
 
   assert BlockedExecution.objects.filter(job=job).exists() is True
   assert ReadyExecution.objects.filter(job=job).exists() is False

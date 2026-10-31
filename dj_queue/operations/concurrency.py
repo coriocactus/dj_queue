@@ -4,7 +4,7 @@ from datetime import timedelta
 from enum import StrEnum
 
 from django.db import connections, transaction
-from django.db.models import Case, F, IntegerField, Q, Value, When
+from django.db.models import F, Q, Value
 from django.db.models.functions import Greatest, Least
 from django.utils import timezone
 from django.utils.module_loading import import_string
@@ -42,7 +42,6 @@ from dj_queue.wakeup import notify_ready_queues_on_commit
 
 
 class SlotHandoffMode(StrEnum):
-  ACQUIRE = "acquire"
   RELEASE_CLAIMED = "release_claimed"
   CONSUME_RELEASED = "consume_released"
 
@@ -195,38 +194,18 @@ def semaphore_acquire_many(
     return acquired
 
 
-def semaphore_release(key, *, limit=None, duration_seconds, backend_alias="default", config=None):
+def semaphore_release(key, *, limit, duration_seconds, backend_alias="default", config=None):
   alias = get_database_alias(backend_alias, config=config)
   now = timezone.now()
-  expires_at = now + timedelta(seconds=duration_seconds)
-
-  if limit is not None:
-    available = _released_available_expression(limit)
-    updated = (
-      Semaphore.objects.using(alias)
-      .filter(key=key)
-      .update(
-        value=available,
-        active_count=Value(limit) - available,
-        limit=limit,
-        expires_at=expires_at,
-        updated_at=now,
-      )
-    )
-    return updated > 0
-
-  available = Case(
-    When(value__gte=F("limit"), then=F("limit")),
-    default=F("value") + 1,
-    output_field=IntegerField(),
-  )
+  available = _released_available_expression(limit)
   updated = (
     Semaphore.objects.using(alias)
     .filter(key=key)
     .update(
       value=available,
-      active_count=F("limit") - available,
-      expires_at=expires_at,
+      active_count=Value(limit) - available,
+      limit=limit,
+      expires_at=now + timedelta(seconds=duration_seconds),
       updated_at=now,
     )
   )
@@ -468,14 +447,13 @@ def unblock_next_blocked_job(
   *,
   limit,
   duration_seconds,
+  slot_handoff,
   backend_alias="default",
   use_skip_locked=True,
-  slot_handoff=SlotHandoffMode.ACQUIRE,
   config=None,
 ):
   alias = get_database_alias(backend_alias, config=config)
   now = timezone.now()
-  slot_handoff = SlotHandoffMode(slot_handoff)
 
   with _operation_atomic(alias):
     blocked_slot = _consume_blocked_job_for_slot(
@@ -487,7 +465,6 @@ def unblock_next_blocked_job(
       now=now,
       use_skip_locked=use_skip_locked,
       slot_handoff=slot_handoff,
-      config=config,
     )
     if blocked_slot is None or not blocked_slot.slot_acquired:
       return None
@@ -522,9 +499,7 @@ def _consume_blocked_job_for_slot(
   now,
   use_skip_locked,
   slot_handoff,
-  config=None,
 ):
-  slot_handoff = SlotHandoffMode(slot_handoff)
   capabilities = database_capabilities(alias)
   postgres_released_slot = (
     slot_handoff is SlotHandoffMode.RELEASE_CLAIMED and capabilities.backend_family == "postgresql"
@@ -570,15 +545,6 @@ def _consume_blocked_job_for_slot(
       limit=limit,
       duration_seconds=duration_seconds,
       now=now,
-    )
-
-  if not slot_acquired and slot_handoff is SlotHandoffMode.ACQUIRE:
-    slot_acquired = semaphore_acquire(
-      key,
-      limit=limit,
-      duration_seconds=duration_seconds,
-      backend_alias=backend_alias,
-      config=config,
     )
 
   job_ref = _blocked_job_ref(blocked, backend_alias=backend_alias)

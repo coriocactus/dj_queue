@@ -302,18 +302,11 @@ class AsyncSupervisor(Supervisor):
         if runner.run_managed_poll_loop(host_stop_requested=self.stop_requested):
           return
 
-        # runner crashed — drain active work before failing the claims it leaves behind
-        if self._runner_has_active_work(runner):
-          drained = runner.stop()
-          if drained is False:
-            if self.stop_requested():
-              return
-            if not self._wait_for_runner_stop(runner):
-              return
+        # runner crashed; stopping a draining runner deregisters it, so claims it
+        # leaves behind are recovered later as orphans
+        if not self._runner_has_active_work(runner):
           self._fail_crashed_runner_jobs(runner)
-        else:
-          self._fail_crashed_runner_jobs(runner)
-          drained = runner.stop()
+        drained = runner.stop()
         if self.stop_requested():
           return
         if drained is False and not self._wait_for_runner_stop(runner):

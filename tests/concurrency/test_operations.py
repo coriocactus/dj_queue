@@ -82,7 +82,7 @@ def queries_touching(ctx, table_name):
 def test_semaphore_acquire_release_cycle():
   assert semaphore_acquire("account:1", limit=1, duration_seconds=60) is True
   assert semaphore_acquire("account:1", limit=1, duration_seconds=60) is False
-  assert semaphore_release("account:1", duration_seconds=60) is True
+  assert semaphore_release("account:1", limit=1, duration_seconds=60) is True
   assert semaphore_acquire("account:1", limit=1, duration_seconds=60) is True
 
 
@@ -120,7 +120,7 @@ def test_semaphore_release_repairs_null_bridge_count_from_value():
     expires_at=timezone.now() + timedelta(seconds=60),
   )
 
-  assert semaphore_release("account:mixed-version", duration_seconds=60) is True
+  assert semaphore_release("account:mixed-version", limit=1, duration_seconds=60) is True
 
   semaphore = Semaphore.objects.get(key="account:mixed-version")
   assert semaphore.value == 1
@@ -181,7 +181,7 @@ def test_reduced_semaphore_limit_uses_compatibility_available_count():
   assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True
 
   assert semaphore_acquire("account:resize", limit=1, duration_seconds=60) is False
-  assert semaphore_release("account:resize", duration_seconds=60) is True
+  assert semaphore_release("account:resize", limit=1, duration_seconds=60) is True
   assert semaphore_acquire("account:resize", limit=1, duration_seconds=60) is True
 
   semaphore = Semaphore.objects.get(key="account:resize")
@@ -293,8 +293,8 @@ def test_non_transient_claim_error_classification_rejects_unknown_errors():
 @pytest.mark.django_db
 def test_semaphore_signal_caps_at_limit():
   semaphore_acquire("account:1", limit=2, duration_seconds=60)
-  semaphore_release("account:1", duration_seconds=60)
-  semaphore_release("account:1", duration_seconds=60)
+  semaphore_release("account:1", limit=2, duration_seconds=60)
+  semaphore_release("account:1", limit=2, duration_seconds=60)
 
   semaphore = Semaphore.objects.get(key="account:1")
 
@@ -306,7 +306,7 @@ def test_semaphore_release_uses_one_semaphore_table_query():
   semaphore_acquire("account:1", limit=1, duration_seconds=60)
 
   with CaptureQueriesContext(connection) as ctx:
-    assert semaphore_release("account:1", duration_seconds=60) is True
+    assert semaphore_release("account:1", limit=1, duration_seconds=60) is True
 
   assert len(queries_touching(ctx, "dj_queue_semaphores")) == 1
 
@@ -1327,7 +1327,7 @@ def test_discarding_ready_job_releases_waiter():
 
 
 @pytest.mark.django_db(transaction=True)
-def test_unblock_next_blocked_job_restores_waiter_when_slot_is_not_acquired(monkeypatch):
+def test_unblock_next_blocked_job_restores_waiter_when_slot_is_not_acquired():
   job = make_job(task=limited, args=[1], kwargs={"value": "blocked"}, concurrency_key="account:1")
   expires_at = timezone.now() + timedelta(minutes=1)
   BlockedExecution.objects.create(
@@ -1338,12 +1338,12 @@ def test_unblock_next_blocked_job_restores_waiter_when_slot_is_not_acquired(monk
     concurrency_key=job.concurrency_key,
     expires_at=expires_at,
   )
-  monkeypatch.setattr(concurrency_operations, "semaphore_acquire", lambda *args, **kwargs: False)
 
   unblocked = concurrency_operations.unblock_next_blocked_job(
     "account:1",
     limit=1,
     duration_seconds=60,
+    slot_handoff=concurrency_operations.SlotHandoffMode.CONSUME_RELEASED,
   )
 
   blocked = BlockedExecution.objects.get(job=job)
@@ -1366,11 +1366,19 @@ def test_unblock_next_blocked_job_returns_blocked_job_reference():
     concurrency_key=job.concurrency_key,
     expires_at=timezone.now() + timedelta(minutes=1),
   )
+  Semaphore.objects.create(
+    key="account:1",
+    value=1,
+    active_count=0,
+    limit=1,
+    expires_at=timezone.now() + timedelta(minutes=1),
+  )
 
   unblocked = concurrency_operations.unblock_next_blocked_job(
     "account:1",
     limit=1,
     duration_seconds=60,
+    slot_handoff=concurrency_operations.SlotHandoffMode.CONSUME_RELEASED,
   )
 
   assert isinstance(unblocked, concurrency_operations.BlockedJobRef)
@@ -1397,12 +1405,20 @@ def test_unblock_next_blocked_job_rejects_conflicting_execution_state():
     message="boom",
     traceback="traceback",
   )
+  Semaphore.objects.create(
+    key="account:1",
+    value=1,
+    active_count=0,
+    limit=1,
+    expires_at=timezone.now() + timedelta(minutes=1),
+  )
 
   with pytest.raises(EnqueueError, match="already has an execution-state row"):
     concurrency_operations.unblock_next_blocked_job(
       "account:1",
       limit=1,
       duration_seconds=60,
+      slot_handoff=concurrency_operations.SlotHandoffMode.CONSUME_RELEASED,
     )
 
 

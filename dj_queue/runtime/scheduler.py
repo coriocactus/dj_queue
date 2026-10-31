@@ -23,8 +23,7 @@ class Scheduler(BaseRunner):
 
   @property
   def polling_interval(self):
-    scheduler = getattr(self.config, "scheduler", None)
-    return self._normalized_polling_interval(getattr(scheduler, "polling_interval", None))
+    return self.config.scheduler.polling_interval
 
   def __init__(
     self,
@@ -82,9 +81,6 @@ class Scheduler(BaseRunner):
       pid=pid,
       hostname=hostname,
     )
-
-  def stop(self):
-    return super().stop()
 
   def start(self):
     process = super().start()

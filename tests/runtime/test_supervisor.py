@@ -952,7 +952,17 @@ def test_async_supervisor_stop_does_not_restart_runner_after_stop_request():
   assert Process.objects.filter(supervisor=process, kind="Worker").exists() is False
 
 
-def test_async_supervisor_drains_crashed_runner_before_failing_leftovers():
+def _record_crash_recovery(supervisor, events):
+  def rebuild(_runner):
+    events.append("rebuild")
+    supervisor.request_stop()
+    return type("Replacement", (), {"name": "worker-1", "start": lambda self: None})()
+
+  supervisor._fail_crashed_runner_jobs = lambda _runner: events.append("fail")
+  supervisor._rebuild_runner = rebuild
+
+
+def test_async_supervisor_drains_crashed_runner_without_failing_its_claims():
   supervisor = build_async_supervisor(
     tasks_settings=async_tasks_settings(dispatchers=[]),
   )
@@ -974,18 +984,11 @@ def test_async_supervisor_drains_crashed_runner_before_failing_leftovers():
       self.process = None
       return True
 
-  runner = Runner()
+  _record_crash_recovery(supervisor, events)
 
-  def fail_leftovers(crashed_runner):
-    assert crashed_runner is runner
-    events.append("fail")
-    supervisor.request_stop()
+  supervisor._run_managed_runner(Runner())
 
-  supervisor._fail_crashed_runner_jobs = fail_leftovers
-
-  supervisor._run_managed_runner(runner)
-
-  assert events == ["poll", "stop", "fail"]
+  assert events == ["poll", "stop", "rebuild"]
 
 
 def test_async_supervisor_preserves_active_claims_until_drain_finishes():
@@ -1010,25 +1013,17 @@ def test_async_supervisor_preserves_active_claims_until_drain_finishes():
       return False
 
   runner = Runner()
-
-  def fail_leftovers(crashed_runner):
-    assert crashed_runner is runner
-    events.append("fail")
-    supervisor.request_stop()
-
-  supervisor._fail_crashed_runner_jobs = fail_leftovers
+  _record_crash_recovery(supervisor, events)
   thread = threading.Thread(target=supervisor._run_managed_runner, args=(runner,))
 
   thread.start()
   wait_until(lambda: events == ["poll", "stop"], timeout=1)
 
-  assert "fail" not in events
-
   runner.process = None
   thread.join(timeout=1)
 
   assert thread.is_alive() is False
-  assert events == ["poll", "stop", "fail"]
+  assert events == ["poll", "stop", "rebuild"]
 
 
 def test_async_supervisor_starts_managed_runners_inside_app_executor(monkeypatch):

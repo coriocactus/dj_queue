@@ -11,9 +11,9 @@ from dj_queue.queue_state import (
   filter_queue_state,
   queue_state_count_fields,
   queue_state_count_key,
-  queue_state_counts,
   queue_state_queryset,
   queue_state_summaries_by_queue,
+  queue_state_summary,
   status_rank_expression,
 )
 from tests.factories import (
@@ -42,7 +42,7 @@ def test_queue_state_counts_and_count_fields_follow_state_definitions():
   enqueue_ready_job()
   make_scheduled_job(scheduled_at=timezone.now())
 
-  counts = queue_state_counts(backend_alias="default", queue_name="default")
+  counts = queue_state_summary(backend_alias="default", queue_name="default").counts_by_state()
 
   assert counts["ready"] == 1
   assert counts["scheduled"] == 1
@@ -66,7 +66,7 @@ def test_queue_state_counts_report_invalid_jobs_without_double_counting():
     traceback="traceback",
   )
 
-  counts = queue_state_counts(backend_alias="default", queue_name="default")
+  counts = queue_state_summary(backend_alias="default", queue_name="default").counts_by_state()
 
   assert counts["ready"] == 0
   assert counts["failed"] == 0

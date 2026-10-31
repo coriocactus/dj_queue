@@ -98,7 +98,7 @@ def test_gunicorn_post_fork_starts_one_embedded_supervisor(monkeypatch):
     def start(self):
       events.append(("start", self.backend_alias))
 
-    def poll_once(self):
+    def poll_once_if_running(self):
       events.append(("poll", self.backend_alias))
 
     def stop(self):
@@ -157,7 +157,7 @@ def test_gunicorn_embedded_supervisor_poll_survives_errors(monkeypatch):
     def start(self):
       return None
 
-    def poll_once(self):
+    def poll_once_if_running(self):
       self.poll_count += 1
       if self.poll_count == 1:
         raise RuntimeError("poll failed")
@@ -218,7 +218,7 @@ def test_gunicorn_retries_lock_until_replacement_worker_can_start(monkeypatch):
     def start(self):
       events.append(("start", self.backend_alias))
 
-    def poll_once(self):
+    def poll_once_if_running(self):
       events.append(("poll", self.backend_alias))
 
     def stop(self):
@@ -273,7 +273,7 @@ def test_gunicorn_worker_exit_waits_for_poll_thread_before_releasing_lock(monkey
     def start(self):
       return None
 
-    def poll_once(self):
+    def poll_once_if_running(self):
       poll_started.set()
       allow_poll_exit.wait(timeout=1)
 
@@ -319,7 +319,7 @@ def test_gunicorn_worker_exit_uses_shutdown_timeout_for_poll_thread(monkeypatch)
     def start(self):
       return None
 
-    def poll_once(self):
+    def poll_once_if_running(self):
       poll_started.set()
       time.sleep(1)
 
@@ -364,7 +364,7 @@ def test_gunicorn_start_aborts_when_worker_exits_during_supervisor_start(monkeyp
       events.append("start")
       self.worker._dj_queue_supervisor_exiting = True
 
-    def poll_once(self):
+    def poll_once_if_running(self):
       events.append("poll")
 
     def stop(self):
@@ -618,7 +618,7 @@ def test_asgi_lifespan_prunes_stale_process_rows(monkeypatch):
     def start(self):
       events.append("start")
 
-    def poll_once(self):
+    def poll_once_if_running(self):
       events.append("poll")
 
     def stop(self):
@@ -674,7 +674,7 @@ def test_asgi_lifespan_poll_survives_errors(monkeypatch):
     def start(self):
       events.append("start")
 
-    def poll_once(self):
+    def poll_once_if_running(self):
       self.poll_count += 1
       if self.poll_count == 1:
         raise RuntimeError("poll failed")

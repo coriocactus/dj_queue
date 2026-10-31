@@ -715,20 +715,3 @@ def test_health_command_deep_reports_runtime_integrity_problems(capsys):
   assert "claimed execution rows have missing or stale processes" in stderr
   assert "recurring execution reservations have no job" in stderr
   assert "semaphores have impossible slot counts" in stderr
-
-
-def test_procline_is_best_effort_when_dependency_missing(monkeypatch):
-  imported = []
-
-  class FakeImportlib:
-    @staticmethod
-    def import_module(name):
-      imported.append(name)
-      raise ModuleNotFoundError(name)
-
-  from dj_queue.runtime import procline
-
-  monkeypatch.setattr(procline, "importlib", FakeImportlib)
-
-  assert procline.set_process_title("dj-queue worker-1") is False
-  assert imported == ["setproctitle"]

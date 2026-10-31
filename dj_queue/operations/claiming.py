@@ -174,10 +174,6 @@ def _claim_ready_jobs_once(
   ]
 
 
-def _filter_queue_selectors(queryset, queues):
-  return filter_by_queue_selectors(queryset, queues)
-
-
 def _select_ready_rows(queryset, *, limit, queues, use_skip_locked, alias, backend_alias):
   if selectors_match_all(queues):
     select_ready_row_ids = getattr(backend_sql(alias), "select_ready_row_ids", None)
@@ -195,36 +191,29 @@ def _select_ready_rows(queryset, *, limit, queues, use_skip_locked, alias, backe
 
   selectors = normalize_queue_selectors(queues)
   selected_rows = []
-  selected_ids = set()
 
   star_index = selectors.index("*") if "*" in selectors else None
   ordered_selectors = selectors if star_index is None else selectors[:star_index]
 
   if ordered_selectors:
     if _selectors_are_exact_queues(ordered_selectors):
-      rows = _select_exact_queue_rows(
+      selected_rows = _select_exact_queue_rows(
         queryset,
         ordered_selectors,
         limit=limit,
         use_skip_locked=use_skip_locked,
-        selected_ids=selected_ids,
         alias=alias,
         backend_alias=backend_alias,
       )
     else:
-      ordered = _ordered_selector_rows_queryset(
-        queryset.exclude(pk__in=selected_ids),
-        ordered_selectors,
-      )
-      rows = list(locked_queryset(ordered, use_skip_locked=use_skip_locked)[:limit])
-    selected_rows.extend(rows)
-    selected_ids.update(row.pk for row in rows)
+      ordered = _ordered_selector_rows_queryset(queryset, ordered_selectors)
+      selected_rows = list(locked_queryset(ordered, use_skip_locked=use_skip_locked)[:limit])
 
   remaining = limit - len(selected_rows)
   if remaining <= 0 or star_index is None:
     return selected_rows
 
-  ordered = queryset.exclude(pk__in=selected_ids).order_by("-priority", "id")
+  ordered = queryset.exclude(pk__in=[row.pk for row in selected_rows]).order_by("-priority", "id")
   rows = list(locked_queryset(ordered, use_skip_locked=use_skip_locked)[:remaining])
   selected_rows.extend(rows)
   return selected_rows
@@ -240,22 +229,21 @@ def _select_exact_queue_rows(
   *,
   limit,
   use_skip_locked,
-  selected_ids,
   alias,
   backend_alias,
 ):
-  if not selected_ids:
-    select_ready_rows = getattr(backend_sql(alias), "select_ready_rows_by_exact_queues", None)
-    if select_ready_rows is not None:
-      return select_ready_rows(
-        alias,
-        backend_alias=backend_alias,
-        selectors=selectors,
-        limit=limit,
-        use_skip_locked=use_skip_locked,
-      )
+  select_ready_rows = getattr(backend_sql(alias), "select_ready_rows_by_exact_queues", None)
+  if select_ready_rows is not None:
+    return select_ready_rows(
+      alias,
+      backend_alias=backend_alias,
+      selectors=selectors,
+      limit=limit,
+      use_skip_locked=use_skip_locked,
+    )
 
   selected_rows = []
+  selected_ids = set()
   for selector in selectors:
     remaining = limit - len(selected_rows)
     if remaining <= 0:
@@ -285,7 +273,7 @@ def _create_claimed_executions(alias, jobs, *, process, claimed_at):
 
 
 def _ordered_selector_rows_queryset(queryset, selectors):
-  filtered = _filter_queue_selectors(queryset, selectors)
+  filtered = filter_by_queue_selectors(queryset, selectors)
   selector_rank = Case(
     *[
       When(queue_selector_condition((selector,)), then=Value(index))
