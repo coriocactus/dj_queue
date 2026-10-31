@@ -1,8 +1,11 @@
+from django.db.models import Min
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from dj_queue.db import get_database_alias
 from dj_queue.models import (
   Pause,
+  ReadyExecution,
   RecurringTask,
 )
 from dj_queue.queue_selectors import queue_matches_selectors
@@ -27,7 +30,7 @@ def queue_rows_for_backend(*, backend_alias, now=None):
 
 
 def queue_ready_count(*, backend_alias, queue_name):
-  return queue_state_summary(backend_alias=backend_alias, queue_name=queue_name).count("ready")
+  return _ready_rows(backend_alias=backend_alias, queue_name=queue_name).count()
 
 
 def queue_rows(*, backend_alias, now, process_cutoff):
@@ -157,7 +160,15 @@ def queue_latency_seconds(
 
 
 def oldest_ready_at_for_queue(*, backend_alias, queue_name):
-  return queue_state_summary(backend_alias=backend_alias, queue_name=queue_name).oldest_ready_at
+  return _ready_rows(backend_alias=backend_alias, queue_name=queue_name).aggregate(
+    oldest=Min(Coalesce("latency_started_at", "created_at"))
+  )["oldest"]
+
+
+def _ready_rows(*, backend_alias, queue_name):
+  return ReadyExecution.objects.using(get_database_alias(backend_alias)).filter(
+    backend_alias=backend_alias, queue_name=queue_name
+  )
 
 
 def _worker_matches_queue(queue_name, worker):

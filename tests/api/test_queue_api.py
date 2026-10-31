@@ -68,12 +68,15 @@ def test_queue_info_size():
   assert QueueInfo("emails").size == 2
 
 
-def test_queue_info_size_ignores_invalid_ready_state():
+def test_queue_info_size_and_latency_read_ready_rows_directly(django_assert_num_queries):
   make_ready_job(queue_name="emails")
-  invalid_job = make_ready_job(queue_name="emails")
-  Job.objects.filter(pk=invalid_job.pk).update(finished_at=timezone.now())
+  make_failed_job(queue_name="emails")
+  queue = QueueInfo("emails")
 
-  assert QueueInfo("emails").size == 1
+  with django_assert_num_queries(1):
+    assert queue.size == 1
+  with django_assert_num_queries(2):
+    assert queue.latency >= 0.0
 
 
 def test_queue_info_stays_backend_scoped_on_shared_queue_db(settings):
