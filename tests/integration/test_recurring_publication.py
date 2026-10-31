@@ -6,6 +6,7 @@ import pytest
 from django.db import connections
 from django.utils import timezone
 
+from dj_queue.config import load_backend_config
 from dj_queue.models import Job, RecurringExecution, RecurringTask
 from dj_queue.operations import recurring
 from dj_queue.operations.jobs import claim_ready_jobs, execute_claimed_job
@@ -46,7 +47,7 @@ def test_recurring_publication_hides_job_and_locks_out_other_schedulers(settings
 
   def publish():
     try:
-      return recurring.fire_recurring_task(recurring_task, run_at)
+      return recurring.fire_recurring_task(recurring_task, run_at, config=load_backend_config())
     finally:
       connections.close_all()
 
@@ -70,5 +71,7 @@ def test_recurring_publication_hides_job_and_locks_out_other_schedulers(settings
   execute_claimed_job(claimed_job)
 
   assert Job.objects.exists() is False
-  assert recurring.fire_recurring_task(recurring_task, run_at) is None
+  assert (
+    recurring.fire_recurring_task(recurring_task, run_at, config=load_backend_config()) is None
+  )
   assert claim_ready_jobs(limit=1) == []

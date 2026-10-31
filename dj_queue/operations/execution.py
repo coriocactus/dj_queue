@@ -10,7 +10,6 @@ from django.utils.module_loading import import_string
 from dj_queue.config import resolve_backend_config
 from dj_queue.db import (
   database_capabilities,
-  get_database_alias,
   retry_transient_database_errors,
 )
 from dj_queue.exceptions import EnqueueError, exception_path
@@ -42,7 +41,7 @@ def execute_claimed_job(
     claimed_job = job
     job = claimed_job.job
   elif not isinstance(job, Job):
-    claimed_job = _load_claimed_job(job, backend_alias=backend_alias, config=config)
+    claimed_job = _load_claimed_job(job, config=resolve_backend_config(backend_alias, config))
     job = claimed_job.job
 
   config = resolve_backend_config(job.backend_alias, config)
@@ -74,19 +73,13 @@ def execute_claimed_job(
       config=config,
     )
 
-  return _complete_claimed_job(
-    job,
-    return_value,
-    backend_alias=job.backend_alias,
-    task=task,
-    config=config,
-  )
+  return complete_claimed_job(job, return_value, task=task, config=config)
 
 
-def _call_task(task, claimed_job, job, args, kwargs, config=None):
+def _call_task(task, claimed_job, job, args, kwargs, *, config):
   if task.takes_context:
     if claimed_job is None:
-      claimed_job = _load_claimed_job(job.id, backend_alias=job.backend_alias, config=config)
+      claimed_job = _load_claimed_job(job.id, config=config)
     if not isinstance(claimed_job, ClaimedJob):
       raise RuntimeError("ClaimedJob is required for task context execution")
     context = TaskContext(task_result=task_result_for_claimed_job(task, claimed_job))
@@ -94,29 +87,22 @@ def _call_task(task, claimed_job, job, args, kwargs, config=None):
   return task.call(*args, **kwargs)
 
 
-def _execution_failure_outcome(job, error, *, task, failure_kind, config=None):
-  return _fail_claimed_job(
+def _execution_failure_outcome(job, error, *, task, failure_kind, config):
+  return fail_claimed_job(
     job,
     error,
     traceback_text=traceback.format_exc(),
-    backend_alias=job.backend_alias,
     task=task,
     failure_kind=failure_kind,
     config=config,
   )
 
 
-def complete_claimed_job(job, return_value, *, backend_alias="default", config=None):
-  return _complete_claimed_job(job, return_value, backend_alias=backend_alias, config=config)
-
-
-def _complete_claimed_job(job, return_value, *, backend_alias="default", task=None, config=None):
-  alias = get_database_alias(backend_alias, config=config)
+def complete_claimed_job(job, return_value, *, config, task=None):
+  alias = config.database_alias
   if isinstance(job, ClaimedJob):
     job = job.job
-  job = _resolve_claimed_job(job, alias=alias, backend_alias=backend_alias)
-
-  config = resolve_backend_config(job.backend_alias, config)
+  job = _resolve_claimed_job(job, config=config)
 
   def complete_transition():
     completed = copy(job)
@@ -143,40 +129,29 @@ def _complete_claimed_job(job, return_value, *, backend_alias="default", task=No
     return completed
 
   completed = retry_transient_database_errors(complete_transition, using=alias)
-  if event_logging_enabled(backend_alias=backend_alias):
+  if event_logging_enabled(backend_alias=config.backend_alias):
     log_event(
       "job.executed",
-      backend_alias=backend_alias,
+      backend_alias=config.backend_alias,
       job_id=str(job.id),
       status="success",
     )
   return completed
 
 
-def fail_claimed_job(job, error, *, traceback_text="", backend_alias="default", config=None):
-  return _fail_claimed_job(
-    job,
-    error,
-    traceback_text=traceback_text,
-    backend_alias=backend_alias,
-    config=config,
-  )
-
-
-def _fail_claimed_job(
+def fail_claimed_job(
   job,
   error,
   *,
+  config,
   traceback_text="",
-  backend_alias="default",
   task=None,
   failure_kind="runtime",
-  config=None,
 ):
-  alias = get_database_alias(backend_alias, config=config)
+  alias = config.database_alias
   if isinstance(job, ClaimedJob):
     job = job.job
-  job = _resolve_claimed_job(job, alias=alias, backend_alias=backend_alias)
+  job = _resolve_claimed_job(job, config=config)
 
   def fail_transition():
     with transaction.atomic(using=alias):
@@ -192,10 +167,10 @@ def _fail_claimed_job(
       release_concurrency_slot(job, task=task, config=config)
 
   retry_transient_database_errors(fail_transition, using=alias)
-  if event_logging_enabled(backend_alias=backend_alias):
+  if event_logging_enabled(backend_alias=config.backend_alias):
     log_event(
       "job.failed",
-      backend_alias=backend_alias,
+      backend_alias=config.backend_alias,
       job_id=str(job.id),
       failure_kind=failure_kind,
       exception_class=exception_path(error),
@@ -212,12 +187,11 @@ def _normalize_return_value(return_value):
   )
 
 
-def _load_claimed_job(job_id, *, backend_alias, config=None):
-  alias = get_database_alias(backend_alias, config=config)
+def _load_claimed_job(job_id, *, config):
   claimed = (
-    ClaimedExecution.objects.using(alias)
+    ClaimedExecution.objects.using(config.database_alias)
     .select_related("job", "process")
-    .get(job_id=job_id, job__backend_alias=backend_alias)
+    .get(job_id=job_id, job__backend_alias=config.backend_alias)
   )
   return ClaimedJob(
     job=claimed.job,
@@ -227,14 +201,14 @@ def _load_claimed_job(job_id, *, backend_alias, config=None):
   )
 
 
-def _resolve_claimed_job(job, *, alias, backend_alias):
+def _resolve_claimed_job(job, *, config):
   if isinstance(job, Job):
-    if job.backend_alias != backend_alias:
+    if job.backend_alias != config.backend_alias:
       raise ClaimedExecution.DoesNotExist
     return job
 
   try:
-    return Job.objects.using(alias).get(pk=job, backend_alias=backend_alias)
+    return Job.objects.using(config.database_alias).get(pk=job, backend_alias=config.backend_alias)
   except Job.DoesNotExist as exc:
     raise ClaimedExecution.DoesNotExist from exc
 

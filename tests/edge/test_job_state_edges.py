@@ -4,6 +4,7 @@ import pytest
 from django.tasks import TaskResultStatus
 from django.utils import timezone
 
+from dj_queue.config import load_backend_config
 from dj_queue.models import (
   BlockedExecution,
   ClaimedExecution,
@@ -144,7 +145,9 @@ def test_clear_failed_jobs_rejects_conflicting_execution_state():
   ClaimedExecution.objects.create(job=job)
 
   with pytest.raises(EnqueueError, match="already has an execution-state row"):
-    clear_failed_jobs(older_than=0, now=timezone.now() + timedelta(seconds=1))
+    clear_failed_jobs(
+      older_than=0, now=timezone.now() + timedelta(seconds=1), config=load_backend_config()
+    )
 
   assert Job.objects.filter(pk=job.pk).exists() is True
   assert FailedExecution.objects.filter(job=job).exists() is True
@@ -161,7 +164,7 @@ def test_clear_finished_jobs_rejects_conflicting_execution_state():
   )
 
   with pytest.raises(EnqueueError, match="already has an execution-state row"):
-    clear_finished_jobs(older_than=0, now=timezone.now())
+    clear_finished_jobs(older_than=0, now=timezone.now(), config=load_backend_config())
 
   assert Job.objects.filter(pk=job.pk).exists() is True
   assert ReadyExecution.objects.filter(job=job).exists() is True
@@ -181,7 +184,7 @@ def test_promote_scheduled_jobs_rejects_mismatched_state_backend_alias():
   )
 
   with pytest.raises(EnqueueError, match="belongs to backend 'secondary'"):
-    promote_scheduled_jobs(batch_size=1, backend_alias="default")
+    promote_scheduled_jobs(batch_size=1, config=load_backend_config())
 
   assert ScheduledExecution.objects.filter(job=job).exists() is True
   assert ReadyExecution.objects.filter(job=job).exists() is False
@@ -204,7 +207,7 @@ def test_unblock_next_blocked_job_rejects_mismatched_state_backend_alias():
       limit=1,
       duration_seconds=60,
       slot_handoff=SlotHandoffMode.CONSUME_RELEASED,
-      backend_alias="default",
+      config=load_backend_config(),
     )
 
   assert BlockedExecution.objects.filter(job=job).exists() is True
@@ -223,7 +226,7 @@ def test_promote_expired_blocked_jobs_rejects_mismatched_state_backend_alias():
   )
 
   with pytest.raises(EnqueueError, match="belongs to backend 'secondary'"):
-    promote_expired_blocked_jobs(batch_size=1, backend_alias="default")
+    promote_expired_blocked_jobs(batch_size=1, config=load_backend_config())
 
   assert BlockedExecution.objects.filter(job=job).exists() is True
   assert ReadyExecution.objects.filter(job=job).exists() is False

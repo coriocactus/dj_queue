@@ -29,7 +29,7 @@ class Scheduler(BaseRunner):
     self,
     config,
     *,
-    backend_alias="default",
+    backend_config,
     name=None,
     pid=None,
     hostname=None,
@@ -37,11 +37,10 @@ class Scheduler(BaseRunner):
     heartbeat_interval=None,
     process_alive_threshold=None,
     supervisor=None,
-    backend_config=None,
   ):
     super().__init__(
       config,
-      backend_alias=backend_alias,
+      backend_config=backend_config,
       name=name or f"scheduler-{os.getpid()}",
       pid=pid or os.getpid(),
       hostname=hostname or socket.gethostname(),
@@ -49,7 +48,6 @@ class Scheduler(BaseRunner):
       heartbeat_interval=heartbeat_interval,
       process_alive_threshold=process_alive_threshold,
       supervisor=supervisor,
-      backend_config=backend_config,
     )
     self._static_tasks_synced = False
     self._last_cleanup_at = None
@@ -76,7 +74,7 @@ class Scheduler(BaseRunner):
       return None
     return cls(
       config,
-      backend_alias=backend_alias,
+      backend_config=config,
       name=name,
       pid=pid,
       hostname=hostname,
@@ -102,9 +100,7 @@ class Scheduler(BaseRunner):
     }
 
   def sync_static_tasks(self):
-    upsert_static_recurring_tasks(
-      self.config.recurring, backend_alias=self.backend_alias, config=self.backend_config
-    )
+    upsert_static_recurring_tasks(self.config.recurring, config=self.backend_config)
 
   def ensure_static_tasks_synced(self):
     if self._static_tasks_synced:
@@ -128,7 +124,6 @@ class Scheduler(BaseRunner):
         fired_jobs = fire_due_recurring_tasks(
           now,
           include_dynamic_tasks=self.config.scheduler.dynamic_tasks_enabled,
-          backend_alias=self.backend_alias,
           batch_size=RECURRING_BATCH_SIZE,
           config=self.backend_config,
         )
@@ -162,7 +157,6 @@ class Scheduler(BaseRunner):
       deleted += clear_finished_jobs(
         older_than=self.config.clear_finished_jobs_after,
         batch_size=CLEANUP_BATCH_SIZE,
-        backend_alias=self.backend_alias,
         now=now,
         config=self.backend_config,
       )
@@ -170,7 +164,6 @@ class Scheduler(BaseRunner):
       deleted += clear_failed_jobs(
         older_than=self.config.clear_failed_jobs_after,
         batch_size=CLEANUP_BATCH_SIZE,
-        backend_alias=self.backend_alias,
         now=now,
         config=self.backend_config,
       )
@@ -178,7 +171,6 @@ class Scheduler(BaseRunner):
       deleted += clear_recurring_executions(
         older_than=self.config.clear_recurring_executions_after,
         batch_size=CLEANUP_BATCH_SIZE,
-        backend_alias=self.backend_alias,
         now=now,
         config=self.backend_config,
       )

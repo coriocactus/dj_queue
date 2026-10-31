@@ -23,7 +23,7 @@ class Worker(BaseRunner):
     self,
     config,
     *,
-    backend_alias="default",
+    backend_config,
     name=None,
     pid=None,
     hostname=None,
@@ -33,14 +33,13 @@ class Worker(BaseRunner):
     heartbeat_interval=None,
     process_alive_threshold=None,
     supervisor=None,
-    backend_config=None,
   ):
     resolved_name = name or f"worker-{os.getpid()}"
     resolved_pid = pid or os.getpid()
     resolved_hostname = hostname or socket.gethostname()
     super().__init__(
       config,
-      backend_alias=backend_alias,
+      backend_config=backend_config,
       name=resolved_name,
       pid=resolved_pid,
       hostname=resolved_hostname,
@@ -48,11 +47,9 @@ class Worker(BaseRunner):
       heartbeat_interval=heartbeat_interval,
       process_alive_threshold=process_alive_threshold,
       supervisor=supervisor,
-      backend_config=backend_config,
     )
     self.pool = pool or WorkerPool(config.threads, wake_up=self.sleeper.wake_up)
     self.wakeup_backend = wakeup_backend or build_wakeup_backend(
-      backend_alias=backend_alias,
       queues=config.queues,
       wake_up=self.sleeper.wake_up,
       config=self.backend_config,
@@ -175,7 +172,6 @@ class Worker(BaseRunner):
         handle_thread_error(
           exc,
           context="worker.execute",
-          backend_alias=self.backend_alias,
           config=self.backend_config,
         )
       self.request_stop()
@@ -189,7 +185,6 @@ class Worker(BaseRunner):
       handle_thread_error(
         error,
         context="worker.submit",
-        backend_alias=self.backend_alias,
         config=self.backend_config,
       )
     self.request_stop()
@@ -202,13 +197,11 @@ class Worker(BaseRunner):
         traceback_text="".join(
           traceback.format_exception(type(error), error, error.__traceback__)
         ),
-        backend_alias=self.backend_alias,
         config=self.backend_config,
       )
     except Exception as cleanup_error:
       handle_thread_error(
         cleanup_error,
         context="worker.execute.cleanup",
-        backend_alias=self.backend_alias,
         config=self.backend_config,
       )

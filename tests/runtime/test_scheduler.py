@@ -8,6 +8,7 @@ from django.db.models.query import QuerySet
 from django.utils import timezone
 
 from dj_queue.api import schedule_recurring_task, unschedule_recurring_task
+from dj_queue.config import load_backend_config
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import FailedExecution, Job, Process, RecurringExecution, RecurringTask
 from dj_queue.operations import recurring as recurring_operations
@@ -599,6 +600,7 @@ def test_fire_recurring_task_ignores_deleted_row_loaded_before_fire():
   execution = fire_recurring_task(
     loaded_task,
     now.replace(second=0, microsecond=0),
+    config=load_backend_config(),
   )
 
   assert execution is None
@@ -628,6 +630,7 @@ def test_fire_recurring_task_uses_locked_current_definition():
   execution = fire_recurring_task(
     loaded_task,
     now.replace(second=0, microsecond=0),
+    config=load_backend_config(),
   )
 
   assert execution is not None
@@ -668,7 +671,9 @@ def test_fire_recurring_task_retries_transient_database_error(monkeypatch, stage
 
   monkeypatch.setattr(recurring_operations, stage_name, deadlock_once)
 
-  execution = fire_recurring_task(recurring_task, now.replace(second=0, microsecond=0))
+  execution = fire_recurring_task(
+    recurring_task, now.replace(second=0, microsecond=0), config=load_backend_config()
+  )
 
   assert calls == 2
   assert execution is not None
@@ -698,6 +703,7 @@ def test_fire_recurring_task_skips_stale_run_after_schedule_change():
   execution = fire_recurring_task(
     loaded_task,
     now.replace(second=0, microsecond=0),
+    config=load_backend_config(),
   )
 
   assert execution is None

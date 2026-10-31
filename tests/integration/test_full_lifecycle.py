@@ -5,7 +5,7 @@ import pytest
 from django.utils import timezone
 
 from dj_queue.api import schedule_recurring_task
-from dj_queue.config import DispatcherConfig, WorkerConfig
+from dj_queue.config import DispatcherConfig, WorkerConfig, load_backend_config
 from dj_queue.models import Job, RecurringExecution
 from dj_queue.runtime.dispatcher import Dispatcher
 from dj_queue.runtime.scheduler import Scheduler
@@ -63,13 +63,13 @@ def make_worker(*, config=None, name="worker-1"):
     )
   return Worker(
     config,
-    backend_alias="default",
     name=name,
     pid=12345,
     hostname="localhost",
     sleeper=FakeSleeper(),
     pool=InlinePool(1),
     wakeup_backend=FakeWakeupBackend(),
+    backend_config=load_backend_config(),
   )
 
 
@@ -81,10 +81,10 @@ def make_dispatcher(name="dispatcher-1"):
       concurrency_maintenance=True,
       concurrency_maintenance_interval=600,
     ),
-    backend_alias="default",
     name=name,
     pid=23456,
     hostname="localhost",
+    backend_config=load_backend_config(),
   )
 
 

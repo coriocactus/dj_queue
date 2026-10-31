@@ -17,6 +17,7 @@ import dj_queue.operations.concurrency as concurrency_operations
 import dj_queue.operations.execution as execution_operations
 import dj_queue.operations.jobs as job_operations
 from dj_queue.api import QueueInfo
+from dj_queue.config import load_backend_config
 from dj_queue.models import (
   BlockedExecution,
   ClaimedExecution,
@@ -80,10 +81,22 @@ def queries_touching(ctx, table_name):
 
 @pytest.mark.django_db
 def test_semaphore_acquire_release_cycle():
-  assert semaphore_acquire("account:1", limit=1, duration_seconds=60) is True
-  assert semaphore_acquire("account:1", limit=1, duration_seconds=60) is False
-  assert semaphore_release("account:1", limit=1, duration_seconds=60) is True
-  assert semaphore_acquire("account:1", limit=1, duration_seconds=60) is True
+  assert (
+    semaphore_acquire("account:1", limit=1, duration_seconds=60, config=load_backend_config())
+    is True
+  )
+  assert (
+    semaphore_acquire("account:1", limit=1, duration_seconds=60, config=load_backend_config())
+    is False
+  )
+  assert (
+    semaphore_release("account:1", limit=1, duration_seconds=60, config=load_backend_config())
+    is True
+  )
+  assert (
+    semaphore_acquire("account:1", limit=1, duration_seconds=60, config=load_backend_config())
+    is True
+  )
 
 
 @pytest.mark.django_db
@@ -104,7 +117,12 @@ def test_semaphore_acquire_uses_value_when_bridge_count_is_stale(
     expires_at=timezone.now() + timedelta(seconds=60),
   )
 
-  assert semaphore_acquire("account:mixed-version", limit=1, duration_seconds=60) is acquired
+  assert (
+    semaphore_acquire(
+      "account:mixed-version", limit=1, duration_seconds=60, config=load_backend_config()
+    )
+    is acquired
+  )
 
   semaphore = Semaphore.objects.get(key="account:mixed-version")
   assert semaphore.active_count == semaphore.limit - semaphore.value
@@ -120,7 +138,12 @@ def test_semaphore_release_repairs_null_bridge_count_from_value():
     expires_at=timezone.now() + timedelta(seconds=60),
   )
 
-  assert semaphore_release("account:mixed-version", limit=1, duration_seconds=60) is True
+  assert (
+    semaphore_release(
+      "account:mixed-version", limit=1, duration_seconds=60, config=load_backend_config()
+    )
+    is True
+  )
 
   semaphore = Semaphore.objects.get(key="account:mixed-version")
   assert semaphore.value == 1
@@ -142,6 +165,7 @@ def test_semaphore_acquire_many_uses_value_when_bridge_count_is_stale():
     count=2,
     limit=2,
     duration_seconds=60,
+    config=load_backend_config(),
   )
 
   assert acquired == 2
@@ -152,9 +176,15 @@ def test_semaphore_acquire_many_uses_value_when_bridge_count_is_stale():
 
 @pytest.mark.django_db
 def test_semaphore_acquire_reconciles_increased_limit():
-  assert semaphore_acquire("account:resize", limit=1, duration_seconds=60) is True
+  assert (
+    semaphore_acquire("account:resize", limit=1, duration_seconds=60, config=load_backend_config())
+    is True
+  )
 
-  assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True
+  assert (
+    semaphore_acquire("account:resize", limit=2, duration_seconds=60, config=load_backend_config())
+    is True
+  )
 
   semaphore = Semaphore.objects.get(key="account:resize")
   assert semaphore.limit == 2
@@ -164,10 +194,19 @@ def test_semaphore_acquire_reconciles_increased_limit():
 
 @pytest.mark.django_db
 def test_semaphore_acquire_reconciles_reduced_limit_when_saturated():
-  assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True
-  assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True
+  assert (
+    semaphore_acquire("account:resize", limit=2, duration_seconds=60, config=load_backend_config())
+    is True
+  )
+  assert (
+    semaphore_acquire("account:resize", limit=2, duration_seconds=60, config=load_backend_config())
+    is True
+  )
 
-  assert semaphore_acquire("account:resize", limit=1, duration_seconds=60) is False
+  assert (
+    semaphore_acquire("account:resize", limit=1, duration_seconds=60, config=load_backend_config())
+    is False
+  )
 
   semaphore = Semaphore.objects.get(key="account:resize")
   assert semaphore.limit == 1
@@ -177,12 +216,27 @@ def test_semaphore_acquire_reconciles_reduced_limit_when_saturated():
 
 @pytest.mark.django_db
 def test_reduced_semaphore_limit_uses_compatibility_available_count():
-  assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True
-  assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True
+  assert (
+    semaphore_acquire("account:resize", limit=2, duration_seconds=60, config=load_backend_config())
+    is True
+  )
+  assert (
+    semaphore_acquire("account:resize", limit=2, duration_seconds=60, config=load_backend_config())
+    is True
+  )
 
-  assert semaphore_acquire("account:resize", limit=1, duration_seconds=60) is False
-  assert semaphore_release("account:resize", limit=1, duration_seconds=60) is True
-  assert semaphore_acquire("account:resize", limit=1, duration_seconds=60) is True
+  assert (
+    semaphore_acquire("account:resize", limit=1, duration_seconds=60, config=load_backend_config())
+    is False
+  )
+  assert (
+    semaphore_release("account:resize", limit=1, duration_seconds=60, config=load_backend_config())
+    is True
+  )
+  assert (
+    semaphore_acquire("account:resize", limit=1, duration_seconds=60, config=load_backend_config())
+    is True
+  )
 
   semaphore = Semaphore.objects.get(key="account:resize")
   assert semaphore.active_count == semaphore.limit == 1
@@ -190,11 +244,21 @@ def test_reduced_semaphore_limit_uses_compatibility_available_count():
 
 @pytest.mark.django_db
 def test_saturated_semaphore_acquire_without_reconcile_does_not_touch_row():
-  assert semaphore_acquire("account:saturated", limit=1, duration_seconds=60) is True
+  assert (
+    semaphore_acquire(
+      "account:saturated", limit=1, duration_seconds=60, config=load_backend_config()
+    )
+    is True
+  )
   untouched_at = timezone.now() - timedelta(minutes=5)
   Semaphore.objects.filter(key="account:saturated").update(updated_at=untouched_at)
 
-  assert semaphore_acquire("account:saturated", limit=1, duration_seconds=60) is False
+  assert (
+    semaphore_acquire(
+      "account:saturated", limit=1, duration_seconds=60, config=load_backend_config()
+    )
+    is False
+  )
 
   semaphore = Semaphore.objects.get(key="account:saturated")
   assert semaphore.updated_at == untouched_at
@@ -203,13 +267,19 @@ def test_saturated_semaphore_acquire_without_reconcile_does_not_touch_row():
 @pytest.mark.django_db
 def test_saturated_bulk_semaphore_acquire_without_reconcile_does_not_touch_row():
   assert (
-    semaphore_acquire_many("account:bulk-saturated", count=1, limit=1, duration_seconds=60) == 1
+    semaphore_acquire_many(
+      "account:bulk-saturated", count=1, limit=1, duration_seconds=60, config=load_backend_config()
+    )
+    == 1
   )
   untouched_at = timezone.now() - timedelta(minutes=5)
   Semaphore.objects.filter(key="account:bulk-saturated").update(updated_at=untouched_at)
 
   assert (
-    semaphore_acquire_many("account:bulk-saturated", count=1, limit=1, duration_seconds=60) == 0
+    semaphore_acquire_many(
+      "account:bulk-saturated", count=1, limit=1, duration_seconds=60, config=load_backend_config()
+    )
+    == 0
   )
 
   semaphore = Semaphore.objects.get(key="account:bulk-saturated")
@@ -218,10 +288,19 @@ def test_saturated_bulk_semaphore_acquire_without_reconcile_does_not_touch_row()
 
 @pytest.mark.django_db
 def test_semaphore_release_reconciles_supplied_limit():
-  assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True
-  assert semaphore_acquire("account:resize", limit=2, duration_seconds=60) is True
+  assert (
+    semaphore_acquire("account:resize", limit=2, duration_seconds=60, config=load_backend_config())
+    is True
+  )
+  assert (
+    semaphore_acquire("account:resize", limit=2, duration_seconds=60, config=load_backend_config())
+    is True
+  )
 
-  assert semaphore_release("account:resize", limit=1, duration_seconds=60) is True
+  assert (
+    semaphore_release("account:resize", limit=1, duration_seconds=60, config=load_backend_config())
+    is True
+  )
 
   semaphore = Semaphore.objects.get(key="account:resize")
   assert semaphore.limit == 1
@@ -292,9 +371,9 @@ def test_non_transient_claim_error_classification_rejects_unknown_errors():
 
 @pytest.mark.django_db
 def test_semaphore_signal_caps_at_limit():
-  semaphore_acquire("account:1", limit=2, duration_seconds=60)
-  semaphore_release("account:1", limit=2, duration_seconds=60)
-  semaphore_release("account:1", limit=2, duration_seconds=60)
+  semaphore_acquire("account:1", limit=2, duration_seconds=60, config=load_backend_config())
+  semaphore_release("account:1", limit=2, duration_seconds=60, config=load_backend_config())
+  semaphore_release("account:1", limit=2, duration_seconds=60, config=load_backend_config())
 
   semaphore = Semaphore.objects.get(key="account:1")
 
@@ -303,10 +382,13 @@ def test_semaphore_signal_caps_at_limit():
 
 @pytest.mark.django_db
 def test_semaphore_release_uses_one_semaphore_table_query():
-  semaphore_acquire("account:1", limit=1, duration_seconds=60)
+  semaphore_acquire("account:1", limit=1, duration_seconds=60, config=load_backend_config())
 
   with CaptureQueriesContext(connection) as ctx:
-    assert semaphore_release("account:1", limit=1, duration_seconds=60) is True
+    assert (
+      semaphore_release("account:1", limit=1, duration_seconds=60, config=load_backend_config())
+      is True
+    )
 
   assert len(queries_touching(ctx, "dj_queue_semaphores")) == 1
 
@@ -317,7 +399,7 @@ def test_complete_claimed_job_uses_one_claimed_table_query():
   ClaimedExecution.objects.create(job=job)
 
   with CaptureQueriesContext(connection) as ctx:
-    complete_claimed_job(job.id, "done")
+    complete_claimed_job(job.id, "done", config=load_backend_config())
 
   assert len(queries_touching(ctx, "dj_queue_claimed_executions")) == 1
   assert ClaimedExecution.objects.filter(job=job).exists() is False
@@ -483,7 +565,7 @@ def test_complete_claimed_job_with_waiter_uses_one_semaphore_query():
   claim_ready_jobs(limit=1)
 
   with CaptureQueriesContext(connection) as ctx:
-    complete_claimed_job(first.id, "done")
+    complete_claimed_job(first.id, "done", config=load_backend_config())
 
   assert len(queries_touching(ctx, "dj_queue_semaphores")) == 1
 
@@ -550,7 +632,9 @@ def test_fail_claimed_job_uses_one_claimed_table_query():
   ClaimedExecution.objects.create(job=job)
 
   with CaptureQueriesContext(connection) as ctx:
-    fail_claimed_job(job.id, ValueError("boom"), traceback_text="traceback")
+    fail_claimed_job(
+      job.id, ValueError("boom"), traceback_text="traceback", config=load_backend_config()
+    )
 
   assert len(queries_touching(ctx, "dj_queue_claimed_executions")) == 1
   assert ClaimedExecution.objects.filter(job=job).exists() is False
@@ -569,7 +653,9 @@ def test_concurrent_acquire_allows_exactly_limit_successes():
   def acquire_once():
     try:
       barrier.wait()
-      return semaphore_acquire("account:concurrent", limit=limit, duration_seconds=60)
+      return semaphore_acquire(
+        "account:concurrent", limit=limit, duration_seconds=60, config=load_backend_config()
+      )
     finally:
       connections.close_all()
 
@@ -593,7 +679,9 @@ def test_concurrent_first_acquire_creates_one_semaphore_row():
   def acquire_once():
     try:
       barrier.wait()
-      return semaphore_acquire("account:first", limit=1, duration_seconds=60)
+      return semaphore_acquire(
+        "account:first", limit=1, duration_seconds=60, config=load_backend_config()
+      )
     finally:
       connections.close_all()
 
@@ -628,7 +716,7 @@ def test_concurrent_recurring_fire_creates_one_reservation_and_job():
   def fire_once():
     try:
       barrier.wait()
-      execution = fire_recurring_task(recurring_task, run_at)
+      execution = fire_recurring_task(recurring_task, run_at, config=load_backend_config())
       return execution is not None
     finally:
       connections.close_all()
@@ -675,7 +763,10 @@ def test_concurrent_failed_retry_promotion_consumes_each_due_row_once():
   def promote_once():
     try:
       barrier.wait()
-      return [job.id for job in promote_failed_job_retries(batch_size=len(jobs))]
+      return [
+        job.id
+        for job in promote_failed_job_retries(batch_size=len(jobs), config=load_backend_config())
+      ]
     finally:
       connections.close_all()
 
@@ -741,6 +832,7 @@ def test_semaphore_acquire_many_reserves_available_slots():
     count=3,
     limit=2,
     duration_seconds=60,
+    config=load_backend_config(),
   )
 
   assert acquired == 2
@@ -753,6 +845,7 @@ def test_semaphore_acquire_many_reserves_available_slots():
       count=1,
       limit=2,
       duration_seconds=60,
+      config=load_backend_config(),
     )
     == 0
   )
@@ -777,7 +870,7 @@ def test_successful_completion_unblocks_next_waiter():
   second = limited.enqueue(1, value="second")
 
   claimed_jobs = claim_ready_jobs(limit=1)
-  complete_claimed_job(first.id, "done")
+  complete_claimed_job(first.id, "done", config=load_backend_config())
 
   assert [str(claimed_job.job.id) for claimed_job in claimed_jobs] == [first.id]
   assert ReadyExecution.objects.filter(job_id=second.id).exists() is True
@@ -799,7 +892,7 @@ def test_worker_completion_promotes_limit_one_waiter_to_ready():
   second = limited.enqueue(1, value="second")
   claimed_job = claim_ready_jobs(limit=1, process=process)[0]
 
-  completed_job = complete_claimed_job(claimed_job, "done")
+  completed_job = complete_claimed_job(claimed_job, "done", config=load_backend_config())
 
   assert str(completed_job.id) == first.id
   assert ClaimedExecution.objects.filter(job_id=second.id).exists() is False
@@ -824,7 +917,7 @@ def test_worker_completion_keeps_paused_waiter_slot_reserved():
   claimed_job = claim_ready_jobs(limit=1, process=process)[0]
   QueueInfo("default").pause()
 
-  completed_job = complete_claimed_job(claimed_job, "done")
+  completed_job = complete_claimed_job(claimed_job, "done", config=load_backend_config())
 
   assert str(completed_job.id) == first.id
   assert ReadyExecution.objects.filter(job_id=second.id).exists() is True
@@ -866,7 +959,9 @@ def test_failed_completion_still_unblocks_next_waiter():
   second = limited.enqueue(1, value="second")
 
   claim_ready_jobs(limit=1)
-  fail_claimed_job(first.id, ValueError("boom"), traceback_text="traceback")
+  fail_claimed_job(
+    first.id, ValueError("boom"), traceback_text="traceback", config=load_backend_config()
+  )
 
   assert FailedExecution.objects.filter(job_id=first.id).exists() is True
   assert ReadyExecution.objects.filter(job_id=second.id).exists() is True
@@ -884,7 +979,7 @@ def test_complete_claimed_job_rolls_back_when_concurrency_release_fails(monkeypa
   monkeypatch.setattr(concurrency_operations, "semaphore_release", fail_release)
 
   with pytest.raises(RuntimeError, match="release failed"):
-    complete_claimed_job(first.id, "done")
+    complete_claimed_job(first.id, "done", config=load_backend_config())
 
   assert ClaimedExecution.objects.filter(job_id=first.id).exists() is True
   assert Job.objects.get(pk=first.id).finished_at is None
@@ -911,7 +1006,9 @@ def test_fail_claimed_job_rejects_conflicting_execution_state():
   )
 
   with pytest.raises(EnqueueError, match="already has an execution-state row"):
-    fail_claimed_job(job.id, ValueError("boom"), traceback_text="traceback")
+    fail_claimed_job(
+      job.id, ValueError("boom"), traceback_text="traceback", config=load_backend_config()
+    )
 
   assert FailedExecution.objects.filter(job=job).exists() is False
 
@@ -928,7 +1025,7 @@ def test_complete_claimed_job_rejects_conflicting_execution_state():
   )
 
   with pytest.raises(EnqueueError, match="already has an execution-state row"):
-    complete_claimed_job(job.id, "done")
+    complete_claimed_job(job.id, "done", config=load_backend_config())
 
   assert ClaimedExecution.objects.filter(job=job).exists() is True
   assert Job.objects.get(pk=job.pk).finished_at is None
@@ -981,7 +1078,7 @@ def test_invalid_concurrency_settings_after_claim_do_not_leak_slot(monkeypatch):
   claim_ready_jobs(limit=1)
   monkeypatch.setattr(limited.func, "concurrency_limit", "many")
 
-  complete_claimed_job(first.id, "done")
+  complete_claimed_job(first.id, "done", config=load_backend_config())
 
   assert ReadyExecution.objects.filter(job_id=second.id).exists() is True
   assert BlockedExecution.objects.filter(job_id=second.id).exists() is False
@@ -999,7 +1096,7 @@ def test_completion_uses_persisted_concurrency_policy(monkeypatch):
 
   monkeypatch.setattr(job_operations, "import_string", fail_import)
 
-  complete_claimed_job(first.id, "done")
+  complete_claimed_job(first.id, "done", config=load_backend_config())
 
   assert ReadyExecution.objects.filter(job_id=second.id).exists() is True
   assert BlockedExecution.objects.filter(job_id=second.id).exists() is False
@@ -1014,9 +1111,12 @@ def test_reduced_concurrency_limit_after_claim_uses_compatibility_handoff(monkey
 
   claim_ready_jobs(limit=2)
   monkeypatch.setattr(limited.func, "concurrency_limit", 1)
-  assert semaphore_acquire("account:1", limit=1, duration_seconds=60) is False
+  assert (
+    semaphore_acquire("account:1", limit=1, duration_seconds=60, config=load_backend_config())
+    is False
+  )
 
-  complete_claimed_job(first.id, "done")
+  complete_claimed_job(first.id, "done", config=load_backend_config())
 
   assert ClaimedExecution.objects.filter(job_id=second.id).exists() is True
   assert BlockedExecution.objects.filter(job_id=third.id).exists() is False
@@ -1043,7 +1143,9 @@ def test_recovered_concurrency_release_falls_back_for_conflicting_settings(monke
     ),
   ]
 
-  fallback_jobs = concurrency_operations.release_recovered_concurrency_slots(jobs)
+  fallback_jobs = concurrency_operations.release_recovered_concurrency_slots(
+    jobs, config=load_backend_config()
+  )
 
   assert fallback_jobs == jobs
 
@@ -1060,7 +1162,7 @@ def test_dispatcher_promotes_expired_blocked_jobs():
     expires_at=timezone.now() - timedelta(seconds=1),
   )
 
-  promoted = promote_expired_blocked_jobs(batch_size=10)
+  promoted = promote_expired_blocked_jobs(batch_size=10, config=load_backend_config())
 
   assert [promoted_job.id for promoted_job in promoted] == [job.id]
   assert BlockedExecution.objects.filter(job=job).exists() is False
@@ -1087,7 +1189,7 @@ def test_promote_expired_blocked_jobs_rejects_conflicting_execution_state():
   )
 
   with pytest.raises(EnqueueError, match="already has an execution-state row"):
-    promote_expired_blocked_jobs(batch_size=10)
+    promote_expired_blocked_jobs(batch_size=10, config=load_backend_config())
 
   assert BlockedExecution.objects.filter(job=job).exists() is True
   assert ReadyExecution.objects.filter(job=job).exists() is False
@@ -1112,7 +1214,7 @@ def test_blocked_maintenance_rolls_back_prior_promotions_and_slot_changes(monkey
   FailedExecution.objects.create(job=jobs[1], exception_class="builtins.ValueError", message="bad")
 
   with pytest.raises(EnqueueError, match="already has an execution-state row"):
-    promote_expired_blocked_jobs(batch_size=10)
+    promote_expired_blocked_jobs(batch_size=10, config=load_backend_config())
 
   assert BlockedExecution.objects.count() == 2
   assert not ReadyExecution.objects.exists()
@@ -1133,8 +1235,8 @@ def test_expired_semaphore_cleanup_preserves_active_claimed_key():
     expires_at=timezone.now() - timedelta(seconds=1)
   )
 
-  assert cleanup_expired_semaphores() == 0
-  assert promote_expired_blocked_jobs(batch_size=10) == []
+  assert cleanup_expired_semaphores(config=load_backend_config()) == 0
+  assert promote_expired_blocked_jobs(batch_size=10, config=load_backend_config()) == []
   assert ClaimedExecution.objects.filter(job_id=first.id).exists() is True
   assert BlockedExecution.objects.filter(job_id=second.id).exists() is True
   assert ReadyExecution.objects.filter(job_id=second.id).exists() is False
@@ -1148,7 +1250,7 @@ def test_expired_semaphore_cleanup_preserves_ready_key_with_reserved_slot():
     expires_at=timezone.now() - timedelta(seconds=1)
   )
 
-  assert cleanup_expired_semaphores() == 0
+  assert cleanup_expired_semaphores(config=load_backend_config()) == 0
 
   third = limited.enqueue(1, value="third")
 
@@ -1186,7 +1288,7 @@ def test_promote_expired_blocked_jobs_reuses_task_import_for_shared_task_path(mo
       expires_at=timezone.now() - timedelta(seconds=1),
     )
 
-  promote_expired_blocked_jobs(batch_size=10)
+  promote_expired_blocked_jobs(batch_size=10, config=load_backend_config())
 
   assert imported == [limited.module_path]
 
@@ -1224,7 +1326,7 @@ def test_promote_expired_blocked_jobs_uses_backend_default_concurrency_duration(
   )
   before_promote = timezone.now()
 
-  assert promote_expired_blocked_jobs(batch_size=10) == []
+  assert promote_expired_blocked_jobs(batch_size=10, config=load_backend_config()) == []
 
   blocked = BlockedExecution.objects.get(job=job)
   assert blocked.expires_at >= before_promote + timedelta(seconds=200)
@@ -1244,7 +1346,7 @@ def test_blocked_promotion_uses_persisted_concurrency_policy(monkeypatch):
   monkeypatch.setattr(concurrency_operations, "import_string", fail_import)
   before_promote = timezone.now()
 
-  assert promote_expired_blocked_jobs(batch_size=10) == []
+  assert promote_expired_blocked_jobs(batch_size=10, config=load_backend_config()) == []
 
   blocked = BlockedExecution.objects.get(job_id=second.id)
   assert blocked.expires_at >= before_promote + timedelta(seconds=50)
@@ -1275,7 +1377,7 @@ def test_blocked_promotion_isolates_unresolvable_historical_policy():
       expires_at=expired_at + timedelta(seconds=index),
     )
 
-  promoted = promote_expired_blocked_jobs(batch_size=10)
+  promoted = promote_expired_blocked_jobs(batch_size=10, config=load_backend_config())
 
   assert [job.id for job in promoted] == [following.id]
   assert FailedExecution.objects.filter(job=missing).exists() is True
@@ -1304,7 +1406,7 @@ def test_blocked_policy_cache_does_not_hide_incomplete_policy(partial_policy):
       expires_at=expired_at + timedelta(seconds=index),
     )
 
-  promoted = promote_expired_blocked_jobs(batch_size=10)
+  promoted = promote_expired_blocked_jobs(batch_size=10, config=load_backend_config())
 
   assert [job.id for job in promoted] == [jobs[0].id, jobs[2].id]
   failure = FailedExecution.objects.get(job=jobs[1])
@@ -1344,6 +1446,7 @@ def test_unblock_next_blocked_job_restores_waiter_when_slot_is_not_acquired():
     limit=1,
     duration_seconds=60,
     slot_handoff=concurrency_operations.SlotHandoffMode.CONSUME_RELEASED,
+    config=load_backend_config(),
   )
 
   blocked = BlockedExecution.objects.get(job=job)
@@ -1379,6 +1482,7 @@ def test_unblock_next_blocked_job_returns_blocked_job_reference():
     limit=1,
     duration_seconds=60,
     slot_handoff=concurrency_operations.SlotHandoffMode.CONSUME_RELEASED,
+    config=load_backend_config(),
   )
 
   assert isinstance(unblocked, concurrency_operations.BlockedJobRef)
@@ -1419,6 +1523,7 @@ def test_unblock_next_blocked_job_rejects_conflicting_execution_state():
       limit=1,
       duration_seconds=60,
       slot_handoff=concurrency_operations.SlotHandoffMode.CONSUME_RELEASED,
+      config=load_backend_config(),
     )
 
 
@@ -1570,7 +1675,7 @@ def test_sqlite_promote_skips_scheduled_row_consumed_after_selection(monkeypatch
 
   monkeypatch.setattr("dj_queue.operations.jobs.locked_queryset", consume_during_selection)
 
-  assert promote_scheduled_jobs(batch_size=10) == []
+  assert promote_scheduled_jobs(batch_size=10, config=load_backend_config()) == []
   assert ReadyExecution.objects.filter(job=job).exists() is False
 
 
@@ -1607,7 +1712,7 @@ def test_sqlite_promote_skips_blocked_row_consumed_after_selection(monkeypatch):
 
   monkeypatch.setattr("dj_queue.operations.concurrency.locked_queryset", consume_during_selection)
 
-  assert promote_expired_blocked_jobs(batch_size=10) == []
+  assert promote_expired_blocked_jobs(batch_size=10, config=load_backend_config()) == []
   assert ReadyExecution.objects.filter(job=job).exists() is False
 
 
@@ -1864,7 +1969,7 @@ def test_promote_scheduled_jobs_rejects_job_with_conflicting_execution_state():
   )
 
   with pytest.raises(EnqueueError, match="already has an execution-state row"):
-    promote_scheduled_jobs(batch_size=10)
+    promote_scheduled_jobs(batch_size=10, config=load_backend_config())
 
 
 @pytest.mark.django_db(transaction=True)
@@ -1889,7 +1994,7 @@ def test_promote_scheduled_jobs_retries_transient_database_deadlock(monkeypatch)
 
   monkeypatch.setattr(job_operations, "_consume_selected_rows", deadlock_once)
 
-  promoted = promote_scheduled_jobs(batch_size=10)
+  promoted = promote_scheduled_jobs(batch_size=10, config=load_backend_config())
 
   assert calls == 2
   assert promoted == [job]
@@ -1921,7 +2026,7 @@ def test_promote_scheduled_concurrency_job_rejects_conflicting_execution_state()
   )
 
   with pytest.raises(EnqueueError, match="already has an execution-state row"):
-    promote_scheduled_jobs(batch_size=10)
+    promote_scheduled_jobs(batch_size=10, config=load_backend_config())
 
   assert ScheduledExecution.objects.filter(job=job).exists() is True
   assert ReadyExecution.objects.filter(job=job).exists() is False
@@ -1959,7 +2064,7 @@ def test_promote_scheduled_discard_job_rejects_conflicting_execution_state():
   )
 
   with pytest.raises(EnqueueError, match="already has an execution-state row"):
-    promote_scheduled_jobs(batch_size=10)
+    promote_scheduled_jobs(batch_size=10, config=load_backend_config())
 
   job.refresh_from_db()
   assert job.finished_at is None
@@ -1984,7 +2089,7 @@ def test_cleanup_expired_semaphores():
     expires_at=timezone.now() + timedelta(minutes=1),
   )
 
-  deleted = cleanup_expired_semaphores()
+  deleted = cleanup_expired_semaphores(config=load_backend_config())
 
   assert deleted == 1
   assert Semaphore.objects.filter(key="expired").exists() is False
@@ -2002,7 +2107,7 @@ def test_cleanup_expired_semaphores_deletes_without_execution_state_subqueries()
   )
 
   with CaptureQueriesContext(connection) as ctx:
-    assert cleanup_expired_semaphores() == 1
+    assert cleanup_expired_semaphores(config=load_backend_config()) == 1
 
   semaphore_deletes = [
     query["sql"]
@@ -2026,7 +2131,7 @@ def test_cleanup_expired_semaphores_respects_batch_size():
       expires_at=now - timedelta(seconds=3 - index),
     )
 
-  deleted = cleanup_expired_semaphores(batch_size=2)
+  deleted = cleanup_expired_semaphores(batch_size=2, config=load_backend_config())
 
   assert deleted == 2
   assert Semaphore.objects.filter(expires_at__lte=now).count() == 1
@@ -2053,7 +2158,7 @@ def test_cleanup_expired_semaphores_retries_transient_database_deadlock(monkeypa
 
   monkeypatch.setattr(concurrency_operations, "locked_queryset", deadlock_once)
 
-  assert cleanup_expired_semaphores() == 1
+  assert cleanup_expired_semaphores(config=load_backend_config()) == 1
   assert calls == 2
   assert Semaphore.objects.filter(key="expired").exists() is False
 
@@ -2065,8 +2170,18 @@ def test_cleanup_expired_semaphores_retries_transient_database_deadlock(monkeypa
 @pytest.mark.django_db(transaction=True)
 def test_postgres_semaphore_acquire_uses_one_semaphore_query_per_attempt():
   with CaptureQueriesContext(connection) as ctx:
-    assert semaphore_acquire("account:postgres-upsert", limit=1, duration_seconds=60) is True
-    assert semaphore_acquire("account:postgres-upsert", limit=1, duration_seconds=60) is False
+    assert (
+      semaphore_acquire(
+        "account:postgres-upsert", limit=1, duration_seconds=60, config=load_backend_config()
+      )
+      is True
+    )
+    assert (
+      semaphore_acquire(
+        "account:postgres-upsert", limit=1, duration_seconds=60, config=load_backend_config()
+      )
+      is False
+    )
 
   assert len(queries_touching(ctx, "dj_queue_semaphores")) == 2
 
@@ -2188,7 +2303,17 @@ def test_mysql_family_semaphore_acquire_avoids_deprecated_values_function(monkey
 @pytest.mark.django_db(transaction=True)
 def test_mysql_family_semaphore_acquire_uses_one_semaphore_query_per_attempt():
   with CaptureQueriesContext(connection) as ctx:
-    assert semaphore_acquire("account:mysql-upsert", limit=1, duration_seconds=60) is True
-    assert semaphore_acquire("account:mysql-upsert", limit=1, duration_seconds=60) is False
+    assert (
+      semaphore_acquire(
+        "account:mysql-upsert", limit=1, duration_seconds=60, config=load_backend_config()
+      )
+      is True
+    )
+    assert (
+      semaphore_acquire(
+        "account:mysql-upsert", limit=1, duration_seconds=60, config=load_backend_config()
+      )
+      is False
+    )
 
   assert len(queries_touching(ctx, "dj_queue_semaphores")) == 2

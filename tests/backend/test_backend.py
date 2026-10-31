@@ -16,6 +16,7 @@ from django.utils import timezone
 import dj_queue.operations._helpers as operation_helpers
 from dj_queue.api import enqueue_on_commit
 from dj_queue.backend import DjQueueBackend, _async_backend_call
+from dj_queue.config import load_backend_config
 from dj_queue.exceptions import DjQueueError, EnqueueError
 from dj_queue.models import (
   BlockedExecution,
@@ -536,14 +537,14 @@ def test_enqueue_bulk_groups_concurrency_slot_acquisition(monkeypatch):
   backend = limited.get_backend()
   acquire_calls = []
 
-  def acquire_many(key, *, count, limit, duration_seconds, backend_alias, config=None):
+  def acquire_many(key, *, count, limit, duration_seconds, config):
     acquire_calls.append(
       {
         "key": key,
         "count": count,
         "limit": limit,
         "duration_seconds": duration_seconds,
-        "backend_alias": backend_alias,
+        "backend_alias": config.backend_alias,
       }
     )
     return 1
@@ -826,7 +827,7 @@ def test_promote_failed_job_retries_dispatches_due_rows():
     retry_at=retry_at,
   )
 
-  promoted = promote_failed_job_retries(batch_size=10)
+  promoted = promote_failed_job_retries(batch_size=10, config=load_backend_config())
 
   job.refresh_from_db()
   assert [promoted_job.id for promoted_job in promoted] == [job.id]
@@ -848,7 +849,7 @@ def test_promote_failed_job_retries_leaves_future_rows_failed():
     retry_at=retry_at,
   )
 
-  promoted = promote_failed_job_retries(batch_size=10)
+  promoted = promote_failed_job_retries(batch_size=10, config=load_backend_config())
 
   failed = FailedExecution.objects.get(job=job)
   assert promoted == []
@@ -873,7 +874,7 @@ def test_failed_retry_promotion_isolates_unresolvable_historical_policy():
       retry_at=due_at,
     )
 
-  promoted = promote_failed_job_retries(batch_size=10)
+  promoted = promote_failed_job_retries(batch_size=10, config=load_backend_config())
 
   assert [job.id for job in promoted] == [following.id]
   failed = FailedExecution.objects.get(job=missing)
@@ -1052,7 +1053,9 @@ def test_clear_finished_jobs_by_age_and_task_path():
     return_value="recent",
   )
 
-  deleted = clear_finished_jobs(older_than=60, task_path=echo.module_path, batch_size=10)
+  deleted = clear_finished_jobs(
+    older_than=60, task_path=echo.module_path, batch_size=10, config=load_backend_config()
+  )
 
   assert deleted == 1
   assert Job.objects.filter(pk=old_finished.pk).exists() is False
@@ -1075,7 +1078,7 @@ def test_clear_finished_jobs_stays_backend_scoped_on_shared_queue_db():
     backend_alias="secondary",
   )
 
-  deleted = clear_finished_jobs(older_than=60, batch_size=10, backend_alias="default")
+  deleted = clear_finished_jobs(older_than=60, batch_size=10, config=load_backend_config())
 
   assert deleted == 1
   assert Job.objects.filter(pk=default_job.pk).exists() is False
@@ -1100,7 +1103,7 @@ def test_clear_finished_jobs_locks_job_rows(monkeypatch):
 
   monkeypatch.setattr(cleanup_operations, "locked_queryset", locked)
 
-  deleted = clear_finished_jobs(older_than=60, batch_size=10)
+  deleted = clear_finished_jobs(older_than=60, batch_size=10, config=load_backend_config())
 
   assert deleted == 1
   assert calls == [True]
@@ -1142,7 +1145,9 @@ def test_clear_failed_jobs_by_age_and_task_path():
     created_at=timezone.now() - timedelta(seconds=10)
   )
 
-  deleted = clear_failed_jobs(older_than=60, task_path=echo.module_path, batch_size=10)
+  deleted = clear_failed_jobs(
+    older_than=60, task_path=echo.module_path, batch_size=10, config=load_backend_config()
+  )
 
   assert deleted == 1
   assert Job.objects.filter(pk=old_job.pk).exists() is False
@@ -1174,7 +1179,7 @@ def test_clear_failed_jobs_stays_backend_scoped_on_shared_queue_db():
     created_at=timezone.now() - timedelta(minutes=10)
   )
 
-  deleted = clear_failed_jobs(older_than=60, batch_size=10, backend_alias="default")
+  deleted = clear_failed_jobs(older_than=60, batch_size=10, config=load_backend_config())
 
   assert deleted == 1
   assert Job.objects.filter(pk=default_job.pk).exists() is False
@@ -1204,7 +1209,7 @@ def test_clear_failed_jobs_locks_failed_rows(monkeypatch):
 
   monkeypatch.setattr(cleanup_operations, "locked_queryset", locked)
 
-  deleted = clear_failed_jobs(older_than=60, batch_size=10)
+  deleted = clear_failed_jobs(older_than=60, batch_size=10, config=load_backend_config())
 
   assert deleted == 1
   assert calls == [True]
@@ -1232,7 +1237,7 @@ def test_clear_failed_jobs_skips_rows_consumed_by_another_transition(monkeypatch
 
   monkeypatch.setattr(cleanup_operations, "_consume_selected_rows", consume_elsewhere)
 
-  deleted = clear_failed_jobs(older_than=60, batch_size=10)
+  deleted = clear_failed_jobs(older_than=60, batch_size=10, config=load_backend_config())
 
   assert deleted == 0
   assert Job.objects.filter(pk=job.pk).exists() is True
@@ -1279,7 +1284,7 @@ def test_scheduled_promotion_stays_backend_scoped_on_shared_queue_db():
       scheduled_at=due_at,
     )
 
-  promoted = promote_scheduled_jobs(batch_size=10, backend_alias="default")
+  promoted = promote_scheduled_jobs(batch_size=10, config=load_backend_config())
 
   assert [job.pk for job in promoted] == [default_job.pk]
   assert ReadyExecution.objects.filter(job=default_job).exists() is True
@@ -1304,7 +1309,7 @@ def test_scheduled_promotion_bulk_promotes_jobs_without_importing_tasks(monkeypa
 
   monkeypatch.setattr("dj_queue.operations.jobs.import_string", fail_import)
 
-  promoted = promote_scheduled_jobs(batch_size=10)
+  promoted = promote_scheduled_jobs(batch_size=10, config=load_backend_config())
 
   assert [job.pk for job in promoted] == [job.pk for job in jobs]
   assert ReadyExecution.objects.count() == len(jobs)
@@ -1324,7 +1329,7 @@ def test_scheduled_promotion_uses_persisted_concurrency_policy(monkeypatch):
 
   monkeypatch.setattr("dj_queue.operations.jobs.import_string", fail_import)
 
-  promoted = promote_scheduled_jobs(batch_size=10)
+  promoted = promote_scheduled_jobs(batch_size=10, config=load_backend_config())
 
   assert [job.id for job in promoted] == [uuid.UUID(result.id)]
   assert ReadyExecution.objects.filter(job_id=result.id).exists() is True
@@ -1348,7 +1353,7 @@ def test_scheduled_promotion_isolates_unresolvable_historical_policy():
       scheduled_at=due_at,
     )
 
-  promoted = promote_scheduled_jobs(batch_size=10)
+  promoted = promote_scheduled_jobs(batch_size=10, config=load_backend_config())
 
   assert [job.id for job in promoted] == [following.id]
   assert FailedExecution.objects.filter(job=missing).exists() is True
@@ -1380,7 +1385,7 @@ def test_blocked_promotion_stays_backend_scoped_on_shared_queue_db():
       expires_at=timezone.now() - timedelta(seconds=1),
     )
 
-  promoted = promote_expired_blocked_jobs(batch_size=10, backend_alias="default")
+  promoted = promote_expired_blocked_jobs(batch_size=10, config=load_backend_config())
 
   assert [job.pk for job in promoted] == [default_job.pk]
   assert ReadyExecution.objects.filter(job=default_job).exists() is True
@@ -1416,7 +1421,9 @@ def test_clear_recurring_executions_by_age_and_task_key():
     run_at=timezone.now() - timedelta(seconds=10)
   )
 
-  deleted = clear_recurring_executions(older_than=60, task_key="nightly", batch_size=10)
+  deleted = clear_recurring_executions(
+    older_than=60, task_key="nightly", batch_size=10, config=load_backend_config()
+  )
 
   assert deleted == 1
   assert RecurringExecution.objects.filter(pk=old_execution.pk).exists() is False
@@ -1445,7 +1452,7 @@ def test_clear_recurring_executions_locks_rows(monkeypatch):
 
   monkeypatch.setattr(cleanup_operations, "locked_queryset", locked)
 
-  deleted = clear_recurring_executions(older_than=60, batch_size=10)
+  deleted = clear_recurring_executions(older_than=60, batch_size=10, config=load_backend_config())
 
   assert deleted == 1
   assert calls == [True]

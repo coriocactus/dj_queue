@@ -1,10 +1,6 @@
 from django.db import transaction
 
-from dj_queue.config import resolve_backend_config
-from dj_queue.db import (
-  get_database_alias,
-  locked_queryset,
-)
+from dj_queue.db import locked_queryset
 from dj_queue.exceptions import exception_path
 from dj_queue.log import event_logging_enabled, log_event
 from dj_queue.models import (
@@ -21,22 +17,14 @@ from dj_queue.operations.concurrency import (
 )
 
 
-def fail_orphaned_claimed_jobs(
-  error,
-  *,
-  traceback_text="",
-  backend_alias="default",
-  batch_size=500,
-  config=None,
-):
-  alias = get_database_alias(backend_alias, config=config)
-  config = resolve_backend_config(backend_alias, config)
+def fail_orphaned_claimed_jobs(error, *, config, traceback_text="", batch_size=500):
+  alias = config.database_alias
   with transaction.atomic(using=alias):
     claimed_rows = list(
       locked_queryset(
         ClaimedExecution.objects.using(alias)
         .select_related("job")
-        .filter(process__isnull=True, job__backend_alias=backend_alias)
+        .filter(process__isnull=True, job__backend_alias=config.backend_alias)
         .order_by("id"),
         use_skip_locked=config.use_skip_locked,
       )[:batch_size]
@@ -45,7 +33,6 @@ def fail_orphaned_claimed_jobs(
       [claimed.job for claimed in claimed_rows],
       error,
       traceback_text=traceback_text,
-      backend_alias=backend_alias,
       config=config,
     )
 
@@ -54,69 +41,51 @@ def fail_claimed_jobs_for_process(
   process,
   error,
   *,
+  config,
   traceback_text="",
-  backend_alias="default",
   delete_process=False,
-  config=None,
 ):
   if process is None:
     return []
 
-  alias = get_database_alias(backend_alias, config=config)
+  alias = config.database_alias
   jobs = [
     claimed.job
     for claimed in (
       ClaimedExecution.objects.using(alias).select_related("job").filter(process_id=process.id)
     )
   ]
-  failed_jobs = _fail_claimed_jobs(
-    jobs,
-    error,
-    traceback_text=traceback_text,
-    backend_alias=backend_alias,
-    config=config,
-  )
+  failed_jobs = _fail_claimed_jobs(jobs, error, traceback_text=traceback_text, config=config)
   if delete_process:
     process.delete(using=alias)
   return failed_jobs
 
 
-def fail_claimed_jobs_for_pid(
-  pid, error, *, traceback_text="", backend_alias="default", config=None
-):
-  alias = get_database_alias(backend_alias, config=config)
-  processes = list(Process.objects.using(alias).filter(pid=pid, backend_alias=backend_alias)[:2])
+def fail_claimed_jobs_for_pid(pid, error, *, config, traceback_text=""):
+  processes = list(
+    Process.objects.using(config.database_alias).filter(
+      pid=pid, backend_alias=config.backend_alias
+    )[:2]
+  )
   if len(processes) != 1:
     return []
-  process = processes[0]
   return fail_claimed_jobs_for_process(
-    process,
+    processes[0],
     error,
     traceback_text=traceback_text,
-    backend_alias=backend_alias,
     delete_process=True,
     config=config,
   )
 
 
-def fail_claimed_jobs_for_child(
-  *,
-  pid,
-  name,
-  supervisor_id,
-  error,
-  traceback_text="",
-  backend_alias="default",
-  config=None,
-):
-  alias = get_database_alias(backend_alias, config=config)
+def fail_claimed_jobs_for_child(*, pid, name, supervisor_id, error, config, traceback_text=""):
   process = (
-    Process.objects.using(alias)
+    Process.objects.using(config.database_alias)
     .filter(
       pid=pid,
       name=name,
       supervisor_id=supervisor_id,
-      backend_alias=backend_alias,
+      backend_alias=config.backend_alias,
     )
     .first()
   )
@@ -124,7 +93,6 @@ def fail_claimed_jobs_for_child(
     process,
     error,
     traceback_text=traceback_text,
-    backend_alias=backend_alias,
     delete_process=True,
     config=config,
   )
@@ -134,14 +102,13 @@ def prune_stale_processes(
   *,
   cutoff,
   error,
+  config,
   traceback_text="",
-  backend_alias="default",
   exclude_process=None,
   batch_size=500,
-  config=None,
 ):
-  alias = get_database_alias(backend_alias, config=config)
-  config = resolve_backend_config(backend_alias, config)
+  alias = config.database_alias
+  backend_alias = config.backend_alias
   pruned_processes = []
 
   with transaction.atomic(using=alias):
@@ -182,13 +149,7 @@ def prune_stale_processes(
       if not deleted:
         continue
 
-      _fail_claimed_jobs(
-        jobs,
-        error,
-        traceback_text=traceback_text,
-        backend_alias=backend_alias,
-        config=config,
-      )
+      _fail_claimed_jobs(jobs, error, traceback_text=traceback_text, config=config)
       pruned_processes.append(process)
       remaining -= len(jobs)
       if remaining == 0:
@@ -196,15 +157,16 @@ def prune_stale_processes(
     return pruned_processes
 
 
-def _fail_claimed_jobs(jobs, error, *, traceback_text, backend_alias, config=None):
+def _fail_claimed_jobs(jobs, error, *, traceback_text, config):
   jobs = list(jobs)
   if not jobs:
     return []
+  backend_alias = config.backend_alias
   for job in jobs:
     if job.backend_alias != backend_alias:
       raise ClaimedExecution.DoesNotExist
 
-  alias = get_database_alias(backend_alias, config=config)
+  alias = config.database_alias
   job_ids = [job.id for job in jobs]
   exception_class = exception_path(error)
   message = str(error)
@@ -230,9 +192,7 @@ def _fail_claimed_jobs(jobs, error, *, traceback_text, backend_alias, config=Non
       ]
     )
 
-    for job in release_recovered_concurrency_slots(
-      jobs, backend_alias=backend_alias, config=config
-    ):
+    for job in release_recovered_concurrency_slots(jobs, config=config):
       release_concurrency_slot(job, config=config)
 
   if event_logging_enabled(backend_alias=backend_alias):

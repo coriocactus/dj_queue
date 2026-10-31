@@ -4,6 +4,7 @@ import tempfile
 import threading
 from pathlib import Path
 
+from dj_queue.config import load_backend_config
 from dj_queue.runtime.errors import handle_thread_error
 
 LOCK_PATH_PREFIX = "dj_queue_gunicorn_supervisor"
@@ -71,11 +72,7 @@ def _start_embedded_supervisor(worker, *, backend_alias="default"):
         if supervisor.poll_once_if_running() is False:
           return
       except Exception as error:
-        handle_thread_error(
-          error,
-          context="supervisor.run",
-          backend_alias=supervisor.backend_alias,
-        )
+        handle_thread_error(error, context="supervisor.run", config=supervisor.backend_config)
 
   poll_thread = threading.Thread(target=poll_supervisor, daemon=True)
   worker._dj_queue_supervisor_poll_thread = poll_thread
@@ -93,7 +90,9 @@ def _start_lock_retry_loop(worker, *, backend_alias="default"):
       try:
         supervisor = _start_embedded_supervisor(worker, backend_alias=backend_alias)
       except Exception as error:
-        handle_thread_error(error, context="gunicorn.supervisor", backend_alias=backend_alias)
+        handle_thread_error(
+          error, context="gunicorn.supervisor", config=load_backend_config(backend_alias)
+        )
         continue
       if supervisor is not None:
         retry_stop.set()

@@ -3,8 +3,7 @@ from datetime import timedelta
 from django.db import transaction
 from django.utils import timezone
 
-from dj_queue.config import resolve_backend_config
-from dj_queue.db import get_database_alias, locked_queryset
+from dj_queue.db import locked_queryset
 from dj_queue.models import FailedExecution, Job, RecurringExecution
 from dj_queue.operations._helpers import (
   _consume_selected_rows,
@@ -17,17 +16,16 @@ def clear_finished_jobs(
   older_than=None,
   task_path=None,
   batch_size=500,
-  backend_alias="default",
   now=None,
-  config=None,
+  config,
 ):
-  config = resolve_backend_config(backend_alias, config)
   if older_than is None:
     older_than = config.clear_finished_jobs_after
   if older_than is None:
     return 0
 
-  alias = get_database_alias(backend_alias, config=config)
+  alias = config.database_alias
+  backend_alias = config.backend_alias
   if now is None:
     now = timezone.now()
   cutoff = now - timedelta(seconds=older_than)
@@ -52,17 +50,16 @@ def clear_failed_jobs(
   older_than=None,
   task_path=None,
   batch_size=500,
-  backend_alias="default",
   now=None,
-  config=None,
+  config,
 ):
-  config = resolve_backend_config(backend_alias, config)
   if older_than is None:
     older_than = config.clear_failed_jobs_after
   if older_than is None:
     return 0
 
-  alias = get_database_alias(backend_alias, config=config)
+  alias = config.database_alias
+  backend_alias = config.backend_alias
   if now is None:
     now = timezone.now()
   cutoff = now - timedelta(seconds=older_than)
@@ -97,17 +94,16 @@ def clear_recurring_executions(
   older_than=None,
   task_key=None,
   batch_size=500,
-  backend_alias="default",
   now=None,
-  config=None,
+  config,
 ):
-  config = resolve_backend_config(backend_alias, config)
   if older_than is None:
     older_than = config.clear_recurring_executions_after
   if older_than is None:
     return 0
 
-  alias = get_database_alias(backend_alias, config=config)
+  alias = config.database_alias
+  backend_alias = config.backend_alias
   if now is None:
     now = timezone.now()
   cutoff = now - timedelta(seconds=older_than)

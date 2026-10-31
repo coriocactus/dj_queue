@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+from dj_queue.config import load_backend_config
 from dj_queue.hooks import clear_hooks, fire_hooks, on_exit, on_start, on_stop, register_hook
 
 
@@ -25,9 +26,9 @@ def test_hook_order_start_stop_exit():
   def exit_hook(instance):
     events.append(("exit", "only", instance is process))
 
-  fire_hooks("supervisor.start", process)
-  fire_hooks("supervisor.stop", process)
-  fire_hooks("supervisor.exit", process)
+  fire_hooks("supervisor.start", process, config=load_backend_config())
+  fire_hooks("supervisor.stop", process, config=load_backend_config())
+  fire_hooks("supervisor.exit", process, config=load_backend_config())
 
   assert events == [
     ("start", "first", True),
@@ -54,8 +55,9 @@ def test_hook_failure_is_isolated_and_later_hooks_still_fire():
   def later_hook(instance):
     events.append(("later", instance is process))
 
+  config = load_backend_config()
   with patch("dj_queue.hooks.handle_thread_error") as handle_thread_error:
-    fire_hooks("worker.start", process)
+    fire_hooks("worker.start", process, config=config)
 
   assert events == [
     ("broken", True),
@@ -67,8 +69,7 @@ def test_hook_failure_is_isolated_and_later_hooks_still_fire():
   assert str(error) == "hook boom"
   assert handle_thread_error.call_args.kwargs == {
     "context": "hook:worker.start",
-    "backend_alias": "default",
-    "config": None,
+    "config": config,
   }
 
   clear_hooks()

@@ -2,13 +2,13 @@ from django.db import transaction
 from django.db.models import Case, DateTimeField, DurationField, ExpressionWrapper, F, Value, When
 from django.utils import timezone
 
-from dj_queue.db import get_database_alias
+from dj_queue.config import resolve_backend_config
 from dj_queue.log import log_event
 from dj_queue.models import Pause, ReadyExecution
 
 
 def pause_queue(queue_name, *, backend_alias="default", config=None):
-  alias = get_database_alias(backend_alias, config=config)
+  alias = resolve_backend_config(backend_alias, config).database_alias
   with transaction.atomic(using=alias):
     Pause.objects.using(alias).get_or_create(
       backend_alias=backend_alias,
@@ -26,7 +26,7 @@ def pause_queue(queue_name, *, backend_alias="default", config=None):
 
 
 def resume_queue(queue_name, *, backend_alias="default", resumed_at=None, config=None):
-  alias = get_database_alias(backend_alias, config=config)
+  alias = resolve_backend_config(backend_alias, config).database_alias
   with transaction.atomic(using=alias):
     pause = (
       Pause.objects.using(alias)

@@ -9,7 +9,6 @@ from django.utils import timezone
 from dj_queue.config import resolve_backend_config
 from dj_queue.db import (
   database_capabilities,
-  get_database_alias,
   locked_queryset,
   retry_transient_database_errors,
 )
@@ -46,23 +45,20 @@ def claim_ready_jobs(
   queues: str | Sequence[str] | None = None,
   process: Process | None = None,
   backend_alias: str = "default",
-  use_skip_locked: bool | None = None,
   config=None,
 ) -> list[ClaimedJob]:
   if limit <= 0:
     return []
 
-  alias = get_database_alias(backend_alias, config=config)
-  if use_skip_locked is None:
-    use_skip_locked = resolve_backend_config(backend_alias, config).use_skip_locked
-
+  config = resolve_backend_config(backend_alias, config)
+  alias = config.database_alias
   claimed_jobs = retry_transient_database_errors(
     lambda: _claim_ready_jobs_once(
       limit=limit,
       queues=queues,
       process=process,
       backend_alias=backend_alias,
-      use_skip_locked=use_skip_locked,
+      use_skip_locked=config.use_skip_locked,
       alias=alias,
     ),
     using=alias,

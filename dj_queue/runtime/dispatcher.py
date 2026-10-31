@@ -19,7 +19,7 @@ class Dispatcher(BaseRunner):
     self,
     config,
     *,
-    backend_alias="default",
+    backend_config,
     name=None,
     pid=None,
     hostname=None,
@@ -27,11 +27,10 @@ class Dispatcher(BaseRunner):
     heartbeat_interval=None,
     process_alive_threshold=None,
     supervisor=None,
-    backend_config=None,
   ):
     super().__init__(
       config,
-      backend_alias=backend_alias,
+      backend_config=backend_config,
       name=name or f"dispatcher-{os.getpid()}",
       pid=pid or os.getpid(),
       hostname=hostname or socket.gethostname(),
@@ -39,7 +38,6 @@ class Dispatcher(BaseRunner):
       heartbeat_interval=heartbeat_interval,
       process_alive_threshold=process_alive_threshold,
       supervisor=supervisor,
-      backend_config=backend_config,
     )
     self._last_maintenance_at = None
 
@@ -50,25 +48,21 @@ class Dispatcher(BaseRunner):
     with app_executor():
       promoted_jobs = promote_scheduled_jobs(
         batch_size=self.config.batch_size,
-        backend_alias=self.backend_alias,
         config=self.backend_config,
       )
       promoted_jobs.extend(
         promote_failed_job_retries(
           batch_size=self.config.batch_size,
-          backend_alias=self.backend_alias,
           config=self.backend_config,
         )
       )
       if self._maintenance_due():
         cleanup_expired_semaphores(
           batch_size=self.config.batch_size,
-          backend_alias=self.backend_alias,
           config=self.backend_config,
         )
         promote_expired_blocked_jobs(
           batch_size=self.config.batch_size,
-          backend_alias=self.backend_alias,
           config=self.backend_config,
         )
         self._last_maintenance_at = timezone.now()

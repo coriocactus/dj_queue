@@ -40,7 +40,6 @@ class Supervisor(BaseRunner):
     self,
     config,
     *,
-    backend_alias="default",
     name=None,
     pid=None,
     hostname=None,
@@ -50,7 +49,7 @@ class Supervisor(BaseRunner):
   ):
     super().__init__(
       config,
-      backend_alias=backend_alias,
+      backend_config=config,
       name=name or f"supervisor-{os.getpid()}",
       pid=pid or os.getpid(),
       hostname=hostname or socket.gethostname(),
@@ -84,7 +83,6 @@ class Supervisor(BaseRunner):
     )
     return cls(
       config,
-      backend_alias=backend_alias,
       name=name,
       pid=pid,
       hostname=hostname,
@@ -98,10 +96,7 @@ class Supervisor(BaseRunner):
     try:
       self._acquire_pidfile()
       process = self._start_process(start_heartbeat=start_heartbeat)
-      warn_if_persistent_connection_budget_is_tight(
-        self.config,
-        backend_alias=self.backend_alias,
-      )
+      warn_if_persistent_connection_budget_is_tight(self.config)
       self.fail_orphaned_jobs()
       return process
     except Exception:
@@ -120,7 +115,6 @@ class Supervisor(BaseRunner):
         handle_thread_error(
           error,
           context="supervisor.housekeeping",
-          backend_alias=self.backend_alias,
           config=self.backend_config,
         )
         self._last_housekeeping_at = time.monotonic()
@@ -203,7 +197,6 @@ class Supervisor(BaseRunner):
       return fail_orphaned_claimed_jobs(
         ProcessMissingError("process no longer registered"),
         traceback_text="process no longer registered",
-        backend_alias=self.backend_alias,
         batch_size=batch_size,
         config=self.backend_config,
       )
@@ -217,7 +210,6 @@ class Supervisor(BaseRunner):
         cutoff=cutoff,
         error=ProcessPrunedError("process heartbeat expired"),
         traceback_text="process heartbeat expired",
-        backend_alias=self.backend_alias,
         exclude_process=self.process,
         batch_size=batch_size,
         config=self.backend_config,
@@ -322,7 +314,6 @@ class AsyncSupervisor(Supervisor):
             handle_thread_error(
               error,
               context="supervisor.replace",
-              backend_alias=self.backend_alias,
               config=self.backend_config,
             )
             replacement.stop()
@@ -370,7 +361,6 @@ class AsyncSupervisor(Supervisor):
         runner.process,
         ProcessExitError("runner thread crashed"),
         traceback_text="runner thread crashed",
-        backend_alias=self.backend_alias,
         config=self.backend_config,
       )
 
@@ -378,7 +368,6 @@ class AsyncSupervisor(Supervisor):
     kwargs = {
       "config": runner.config,
       "backend_config": self.backend_config,
-      "backend_alias": self.backend_alias,
       "name": runner.name,
       "pid": self.pid,
       "hostname": self.hostname,
@@ -393,7 +382,6 @@ class AsyncSupervisor(Supervisor):
       definition.runner_class(
         definition.config,
         backend_config=self.backend_config,
-        backend_alias=self.backend_alias,
         name=definition.name,
         pid=self.pid,
         hostname=self.hostname,
@@ -451,7 +439,6 @@ class ForkSupervisor(Supervisor):
     )
     return cls(
       config,
-      backend_alias=backend_alias,
       name=name,
       pid=pid,
       hostname=hostname,
@@ -624,7 +611,6 @@ class ForkSupervisor(Supervisor):
         supervisor_id=self.process.pk if self.process is not None else None,
         error=ProcessExitError(message),
         traceback_text=message,
-        backend_alias=self.backend_alias,
         config=self.backend_config,
       )
 
@@ -634,7 +620,6 @@ class ForkSupervisor(Supervisor):
         pid,
         ProcessExitError("child process exited"),
         traceback_text="child process exited",
-        backend_alias=self.backend_alias,
         config=self.backend_config,
       )
 
@@ -650,7 +635,6 @@ class ForkSupervisor(Supervisor):
           "kwargs": {
             "config": definition.config,
             "backend_config": self.backend_config,
-            "backend_alias": self.backend_alias,
             "name": definition.name,
             "hostname": self.hostname,
             "heartbeat_interval": self.config.process_heartbeat_interval,
@@ -677,7 +661,6 @@ class ForkSupervisor(Supervisor):
         handle_thread_error(
           error,
           context="supervisor.child",
-          backend_alias=self.backend_alias,
           config=self.backend_config,
         )
       finally:

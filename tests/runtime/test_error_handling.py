@@ -1,5 +1,6 @@
 import logging
 
+from dj_queue.config import load_backend_config
 from dj_queue.runtime.errors import handle_thread_error
 from tests import runtime_callbacks
 
@@ -21,7 +22,7 @@ def test_on_thread_error_callback_receives_infrastructure_exception(settings):
   settings.TASKS = _tasks_with_callback("tests.runtime_callbacks.record_error")
   error = RuntimeError("heartbeat failed")
 
-  handle_thread_error(error, context="heartbeat")
+  handle_thread_error(error, context="heartbeat", config=load_backend_config())
 
   assert runtime_callbacks.CAPTURED_ERRORS == [error]
 
@@ -31,7 +32,7 @@ def test_on_thread_error_callback_failure_is_isolated(settings, caplog):
   error = RuntimeError("heartbeat failed")
 
   with caplog.at_level(logging.ERROR, logger="dj_queue"):
-    handle_thread_error(error, context="heartbeat")
+    handle_thread_error(error, context="heartbeat", config=load_backend_config())
 
   assert "on_thread_error callback raised" in caplog.text
   assert [record.event for record in caplog.records] == [

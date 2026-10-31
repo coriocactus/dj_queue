@@ -77,7 +77,7 @@ def _claim_until_empty():
   try:
     while True:
       try:
-        claimed_jobs = claim_ready_jobs(limit=1, use_skip_locked=False)
+        claimed_jobs = claim_ready_jobs(limit=1)
       except OperationalError as exc:
         if "database is locked" not in str(exc).lower():
           raise

@@ -7,7 +7,7 @@ from concurrent.futures import Future
 import pytest
 from django.db import connections
 
-from dj_queue.config import WorkerConfig
+from dj_queue.config import WorkerConfig, load_backend_config
 from dj_queue.models import BlockedExecution, ClaimedExecution, Job, Semaphore
 from dj_queue.runtime.worker import Worker
 from tests.runtime.test_supervisor import wait_until
@@ -81,13 +81,13 @@ class FakeWakeupBackend:
 def make_worker(index, *, pool):
   return Worker(
     WorkerConfig(queues=("*",), threads=1, processes=1, polling_interval=0.1),
-    backend_alias="default",
     name=f"load-worker-{index}",
     pid=12000 + index,
     hostname="localhost",
     sleeper=FakeSleeper(),
     pool=pool,
     wakeup_backend=FakeWakeupBackend(),
+    backend_config=load_backend_config(),
   )
 
 

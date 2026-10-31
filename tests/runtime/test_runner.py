@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from dj_queue.config import load_backend_config
 from dj_queue.hooks import clear_hooks, register_hook
 from dj_queue.models import Process
 from dj_queue.runtime.base import BaseRunner
@@ -21,6 +22,7 @@ class DummyRunner(BaseRunner):
   def __init__(self, *, polling_interval=0.01, heartbeat_interval=0.01, sleeper=None, name=None):
     super().__init__(
       SimpleNamespace(polling_interval=polling_interval),
+      backend_config=load_backend_config(),
       name=name or f"dummy-runner-{uuid4()}",
       pid=12345,
       hostname="localhost",
@@ -70,6 +72,7 @@ def test_runner_heartbeat_uses_fallback_interval_when_disabled():
     hostname="localhost",
     heartbeat_interval=0,
     process_alive_threshold=0.05,
+    backend_config=load_backend_config(),
   )
   process = runner.start()
   initial_heartbeat = process.last_heartbeat_at
@@ -153,6 +156,7 @@ def test_runner_liveness_check_keeps_minimum_cadence(monkeypatch):
     hostname="localhost",
     heartbeat_interval=60,
     process_alive_threshold=0.05,
+    backend_config=load_backend_config(),
   )
   runner.start()
 

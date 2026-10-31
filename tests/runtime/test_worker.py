@@ -9,7 +9,7 @@ import pytest
 from django.utils import timezone
 
 import dj_queue.operations._helpers as operation_helpers
-from dj_queue.config import WorkerConfig
+from dj_queue.config import WorkerConfig, load_backend_config
 from dj_queue.exceptions import ProcessExitError
 from dj_queue.models import (
   BlockedExecution,
@@ -136,13 +136,13 @@ def make_worker(config=None, **overrides):
     )
   return Worker(
     config,
-    backend_alias=overrides.pop("backend_alias", "default"),
     name=overrides.pop("name", f"worker-{uuid4()}"),
     pid=overrides.pop("pid", 12345),
     hostname=overrides.pop("hostname", "localhost"),
     sleeper=overrides.pop("sleeper", FakeSleeper()),
     pool=overrides.pop("pool", InlinePool(config.threads)),
     wakeup_backend=overrides.pop("wakeup_backend", FakeWakeupBackend()),
+    backend_config=load_backend_config(overrides.pop("backend_alias", "default")),
   )
 
 
@@ -526,10 +526,10 @@ def test_execute_claimed_job_completes_already_loaded_job_object(monkeypatch):
   ClaimedExecution.objects.create(job=job, process=process)
   seen = []
 
-  def complete_job(claimed_job, return_value, *, backend_alias, task=None, config=None):
-    seen.append((claimed_job, return_value, backend_alias))
+  def complete_job(claimed_job, return_value, *, config, task=None):
+    seen.append((claimed_job, return_value, config.backend_alias))
 
-  monkeypatch.setattr("dj_queue.operations.execution._complete_claimed_job", complete_job)
+  monkeypatch.setattr("dj_queue.operations.execution.complete_claimed_job", complete_job)
 
   execute_claimed_job(ClaimedJob(job=job, claimed_at=timezone.now(), worker_ids=(process.name,)))
 
@@ -559,7 +559,7 @@ def test_complete_claimed_job_uses_loaded_job_without_select_related(monkeypatch
 
   monkeypatch.setattr("django.db.models.query.QuerySet.select_related", fail_select_related)
 
-  complete_claimed_job(job, "done")
+  complete_claimed_job(job, "done", config=load_backend_config())
 
   fresh_job = Job.objects.get(pk=job.pk)
   assert fresh_job.return_value == "done"
@@ -653,7 +653,9 @@ def test_complete_claimed_job_json_result_primitives_use_fast_validation(monkeyp
     SimpleNamespace(dumps=dumps, loads=operation_helpers.json.loads),
   )
 
-  complete_claimed_job(claimed_job, {"items": [1, "two", None, True]})
+  complete_claimed_job(
+    claimed_job, {"items": [1, "two", None, True]}, config=load_backend_config()
+  )
 
   job.refresh_from_db()
   assert job.return_value == {"items": [1, "two", None, True]}
@@ -716,6 +718,7 @@ def test_worker_repolls_immediately_when_pool_frees_capacity():
     pid=12345,
     hostname="localhost",
     sleeper=sleeper,
+    backend_config=load_backend_config(),
   )
   make_ready_job(args=["wake"])
   worker.start()
@@ -747,6 +750,7 @@ def test_worker_graceful_shutdown_drains_pool():
     name="worker-shutdown",
     pid=12345,
     hostname="localhost",
+    backend_config=load_backend_config(),
   )
   make_ready_job(args=["slow"])
   worker.start()
@@ -769,6 +773,7 @@ def test_worker_timeout_shutdown_keeps_process_until_work_finishes():
     name="worker-timeout-shutdown",
     pid=12345,
     hostname="localhost",
+    backend_config=load_backend_config(),
   )
   make_ready_job(args=["slow-timeout"])
   worker.start()
@@ -797,6 +802,7 @@ def test_worker_timeout_shutdown_keeps_heartbeat_until_work_finishes():
     pid=12345,
     hostname="localhost",
     heartbeat_interval=0.01,
+    backend_config=load_backend_config(),
   )
   make_ready_job(args=["slow-timeout-heartbeat"])
   worker.start()

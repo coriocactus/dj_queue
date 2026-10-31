@@ -3,7 +3,7 @@ import os
 import pytest
 from django.tasks import TaskResultStatus
 
-from dj_queue.config import WorkerConfig
+from dj_queue.config import WorkerConfig, load_backend_config
 from dj_queue.models import ClaimedExecution, Job, ReadyExecution
 from dj_queue.runtime.worker import Worker
 from tests.tasks import echo
@@ -47,13 +47,13 @@ class FakeWakeupBackend:
 def make_worker():
   return Worker(
     WorkerConfig(queues=("*",), threads=1, processes=1, polling_interval=0.01),
-    backend_alias="default",
     name="roundtrip-worker",
     pid=12345,
     hostname="localhost",
     sleeper=FakeSleeper(),
     pool=InlinePool(1),
     wakeup_backend=FakeWakeupBackend(),
+    backend_config=load_backend_config(),
   )
 
 

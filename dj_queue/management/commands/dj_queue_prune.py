@@ -1,6 +1,7 @@
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import BaseCommand, CommandError
 
+from dj_queue.config import load_backend_config
 from dj_queue.operations.cleanup import (
   clear_failed_jobs,
   clear_finished_jobs,
@@ -57,23 +58,24 @@ class Command(BaseCommand):
       raise CommandError("--batch-size must be positive")
 
     try:
+      config = load_backend_config(options["backend"])
       finished_deleted = clear_finished_jobs(
         older_than=options["older_than"],
         task_path=options["task_path"],
         batch_size=batch_size,
-        backend_alias=options["backend"],
+        config=config,
       )
       failed_deleted = clear_failed_jobs(
         older_than=options["failed_older_than"],
         task_path=options["task_path"],
         batch_size=batch_size,
-        backend_alias=options["backend"],
+        config=config,
       )
       recurring_deleted = clear_recurring_executions(
         older_than=options["recurring_older_than"],
         task_key=options["task_key"],
         batch_size=batch_size,
-        backend_alias=options["backend"],
+        config=config,
       )
     except ImproperlyConfigured as exc:
       raise CommandError(str(exc)) from exc

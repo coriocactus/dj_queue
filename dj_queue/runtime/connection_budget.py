@@ -57,7 +57,6 @@ def connection_budget_ratio(*, estimated_connections, capacity):
 def warn_if_persistent_connection_budget_is_tight(
   config,
   *,
-  backend_alias="default",
   threshold=0.75,
 ):
   connection = connections[config.database_alias]
@@ -83,7 +82,7 @@ def warn_if_persistent_connection_budget_is_tight(
   log_event(
     "connection_budget.warning",
     level=logging.WARNING,
-    backend_alias=backend_alias,
+    backend_alias=config.backend_alias,
     database_alias=config.database_alias,
     estimated_worker_connections=estimated_connections,
     available_database_connections=capacity.available_connections,

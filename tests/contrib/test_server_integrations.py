@@ -10,6 +10,7 @@ import pytest
 from django.core.management import call_command
 from django.tasks import TaskResultStatus
 
+from dj_queue.config import load_backend_config
 from dj_queue.models import Job, Process
 from dj_queue.runtime.supervisor import AsyncSupervisor
 from tests.tasks import echo
@@ -150,6 +151,7 @@ def test_gunicorn_embedded_supervisor_poll_survives_errors(monkeypatch):
   class StubSupervisor:
     polling_interval = 0.01
     backend_alias = "default"
+    backend_config = load_backend_config()
 
     def __init__(self):
       self.poll_count = 0
@@ -269,6 +271,7 @@ def test_gunicorn_worker_exit_waits_for_poll_thread_before_releasing_lock(monkey
   class StubSupervisor:
     polling_interval = 0.01
     backend_alias = "default"
+    backend_config = load_backend_config()
 
     def start(self):
       return None
@@ -314,6 +317,7 @@ def test_gunicorn_worker_exit_uses_shutdown_timeout_for_poll_thread(monkeypatch)
   class StubSupervisor:
     polling_interval = 0.01
     backend_alias = "default"
+    backend_config = load_backend_config()
     config = SimpleNamespace(shutdown_timeout=0.01)
 
     def start(self):
@@ -356,6 +360,7 @@ def test_gunicorn_start_aborts_when_worker_exits_during_supervisor_start(monkeyp
   class StubSupervisor:
     polling_interval = 0.01
     backend_alias = "default"
+    backend_config = load_backend_config()
 
     def __init__(self, worker):
       self.worker = worker
@@ -667,6 +672,7 @@ def test_asgi_lifespan_poll_survives_errors(monkeypatch):
   class StubSupervisor:
     polling_interval = 0.01
     backend_alias = "default"
+    backend_config = load_backend_config()
 
     def __init__(self):
       self.poll_count = 0

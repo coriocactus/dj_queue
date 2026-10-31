@@ -8,7 +8,6 @@ from django.db import close_old_connections
 from django.db.utils import OperationalError
 from django.utils import timezone
 
-from dj_queue.config import BackendConfig, resolve_backend_config
 from dj_queue.db import database_capabilities
 from dj_queue.hooks import fire_hooks
 from dj_queue.models import Process
@@ -72,7 +71,7 @@ class BaseRunner:
     self,
     config,
     *,
-    backend_alias="default",
+    backend_config,
     name,
     pid,
     hostname,
@@ -80,13 +79,10 @@ class BaseRunner:
     heartbeat_interval=None,
     process_alive_threshold=None,
     supervisor=None,
-    backend_config=None,
   ):
     self.config = config
-    if backend_config is None and isinstance(config, BackendConfig):
-      backend_config = config
-    self.backend_config = resolve_backend_config(backend_alias, backend_config)
-    self.backend_alias = backend_alias
+    self.backend_config = backend_config
+    self.backend_alias = backend_config.backend_alias
     self.name = name
     self.pid = pid
     self.hostname = hostname
@@ -198,7 +194,6 @@ class BaseRunner:
       handle_thread_error(
         error,
         context=f"{self.hook_prefix}.run",
-        backend_alias=self.backend_alias,
         config=self.backend_config,
       )
       return False
@@ -211,7 +206,6 @@ class BaseRunner:
       handle_thread_error(
         error,
         context=f"{self.hook_prefix}.liveness",
-        backend_alias=self.backend_alias,
         config=self.backend_config,
       )
       return None
@@ -237,7 +231,6 @@ class BaseRunner:
       fire_hooks(
         f"{self.hook_prefix}.stop",
         process,
-        backend_alias=self.backend_alias,
         config=self.backend_config,
       )
     if stop_heartbeat:
@@ -250,7 +243,6 @@ class BaseRunner:
       fire_hooks(
         f"{self.hook_prefix}.exit",
         process,
-        backend_alias=self.backend_alias,
         config=self.backend_config,
       )
 
@@ -283,7 +275,6 @@ class BaseRunner:
       fire_hooks(
         f"{self.hook_prefix}.start",
         self.process,
-        backend_alias=self.backend_alias,
         config=self.backend_config,
       )
       self._started = True
@@ -335,7 +326,6 @@ class BaseRunner:
         handle_thread_error(
           error,
           context=f"{self.hook_prefix}.heartbeat",
-          backend_alias=self.backend_alias,
           config=self.backend_config,
         )
         self.request_stop()

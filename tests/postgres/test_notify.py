@@ -5,7 +5,7 @@ import time
 import pytest
 from django.db import connections
 
-from dj_queue.config import WorkerConfig
+from dj_queue.config import WorkerConfig, load_backend_config
 from dj_queue.models import Job
 from dj_queue.runtime.notify import (
   NoopWakeupBackend,
@@ -51,19 +51,19 @@ class InlinePool:
 def make_worker(**overrides):
   return Worker(
     WorkerConfig(queues=("*",), threads=1, processes=1, polling_interval=0.5),
-    backend_alias="default",
     name=overrides.pop("name", "notify-worker"),
     pid=overrides.pop("pid", 12345),
     hostname=overrides.pop("hostname", "localhost"),
     pool=overrides.pop("pool", InlinePool(1)),
     wakeup_backend=overrides.pop("wakeup_backend", None),
     sleeper=overrides.pop("sleeper", None),
+    backend_config=load_backend_config(),
   )
 
 
 @pytest.mark.django_db(transaction=True)
 def test_notify_watcher_starts_only_on_postgres():
-  backend = build_wakeup_backend(backend_alias="default", queues=("*",), wake_up=lambda: None)
+  backend = build_wakeup_backend(queues=("*",), wake_up=lambda: None, config=load_backend_config())
 
   assert isinstance(backend, NotifyWakeupBackend)
 
@@ -74,9 +74,7 @@ def test_enqueue_ready_job_sends_ready_notify(monkeypatch):
 
   monkeypatch.setattr(
     "dj_queue.runtime.notify._notify",
-    lambda channel, payload, *, backend_alias, config: seen.append(
-      (channel, payload, backend_alias)
-    ),
+    lambda channel, payload, *, config: seen.append((channel, payload, config.backend_alias)),
   )
 
   echo.enqueue("notify")
@@ -94,12 +92,10 @@ def test_dispatcher_ready_promotion_sends_ready_notify(monkeypatch):
 
   monkeypatch.setattr(
     "dj_queue.runtime.notify._notify",
-    lambda channel, payload, *, backend_alias, config: seen.append(
-      (channel, payload, backend_alias)
-    ),
+    lambda channel, payload, *, config: seen.append((channel, payload, config.backend_alias)),
   )
 
-  notify_ready_queues(("default",), backend_alias="default")
+  notify_ready_queues(("default",), config=load_backend_config())
 
   assert len(seen) == 1
   channel, payload, backend_alias = seen[0]
@@ -136,7 +132,7 @@ def test_notify_connection_failure_falls_back_to_polling(monkeypatch):
     lambda self: (_ for _ in ()).throw(RuntimeError("boom")),
   )
 
-  backend = build_wakeup_backend(backend_alias="default", queues=("*",), wake_up=lambda: None)
+  backend = build_wakeup_backend(queues=("*",), wake_up=lambda: None, config=load_backend_config())
   backend.start()
 
   assert isinstance(backend, NotifyWakeupBackend)
@@ -152,7 +148,7 @@ def test_notify_raw_connection_does_not_open_django_wrapper(monkeypatch):
     "ensure_connection",
     lambda: (_ for _ in ()).throw(AssertionError("wrapper connection opened")),
   )
-  backend = NotifyWakeupBackend(backend_alias="default", queues=("*",), wake_up=lambda: None)
+  backend = NotifyWakeupBackend(queues=("*",), wake_up=lambda: None, config=load_backend_config())
 
   connection = backend._open_connection()
 
@@ -175,6 +171,6 @@ def test_listen_notify_false_disables_watcher(settings):
     },
   }
 
-  backend = build_wakeup_backend(backend_alias="default", queues=("*",), wake_up=lambda: None)
+  backend = build_wakeup_backend(queues=("*",), wake_up=lambda: None, config=load_backend_config())
 
   assert isinstance(backend, NoopWakeupBackend)

@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 from django.utils import timezone
 
-from dj_queue.config import DispatcherConfig
+from dj_queue.config import DispatcherConfig, load_backend_config
 from dj_queue.models import (
   BlockedExecution,
   FailedExecution,
@@ -63,10 +63,10 @@ def make_dispatcher(config=None, **overrides):
     )
   return Dispatcher(
     config,
-    backend_alias=overrides.pop("backend_alias", "default"),
     name=overrides.pop("name", f"dispatcher-{uuid4()}"),
     pid=overrides.pop("pid", 23456),
     hostname=overrides.pop("hostname", "localhost"),
+    backend_config=load_backend_config(overrides.pop("backend_alias", "default")),
   )
 
 

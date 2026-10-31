@@ -6,11 +6,8 @@ from uuid import uuid4
 from django.db import transaction
 from django.utils import timezone
 
-from dj_queue.config import load_allowed_queues
-from dj_queue.db import (
-  get_database_alias,
-  retry_transient_database_errors,
-)
+from dj_queue.config import load_allowed_queues, resolve_backend_config
+from dj_queue.db import retry_transient_database_errors
 from dj_queue.exceptions import EnqueueError
 from dj_queue.log import event_logging_enabled, log_event
 from dj_queue.models import (
@@ -65,33 +62,22 @@ def enqueue_job_with_dispatch(
   job_id=None,
   config=None,
 ):
+  config = resolve_backend_config(backend_alias, config)
   submission = _prepare_submission(
-    task,
-    args,
-    kwargs,
-    backend_alias=backend_alias,
-    validate=validate,
-    job_id=job_id,
-    config=config,
+    task, args, kwargs, validate=validate, job_id=job_id, config=config
   )
-  alias = get_database_alias(backend_alias, config=config)
+  alias = config.database_alias
 
   def enqueue_transition():
     with transaction.atomic(using=alias):
       job = Job.objects.using(alias).create(**submission.fields)
-      dispatch_outcome = dispatch_job(
-        job,
-        task=task,
-        backend_alias=backend_alias,
-        check_conflicts=False,
-        config=config,
-      )
+      dispatch_outcome = dispatch_job(job, task=task, check_conflicts=False, config=config)
       return job, dispatch_outcome
 
   job, dispatch_outcome = retry_transient_database_errors(enqueue_transition, using=alias)
 
   if dispatch_outcome.should_notify:
-    notify_ready_queues_on_commit((job.queue_name,), backend_alias=backend_alias, config=config)
+    notify_ready_queues_on_commit((job.queue_name,), config=config)
 
   if event_logging_enabled(backend_alias=backend_alias):
     log_event(
@@ -105,15 +91,13 @@ def enqueue_job_with_dispatch(
   return job, dispatch_outcome
 
 
-def _prepare_submission(task, args, kwargs, *, backend_alias, validate, job_id=None, config=None):
+def _prepare_submission(task, args, kwargs, *, validate, config, job_id=None):
   if validate:
-    validate_queue_allowed(task.queue_name, backend_alias=backend_alias, config=config)
+    validate_queue_allowed(task.queue_name, backend_alias=config.backend_alias, config=config)
     validate_priority(task.priority)
   payload = _normalize_payload(args, kwargs)
   concurrency_key = _resolve_concurrency_key(task, args, kwargs)
-  limit, duration, on_conflict = _concurrency_policy(
-    task, concurrency_key, backend_alias=backend_alias, config=config
-  )
+  limit, duration, on_conflict = _concurrency_policy(task, concurrency_key, config=config)
   return _JobSubmission(
     task,
     {
@@ -122,7 +106,7 @@ def _prepare_submission(task, args, kwargs, *, backend_alias, validate, job_id=N
       "queue_name": task.queue_name,
       "priority": task.priority,
       "payload": payload,
-      "backend_alias": backend_alias,
+      "backend_alias": config.backend_alias,
       "scheduled_at": task.run_after,
       "concurrency_key": concurrency_key,
       "concurrency_limit": limit,
@@ -133,23 +117,19 @@ def _prepare_submission(task, args, kwargs, *, backend_alias, validate, job_id=N
 
 
 def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True, config=None):
+  config = resolve_backend_config(backend_alias, config)
   submissions = [
-    _prepare_submission(
-      task, args, kwargs, backend_alias=backend_alias, validate=validate, config=config
-    )
+    _prepare_submission(task, args, kwargs, validate=validate, config=config)
     for task, args, kwargs in task_calls
   ]
   if not submissions:
     return []
 
-  alias = get_database_alias(backend_alias, config=config)
   prepared, ready_queue_names = retry_transient_database_errors(
-    lambda: _enqueue_bulk_once(
-      submissions, alias=alias, backend_alias=backend_alias, config=config
-    ),
-    using=alias,
+    lambda: _enqueue_bulk_once(submissions, config=config),
+    using=config.database_alias,
   )
-  notify_ready_queues_on_commit(ready_queue_names, backend_alias=backend_alias, config=config)
+  notify_ready_queues_on_commit(ready_queue_names, config=config)
   _log_bulk_enqueued((entry.outcome for entry in prepared), backend_alias=backend_alias)
   return [
     (entry.job, submission.task, entry.outcome)
@@ -157,7 +137,8 @@ def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True, con
   ]
 
 
-def _enqueue_bulk_once(submissions, *, alias, backend_alias, config=None):
+def _enqueue_bulk_once(submissions, *, config):
+  alias = config.database_alias
   now = timezone.now()
   prepared = []
   for submission in submissions:
@@ -168,9 +149,9 @@ def _enqueue_bulk_once(submissions, *, alias, backend_alias, config=None):
 
   with transaction.atomic(using=alias):
     _bulk_create(alias, Job, [entry.job for entry in prepared])
-    rows = build_dispatch_rows(prepared, backend_alias=backend_alias, now=now, config=config)
+    rows = build_dispatch_rows(prepared, now=now, config=config)
     _bulk_create_ready_executions_locked(
-      alias, rows.ready, backend_alias=backend_alias, check_conflicts=False
+      alias, rows.ready, backend_alias=config.backend_alias, check_conflicts=False
     )
     _bulk_create(alias, ScheduledExecution, rows.scheduled)
     _bulk_create(alias, BlockedExecution, rows.blocked)
@@ -231,10 +212,10 @@ def _resolve_concurrency_key(task, args, kwargs):
   return value
 
 
-def _concurrency_policy(task, concurrency_key, *, backend_alias, config=None):
+def _concurrency_policy(task, concurrency_key, *, config):
   if concurrency_key is None:
     return None, None, None
-  return concurrency_settings(task, backend_alias=backend_alias, config=config)
+  return concurrency_settings(task, config=config)
 
 
 def _bound_arguments(task, args, kwargs):

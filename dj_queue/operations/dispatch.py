@@ -4,7 +4,6 @@ from enum import StrEnum
 
 from django.utils import timezone
 
-from dj_queue.db import get_database_alias
 from dj_queue.models import BlockedExecution, Job, ReadyExecution, ScheduledExecution
 from dj_queue.operations._helpers import (
   _create_blocked_execution,
@@ -60,8 +59,9 @@ class DispatchRows:
     return tuple(dict.fromkeys(row.queue_name for row in self.ready))
 
 
-def build_dispatch_rows(entries, *, backend_alias, now, config=None):
+def build_dispatch_rows(entries, *, now, config):
   """Acquire slots and prepare rows inside the caller's transaction."""
+  backend_alias = config.backend_alias
   rows = DispatchRows()
   groups = {}
   for entry in entries:
@@ -77,7 +77,6 @@ def build_dispatch_rows(entries, *, backend_alias, now, config=None):
       count=len(group),
       limit=decision.limit,
       duration_seconds=decision.duration_seconds,
-      backend_alias=backend_alias,
       config=config,
     )
     for index, entry in enumerate(group):
@@ -119,7 +118,7 @@ def _append_dispatch_row(rows, entry, *, backend_alias, now):
     raise ValueError(f"unexpected dispatch outcome: {entry.outcome}")
 
 
-def dispatch_decision(job, *, now, task=None, config=None):
+def dispatch_decision(job, *, now, config, task=None):
   if job.scheduled_at is not None and job.scheduled_at > now:
     return DispatchDecision(DispatchOutcome.SCHEDULED)
   if not job.concurrency_key:
@@ -144,8 +143,9 @@ def _concurrency_dispatch_outcome(decision, *, acquired):
   return DispatchOutcome.BLOCKED
 
 
-def dispatch_job(job, *, backend_alias, now=None, check_conflicts=True, task=None, config=None):
-  alias = get_database_alias(backend_alias, config=config)
+def dispatch_job(job, *, config, now=None, check_conflicts=True, task=None):
+  alias = config.database_alias
+  backend_alias = config.backend_alias
   if now is None:
     now = timezone.now()
   decision = dispatch_decision(job, task=task, now=now, config=config)
@@ -157,7 +157,6 @@ def dispatch_job(job, *, backend_alias, now=None, check_conflicts=True, task=Non
         decision.concurrency_key,
         limit=decision.limit,
         duration_seconds=decision.duration_seconds,
-        backend_alias=backend_alias,
         config=config,
       ),
     )

@@ -4,7 +4,7 @@ import pytest
 from django.core.management import call_command
 from django.db import connections
 
-from dj_queue.config import WorkerConfig
+from dj_queue.config import WorkerConfig, load_backend_config
 from dj_queue.models import ClaimedExecution, Job, ReadyExecution
 from dj_queue.operations.jobs import claim_ready_jobs
 from dj_queue.runtime.worker import Worker
@@ -138,13 +138,13 @@ def test_worker_reads_and_updates_queue_db(tmp_path, django_db_blocker, queue_te
     job = _make_ready_job()
     worker = Worker(
       WorkerConfig(queues=("*",), threads=1, processes=1, polling_interval=0.01),
-      backend_alias="default",
       name="queue-worker",
       pid=12345,
       hostname="localhost",
       sleeper=FakeSleeper(),
       pool=InlinePool(1),
       wakeup_backend=FakeWakeupBackend(),
+      backend_config=load_backend_config(),
     )
     worker.start()
 

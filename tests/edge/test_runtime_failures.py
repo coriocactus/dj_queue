@@ -94,13 +94,13 @@ class FakeWakeupBackend:
 def make_worker():
   return Worker(
     load_backend_config().workers[0],
-    backend_alias="default",
     name=f"worker-{uuid4()}",
     pid=12345,
     hostname="localhost",
     sleeper=FakeSleeper(),
     pool=InlinePool(1),
     wakeup_backend=FakeWakeupBackend(),
+    backend_config=load_backend_config(),
   )
 
 

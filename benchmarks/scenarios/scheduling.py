@@ -7,7 +7,7 @@ from django.utils import timezone
 
 from benchmarks.harness import Timer, throughput
 from benchmarks.tasks import noop
-from dj_queue.config import BackendConfig, SchedulerConfig
+from dj_queue.config import BackendConfig, SchedulerConfig, load_backend_config
 from dj_queue.models import (
   Job,
   ReadyExecution,
@@ -35,7 +35,7 @@ def scheduled_promotion(size):
   promoted = 0
   with Timer() as timer:
     while True:
-      jobs = promote_scheduled_jobs(batch_size=1000)
+      jobs = promote_scheduled_jobs(batch_size=1000, config=load_backend_config())
       if not jobs:
         break
       promoted += len(jobs)
@@ -77,19 +77,20 @@ def recurring_scale(size):
     ],
     batch_size=1000,
   )
+  config = BackendConfig(
+    scheduler=SchedulerConfig(dynamic_tasks_enabled=True, polling_interval=5),
+    workers=(),
+    dispatchers=(),
+    recurring={},
+    process_heartbeat_interval=0,
+    preserve_finished_jobs=True,
+    clear_finished_jobs_after=None,
+    clear_failed_jobs_after=None,
+    clear_recurring_executions_after=None,
+  )
   scheduler = Scheduler(
-    BackendConfig(
-      scheduler=SchedulerConfig(dynamic_tasks_enabled=True, polling_interval=5),
-      workers=(),
-      dispatchers=(),
-      recurring={},
-      process_heartbeat_interval=0,
-      preserve_finished_jobs=True,
-      clear_finished_jobs_after=None,
-      clear_failed_jobs_after=None,
-      clear_recurring_executions_after=None,
-    ),
-    backend_alias="default",
+    config,
+    backend_config=config,
     name=f"benchmark-scheduler-{uuid4()}",
     pid=34567,
     hostname="benchmark",

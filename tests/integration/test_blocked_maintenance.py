@@ -8,6 +8,7 @@ import pytest
 from django.db import connections
 from django.utils import timezone
 
+from dj_queue.config import load_backend_config
 from dj_queue.models import BlockedExecution, ClaimedExecution, Job, ReadyExecution, Semaphore
 from dj_queue.operations import concurrency
 from dj_queue.operations.claiming import claim_ready_jobs
@@ -62,7 +63,7 @@ def test_competing_maintenance_batches_share_one_slot(monkeypatch):
 
   def promote():
     try:
-      return concurrency.promote_expired_blocked_jobs(batch_size=1, use_skip_locked=True)
+      return concurrency.promote_expired_blocked_jobs(batch_size=1, config=load_backend_config())
     finally:
       connections.close_all()
 
@@ -89,7 +90,7 @@ def test_competing_maintenance_batches_share_one_slot(monkeypatch):
   assert list(ReadyExecution.objects.values_list("job_id", flat=True)) == [promoted[0].id]
   assert not ClaimedExecution.objects.exists()
   # a deadlock victim may skip the winner's remaining locks on its retry
-  assert concurrency.promote_expired_blocked_jobs(batch_size=2) == []
+  assert concurrency.promote_expired_blocked_jobs(batch_size=2, config=load_backend_config()) == []
   waiter = BlockedExecution.objects.get()
   assert {promoted[0].id, waiter.job_id} == {first_job.id, second_job.id}
   assert waiter.expires_at > timezone.now()

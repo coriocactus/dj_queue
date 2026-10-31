@@ -9,10 +9,8 @@ from django.db.models.functions import Greatest, Least
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
-from dj_queue.config import resolve_backend_config
 from dj_queue.db import (
   database_capabilities,
-  get_database_alias,
   locked_queryset,
   retry_transient_database_errors,
 )
@@ -65,15 +63,8 @@ class BlockedSlot:
   slot_acquired: bool
 
 
-def semaphore_acquire(
-  key,
-  *,
-  limit,
-  duration_seconds,
-  backend_alias="default",
-  config=None,
-):
-  alias = get_database_alias(backend_alias, config=config)
+def semaphore_acquire(key, *, limit, duration_seconds, config):
+  alias = config.database_alias
   now = timezone.now()
   expires_at = now + timedelta(seconds=duration_seconds)
   backend_family = database_capabilities(alias).backend_family
@@ -136,12 +127,11 @@ def semaphore_acquire_many(
   count,
   limit,
   duration_seconds,
-  backend_alias="default",
-  config=None,
+  config,
 ):
   if count <= 0:
     return 0
-  alias = get_database_alias(backend_alias, config=config)
+  alias = config.database_alias
   now = timezone.now()
   expires_at = now + timedelta(seconds=duration_seconds)
 
@@ -194,8 +184,8 @@ def semaphore_acquire_many(
     return acquired
 
 
-def semaphore_release(key, *, limit, duration_seconds, backend_alias="default", config=None):
-  alias = get_database_alias(backend_alias, config=config)
+def semaphore_release(key, *, limit, duration_seconds, config):
+  alias = config.database_alias
   now = timezone.now()
   available = _released_available_expression(limit)
   updated = (
@@ -212,68 +202,63 @@ def semaphore_release(key, *, limit, duration_seconds, backend_alias="default", 
   return updated > 0
 
 
-def release_recovered_concurrency_slots(jobs, *, backend_alias="default", config=None):
+def release_recovered_concurrency_slots(jobs, *, config):
   grouped_jobs = defaultdict(list)
   for job in jobs:
-    if job.backend_alias != backend_alias:
+    if job.backend_alias != config.backend_alias:
       raise EnqueueError(f"job {job.id} belongs to backend {job.backend_alias!r}")
     if job.concurrency_key:
       grouped_jobs[job.concurrency_key].append(job)
 
   fallback_jobs = []
-  alias = get_database_alias(backend_alias, config=config)
   for key, group_jobs in grouped_jobs.items():
-    settings = _recovered_release_settings(
-      alias, group_jobs, backend_alias=backend_alias, config=config
-    )
+    settings = _recovered_release_settings(group_jobs, config=config)
     if settings is None:
       fallback_jobs.extend(group_jobs)
       continue
     limit, duration_seconds = settings
     _release_recovered_concurrency_group(
-      alias,
       key,
       release_count=len(group_jobs),
       limit=limit,
       duration_seconds=duration_seconds,
-      backend_alias=backend_alias,
       config=config,
     )
   return fallback_jobs
 
 
-def _recovered_release_settings(alias, jobs, *, backend_alias, config=None):
-  config = resolve_backend_config(backend_alias, config)
-  settings = set()
-  for job in jobs:
-    try:
-      limit, duration_seconds, _ = concurrency_settings_for_job(job, config=config)
-    except DispatchPolicyError:
-      limit = _semaphore_limit(alias, job.concurrency_key, config=config) or 1
-      duration_seconds = config.default_concurrency_duration
-    settings.add((limit, duration_seconds))
-    if len(settings) > 1:
-      return None
+def _recovered_release_settings(jobs, *, config):
+  settings = {_release_settings(job, config=config) for job in jobs}
+  if len(settings) > 1:
+    return None
   return next(iter(settings))
 
 
-def _semaphore_limit(alias, key, config=None):
+def _release_settings(job, *, config, task=None):
+  try:
+    limit, duration_seconds, _ = concurrency_settings_for_job(job, task=task, config=config)
+  except DispatchPolicyError:
+    limit = _semaphore_limit(config.database_alias, job.concurrency_key) or 1
+    duration_seconds = config.default_concurrency_duration
+  return limit, duration_seconds
+
+
+def _semaphore_limit(alias, key):
   return Semaphore.objects.using(alias).filter(key=key).values_list("limit", flat=True).first()
 
 
 def _release_recovered_concurrency_group(
-  alias,
   key,
   *,
   release_count,
   limit,
   duration_seconds,
-  backend_alias,
-  config=None,
+  config,
 ):
+  alias = config.database_alias
+  backend_alias = config.backend_alias
   now = timezone.now()
   expires_at = now + timedelta(seconds=duration_seconds)
-  config = resolve_backend_config(backend_alias, config)
 
   with _operation_atomic(alias):
     blocked_rows = []
@@ -336,9 +321,7 @@ def _release_recovered_concurrency_group(
     )
   if promoted_jobs:
     notify_ready_queues_on_commit(
-      tuple(dict.fromkeys(job.queue_name for job in promoted_jobs)),
-      backend_alias=backend_alias,
-      config=config,
+      tuple(dict.fromkeys(job.queue_name for job in promoted_jobs)), config=config
     )
   return promoted_jobs
 
@@ -387,18 +370,14 @@ def _reconciled_available_expression(limit):
   return Least(Value(limit), Greatest(Value(0), F("value") + Value(limit) - F("limit")))
 
 
-def concurrency_settings(task, *, backend_alias, config=None):
+def concurrency_settings(task, *, config):
   limit = _task_option(task, "concurrency_limit")
   if limit in (None, ""):
     raise EnqueueError("concurrency_limit is required when concurrency_key is set")
 
   limit = _positive_int_option(limit, "concurrency_limit")
   duration_seconds = _positive_int_option(
-    _task_option(
-      task,
-      "concurrency_duration",
-      resolve_backend_config(backend_alias, config).default_concurrency_duration,
-    ),
+    _task_option(task, "concurrency_duration", config.default_concurrency_duration),
     "concurrency_duration",
   )
   on_conflict = str(_task_option(task, "on_conflict", "block"))
@@ -407,7 +386,7 @@ def concurrency_settings(task, *, backend_alias, config=None):
   return limit, duration_seconds, on_conflict
 
 
-def concurrency_settings_for_job(job, *, task=None, config=None):
+def concurrency_settings_for_job(job, *, config, task=None):
   policy = (
     job.concurrency_limit,
     job.concurrency_duration,
@@ -417,7 +396,7 @@ def concurrency_settings_for_job(job, *, task=None, config=None):
     try:
       if task is None:
         task = import_string(job.task_path)
-      return concurrency_settings(task, backend_alias=job.backend_alias, config=config)
+      return concurrency_settings(task, config=config)
     except (AttributeError, EnqueueError, ImportError) as error:
       raise DispatchPolicyError(
         f"job {job.id} has no resolvable concurrency policy: {error}"
@@ -448,11 +427,10 @@ def unblock_next_blocked_job(
   limit,
   duration_seconds,
   slot_handoff,
-  backend_alias="default",
-  use_skip_locked=True,
-  config=None,
+  config,
 ):
-  alias = get_database_alias(backend_alias, config=config)
+  alias = config.database_alias
+  backend_alias = config.backend_alias
   now = timezone.now()
 
   with _operation_atomic(alias):
@@ -463,7 +441,7 @@ def unblock_next_blocked_job(
       limit=limit,
       duration_seconds=duration_seconds,
       now=now,
-      use_skip_locked=use_skip_locked,
+      use_skip_locked=config.use_skip_locked,
       slot_handoff=slot_handoff,
     )
     if blocked_slot is None or not blocked_slot.slot_acquired:
@@ -485,7 +463,7 @@ def unblock_next_blocked_job(
     job_id=str(job_ref.id),
     concurrency_key=key,
   )
-  notify_ready_queues_on_commit((job_ref.queue_name,), backend_alias=backend_alias, config=config)
+  notify_ready_queues_on_commit((job_ref.queue_name,), config=config)
   return job_ref
 
 
@@ -636,17 +614,16 @@ def _create_ready_execution_after_blocked_consume(
     raise EnqueueError(f"job {job.id} already has an execution-state row")
 
 
-def cleanup_expired_semaphores(*, batch_size=500, backend_alias="default", config=None):
+def cleanup_expired_semaphores(*, config, batch_size=500):
   batch_size = _positive_int_option(batch_size, "batch_size")
-  alias = get_database_alias(backend_alias, config=config)
-  use_skip_locked = resolve_backend_config(backend_alias, config).use_skip_locked
+  alias = config.database_alias
 
   def cleanup_transition():
     now = timezone.now()
     with transaction.atomic(using=alias):
       queryset = locked_queryset(
         Semaphore.objects.using(alias).filter(expires_at__lte=now),
-        use_skip_locked=use_skip_locked,
+        use_skip_locked=config.use_skip_locked,
       )
       semaphores = list(
         queryset.order_by("expires_at", "key").values_list("pk", "key")[:batch_size]
@@ -670,12 +647,9 @@ def cleanup_expired_semaphores(*, batch_size=500, backend_alias="default", confi
   return retry_transient_database_errors(cleanup_transition, using=alias)
 
 
-def promote_expired_blocked_jobs(
-  *, batch_size=500, backend_alias="default", use_skip_locked=None, config=None
-):
-  alias = get_database_alias(backend_alias, config=config)
-  if use_skip_locked is None:
-    use_skip_locked = resolve_backend_config(backend_alias, config).use_skip_locked
+def promote_expired_blocked_jobs(*, config, batch_size=500):
+  alias = config.database_alias
+  backend_alias = config.backend_alias
   uses_serialized_writes = database_capabilities(alias).uses_serialized_writes
 
   def promote_transition():
@@ -690,7 +664,9 @@ def promote_expired_blocked_jobs(
         .filter(backend_alias=backend_alias, expires_at__lte=now)
         .order_by("expires_at", "-priority", "id")
       )
-      blocked_rows = list(locked_queryset(queryset, use_skip_locked=use_skip_locked)[:batch_size])
+      blocked_rows = list(
+        locked_queryset(queryset, use_skip_locked=config.use_skip_locked)[:batch_size]
+      )
       if not blocked_rows:
         return [], []
       _ensure_state_rows_belong_to_backend(blocked_rows, backend_alias)
@@ -714,7 +690,6 @@ def promote_expired_blocked_jobs(
           blocked.concurrency_key,
           limit=limit,
           duration_seconds=duration_seconds,
-          backend_alias=backend_alias,
           config=config,
         ):
           _renew_blocked_execution(
@@ -738,7 +713,7 @@ def promote_expired_blocked_jobs(
       job_id=str(job.id),
       concurrency_key=job.concurrency_key,
     )
-    notify_ready_queues_on_commit((job.queue_name,), backend_alias=backend_alias, config=config)
+    notify_ready_queues_on_commit((job.queue_name,), config=config)
   for job, error in policy_failures:
     log_event(
       "job.failed",
@@ -836,24 +811,16 @@ def _operation_atomic(alias):
   return transaction.atomic(using=alias, savepoint=not connections[alias].in_atomic_block)
 
 
-def release_concurrency_slot(job, *, task=None, config=None):
+def release_concurrency_slot(job, *, config, task=None):
   if not job.concurrency_key:
     return
 
-  config = resolve_backend_config(job.backend_alias, config)
-  try:
-    limit, duration_seconds, _ = concurrency_settings_for_job(job, task=task, config=config)
-  except DispatchPolicyError:
-    limit = _semaphore_limit(config.database_alias, job.concurrency_key) or 1
-    duration_seconds = config.default_concurrency_duration
-
+  limit, duration_seconds = _release_settings(job, task=task, config=config)
   if (
     unblock_next_blocked_job(
       job.concurrency_key,
       limit=limit,
       duration_seconds=duration_seconds,
-      backend_alias=job.backend_alias,
-      use_skip_locked=config.use_skip_locked,
       slot_handoff=SlotHandoffMode.RELEASE_CLAIMED,
       config=config,
     )
@@ -865,15 +832,12 @@ def release_concurrency_slot(job, *, task=None, config=None):
     job.concurrency_key,
     limit=limit,
     duration_seconds=duration_seconds,
-    backend_alias=job.backend_alias,
     config=config,
   )
   unblock_next_blocked_job(
     job.concurrency_key,
     limit=limit,
     duration_seconds=duration_seconds,
-    backend_alias=job.backend_alias,
-    use_skip_locked=config.use_skip_locked,
     slot_handoff=SlotHandoffMode.CONSUME_RELEASED,
     config=config,
   )

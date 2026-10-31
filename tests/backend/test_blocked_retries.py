@@ -6,6 +6,7 @@ import pytest
 from django.db import OperationalError, transaction
 from django.utils import timezone
 
+from dj_queue.config import load_backend_config
 from dj_queue.db import TRANSIENT_DATABASE_RETRY_ATTEMPTS
 from dj_queue.models import BlockedExecution, FailedExecution, Job, ReadyExecution, Semaphore
 from dj_queue.operations import concurrency
@@ -51,7 +52,7 @@ def test_blocked_maintenance_retries_whole_owned_transaction(monkeypatch, failur
   monkeypatch.setattr(concurrency, "log_event", log)
 
   if failure_mode == "once":
-    promoted = concurrency.promote_expired_blocked_jobs()
+    promoted = concurrency.promote_expired_blocked_jobs(config=load_backend_config())
     assert [job.id for job in promoted] == [job.id for job in jobs[1:]]
     assert calls == 4
     assert ReadyExecution.objects.count() == Semaphore.objects.count() == 2
@@ -71,7 +72,7 @@ def test_blocked_maintenance_retries_whole_owned_transaction(monkeypatch, failur
   ):
     if failure_mode == "nested":
       echo.enqueue("caller write")
-    concurrency.promote_expired_blocked_jobs()
+    concurrency.promote_expired_blocked_jobs(config=load_backend_config())
 
   assert raised.value is conflict
   attempts = 1 if failure_mode == "nested" else TRANSIENT_DATABASE_RETRY_ATTEMPTS

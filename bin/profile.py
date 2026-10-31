@@ -755,35 +755,39 @@ def scenario_ordered_selector_claim():
 
 
 def scenario_dispatcher_no_due_scheduled():
+  from dj_queue.config import load_backend_config
   from dj_queue.operations.jobs import promote_scheduled_jobs
 
-  promoted_jobs = promote_scheduled_jobs(batch_size=500, backend_alias="default")
+  promoted_jobs = promote_scheduled_jobs(batch_size=500, config=load_backend_config())
   return {"promoted_count": len(promoted_jobs)}
 
 
 def scenario_dispatcher_no_expired_blocked():
+  from dj_queue.config import load_backend_config
   from dj_queue.operations.concurrency import promote_expired_blocked_jobs
 
-  promoted_jobs = promote_expired_blocked_jobs(batch_size=500, backend_alias="default")
+  promoted_jobs = promote_expired_blocked_jobs(batch_size=500, config=load_backend_config())
   return {"promoted_count": len(promoted_jobs)}
 
 
 def scenario_dispatcher_no_expired_semaphores():
+  from dj_queue.config import load_backend_config
   from dj_queue.operations.concurrency import cleanup_expired_semaphores
 
-  return {"deleted_count": cleanup_expired_semaphores(backend_alias="default")}
+  return {"deleted_count": cleanup_expired_semaphores(config=load_backend_config())}
 
 
 def scenario_scheduler_no_due_recurring():
   from django.utils import timezone
 
+  from dj_queue.config import load_backend_config
   from dj_queue.operations.recurring import fire_due_recurring_tasks
 
   fired_jobs = fire_due_recurring_tasks(
     timezone.now(),
     include_dynamic_tasks=True,
-    backend_alias="default",
     batch_size=500,
+    config=load_backend_config(),
   )
   return {"fired_count": len(fired_jobs)}
 
@@ -791,6 +795,7 @@ def scenario_scheduler_no_due_recurring():
 def scenario_scheduler_cleanup_not_due():
   from django.utils import timezone
 
+  from dj_queue.config import load_backend_config
   from dj_queue.operations.cleanup import (
     clear_failed_jobs,
     clear_finished_jobs,
@@ -802,18 +807,18 @@ def scenario_scheduler_cleanup_not_due():
   return {
     "finished_deleted": clear_finished_jobs(
       older_than=older_than,
-      backend_alias="default",
       now=now,
+      config=load_backend_config(),
     ),
     "failed_deleted": clear_failed_jobs(
       older_than=older_than,
-      backend_alias="default",
       now=now,
+      config=load_backend_config(),
     ),
     "recurring_deleted": clear_recurring_executions(
       older_than=older_than,
-      backend_alias="default",
       now=now,
+      config=load_backend_config(),
     ),
   }
 

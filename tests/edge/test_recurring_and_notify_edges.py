@@ -8,7 +8,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from dj_queue.api import unschedule_recurring_task
-from dj_queue.config import BackendConfig
+from dj_queue.config import BackendConfig, load_backend_config
 from dj_queue.cron import latest_cron_run
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import Job, ReadyExecution, RecurringExecution, RecurringTask
@@ -113,7 +113,7 @@ def test_ready_notification_skips_on_commit_when_listen_notify_disabled(monkeypa
     lambda func, *, using: on_commit_calls.append((func, using)),
   )
 
-  notify_ready_queues_on_commit(("default",), backend_alias="default", config=config)
+  notify_ready_queues_on_commit(("default",), config=config)
 
   assert on_commit_calls == []
 
@@ -128,7 +128,7 @@ def test_ready_notification_skips_on_commit_without_notify_support(monkeypatch):
     lambda func, *, using: on_commit_calls.append((func, using)),
   )
 
-  notify_ready_queues_on_commit(("default",), backend_alias="default", config=config)
+  notify_ready_queues_on_commit(("default",), config=config)
 
   assert on_commit_calls == []
 
@@ -361,7 +361,7 @@ def test_recurring_attachment_failure_rolls_back_job_and_notification(monkeypatc
   with monkeypatch.context() as patch:
     patch.setattr(recurring, "_attach_reserved_recurring_job", fail_attachment)
     with pytest.raises(RuntimeError, match="attachment interrupted"):
-      recurring.fire_recurring_task(recurring_task, run_at)
+      recurring.fire_recurring_task(recurring_task, run_at, config=load_backend_config())
 
   reservation = RecurringExecution.objects.get(task_key=recurring_task.key)
   assert reservation.job_id is None
@@ -369,7 +369,7 @@ def test_recurring_attachment_failure_rolls_back_job_and_notification(monkeypatc
   assert ReadyExecution.objects.exists() is False
   assert notifications == []
 
-  execution = recurring.fire_recurring_task(recurring_task, run_at)
+  execution = recurring.fire_recurring_task(recurring_task, run_at, config=load_backend_config())
 
   assert execution.job_id == reservation.intended_job_id
   assert Job.objects.count() == 1
@@ -392,9 +392,9 @@ def test_stale_recurring_reservation_does_not_replay_completed_job(
   )
   run_at = fixed_now().replace(second=0, microsecond=0)
   stale_reservation = recurring._reserve_recurring_task(
-    recurring_task, run_at, backend_alias="default"
+    recurring_task, run_at, config=load_backend_config()
   )
-  execution = recurring.fire_recurring_task(recurring_task, run_at)
+  execution = recurring.fire_recurring_task(recurring_task, run_at, config=load_backend_config())
   claimed_job = claim_ready_jobs(limit=1)[0]
   assert claimed_job.job.id == execution.job_id
   execute_claimed_job(claimed_job)
@@ -403,7 +403,9 @@ def test_stale_recurring_reservation_does_not_replay_completed_job(
     recurring, "_reserve_recurring_task", lambda *args, **kwargs: stale_reservation
   )
 
-  assert recurring.fire_recurring_task(recurring_task, run_at) is None
+  assert (
+    recurring.fire_recurring_task(recurring_task, run_at, config=load_backend_config()) is None
+  )
   assert ReadyExecution.objects.exists() is False
   assert Job.objects.count() == int(preserve_finished_jobs)
 
@@ -507,7 +509,7 @@ def test_listen_notify_ignored_on_non_postgres_backends(settings):
     },
   }
 
-  backend = build_wakeup_backend(backend_alias="default", queues=("*",), wake_up=lambda: None)
+  backend = build_wakeup_backend(queues=("*",), wake_up=lambda: None, config=load_backend_config())
 
   assert isinstance(backend, NoopWakeupBackend)
 
@@ -553,9 +555,7 @@ def test_notify_connection_uses_django_backend_connection_params(monkeypatch):
 
   monkeypatch.setattr("dj_queue.runtime.notify.connections", {"queue": FakeWrapper()})
 
-  backend = NotifyWakeupBackend(
-    backend_alias="default", wake_up=lambda: None, config=BackendConfig(database_alias="queue")
-  )
+  backend = NotifyWakeupBackend(wake_up=lambda: None, config=BackendConfig(database_alias="queue"))
 
   connection = backend._open_connection()
 
@@ -566,7 +566,7 @@ def test_notify_connection_uses_django_backend_connection_params(monkeypatch):
 
 @pytest.mark.postgres
 def test_notify_watcher_shutdown_is_clean():
-  backend = build_wakeup_backend(backend_alias="default", queues=("*",), wake_up=lambda: None)
+  backend = build_wakeup_backend(queues=("*",), wake_up=lambda: None, config=load_backend_config())
   assert isinstance(backend, NotifyWakeupBackend)
 
   backend.start()
@@ -594,7 +594,7 @@ def test_notify_stop_keeps_live_watcher_visible_until_it_exits():
     def is_alive(self):
       return True
 
-  backend = NotifyWakeupBackend(backend_alias="default", wake_up=lambda: None)
+  backend = NotifyWakeupBackend(wake_up=lambda: None, config=load_backend_config())
   watcher = LiveWatcher()
   backend._connection = FakeConnection()
   backend._watcher = watcher
@@ -621,7 +621,7 @@ def test_notify_watcher_suppresses_connection_close_errors_during_stop(monkeypat
     "dj_queue.runtime.notify.handle_thread_error",
     lambda error, **kwargs: errors.append((error, kwargs)),
   )
-  backend = NotifyWakeupBackend(backend_alias="default", wake_up=lambda: None)
+  backend = NotifyWakeupBackend(wake_up=lambda: None, config=load_backend_config())
   backend._connection = ClosingConnection()
   backend._stop_event.set()
 
@@ -657,10 +657,10 @@ def test_notify_watcher_reconnects_after_connection_error(monkeypatch):
     lambda event, **kwargs: events.append((event, kwargs)),
   )
   backend = NotifyWakeupBackend(
-    backend_alias="default",
     queues=("alpha",),
     wake_up=lambda: wakes.append("wake"),
     reconnect_base_delay=0,
+    config=load_backend_config(),
   )
   backend._connection = BrokenConnection()
   monkeypatch.setattr(backend, "_open_connection", lambda: RestoredConnection())
@@ -684,7 +684,7 @@ def test_notify_wakeup_backend_starts_reconnect_watcher_after_initial_failure(mo
     "dj_queue.runtime.notify.handle_thread_error",
     lambda error, **kwargs: errors.append((error, kwargs)),
   )
-  backend = NotifyWakeupBackend(backend_alias="default", wake_up=lambda: None)
+  backend = NotifyWakeupBackend(wake_up=lambda: None, config=load_backend_config())
   monkeypatch.setattr(
     backend,
     "_open_connection",
@@ -715,10 +715,10 @@ def test_notify_watcher_reconnects_when_started_without_connection(monkeypatch):
     lambda event, **kwargs: events.append((event, kwargs)),
   )
   backend = NotifyWakeupBackend(
-    backend_alias="default",
     queues=("alpha",),
     wake_up=lambda: wakes.append("wake"),
     reconnect_base_delay=0,
+    config=load_backend_config(),
   )
   monkeypatch.setattr(backend, "_open_connection", lambda: RestoredConnection())
 
@@ -730,7 +730,7 @@ def test_notify_watcher_reconnects_when_started_without_connection(monkeypatch):
 
 
 def test_notify_wakeup_backend_start_clears_prior_stop_event(monkeypatch):
-  backend = NotifyWakeupBackend(backend_alias="default", wake_up=lambda: None)
+  backend = NotifyWakeupBackend(wake_up=lambda: None, config=load_backend_config())
   backend._stop_event.set()
   monkeypatch.setattr(backend, "_open_connection", lambda: object())
   monkeypatch.setattr(backend, "_start_watcher", lambda: None)
@@ -746,12 +746,10 @@ def test_notify_ready_queues_sends_one_queue_payload(monkeypatch):
   monkeypatch.setattr("dj_queue.runtime.notify.supports_listen_notify", lambda alias: True)
   monkeypatch.setattr(
     "dj_queue.runtime.notify._notify",
-    lambda channel, payload, *, backend_alias, config: sent.append(
-      (channel, payload, backend_alias)
-    ),
+    lambda channel, payload, *, config: sent.append((channel, payload, config.backend_alias)),
   )
 
-  notify_ready_queues(("alpha", "alpha", "beta"), backend_alias="default")
+  notify_ready_queues(("alpha", "alpha", "beta"), config=load_backend_config())
 
   assert len(sent) == 1
   channel, payload, backend_alias = sent[0]
@@ -774,19 +772,19 @@ def test_notify_ready_queues_reports_send_failures(monkeypatch):
     lambda error, **kwargs: errors.append((error, kwargs)),
   )
 
-  notify_ready_queues(("default",), backend_alias="default")
+  notify_ready_queues(("default",), config=load_backend_config())
 
   assert [
-    (str(error), kwargs["context"], kwargs["backend_alias"]) for error, kwargs in errors
+    (str(error), kwargs["context"], kwargs["config"].backend_alias) for error, kwargs in errors
   ] == [("notify failed", "producer.notify", "default")]
 
 
 def test_notify_wakeup_backend_ignores_non_matching_queue_payload():
   wakes = []
   backend = NotifyWakeupBackend(
-    backend_alias="default",
     queues=("alpha", "mail*"),
     wake_up=lambda: wakes.append("wake"),
+    config=load_backend_config(),
   )
 
   class FakeConnection:
@@ -803,9 +801,9 @@ def test_notify_wakeup_backend_ignores_non_matching_queue_payload():
 def test_notify_wakeup_backend_wakes_matching_queue_payload():
   wakes = []
   backend = NotifyWakeupBackend(
-    backend_alias="default",
     queues=("alpha", "mail*"),
     wake_up=lambda: wakes.append("wake"),
+    config=load_backend_config(),
   )
 
   class FakeConnection:

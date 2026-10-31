@@ -26,11 +26,7 @@ class DjQueueLifespan:
       try:
         keep_polling = await asyncio.to_thread(self.supervisor.poll_once_if_running)
       except Exception as error:
-        handle_thread_error(
-          error,
-          context="supervisor.run",
-          backend_alias=self.supervisor.backend_alias,
-        )
+        handle_thread_error(error, context="supervisor.run", config=self.supervisor.backend_config)
         keep_polling = True
 
       if keep_polling is False:

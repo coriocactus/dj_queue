@@ -288,8 +288,8 @@ def test_orphan_recovery_is_bounded_and_makes_progress():
 def test_supervisor_start_checks_persistent_connection_budget(monkeypatch):
   seen = []
 
-  def record_warning(config, *, backend_alias):
-    seen.append((config, backend_alias))
+  def record_warning(config):
+    seen.append(config)
 
   monkeypatch.setattr(
     "dj_queue.runtime.supervisor.warn_if_persistent_connection_budget_is_tight",
@@ -300,7 +300,7 @@ def test_supervisor_start_checks_persistent_connection_budget(monkeypatch):
   supervisor.start()
   supervisor.stop()
 
-  assert seen == [(supervisor.config, "default")]
+  assert seen == [supervisor.config]
 
 
 def test_supervisor_start_failure_cleans_process_row_and_pidfile(monkeypatch, tmp_path):
@@ -313,7 +313,7 @@ def test_supervisor_start_failure_cleans_process_row_and_pidfile(monkeypatch, tm
     name="failing-supervisor-start",
   )
 
-  def fail_budget_check(config, *, backend_alias):
+  def fail_budget_check(config):
     raise RuntimeError("budget check failed")
 
   monkeypatch.setattr(
@@ -621,6 +621,7 @@ def test_fail_claimed_jobs_rolls_back_terminalization_when_recovered_release_fai
       process,
       ProcessPrunedError("process heartbeat expired"),
       traceback_text="process heartbeat expired",
+      config=load_backend_config(),
     )
 
   assert ClaimedExecution.objects.filter(job=job, process=process).exists() is True
@@ -1474,7 +1475,6 @@ def test_fork_child_bootstrap_error_is_reported_and_exits_nonzero(monkeypatch):
   assert str(error) == "bootstrap failed"
   assert kwargs == {
     "context": "supervisor.child",
-    "backend_alias": "default",
     "config": supervisor.config,
   }
   assert exits == [1]
