@@ -21,7 +21,6 @@ def test_metric_families_project_snapshot_without_prometheus_dependency():
             "blocked_count": 0,
             "failed_count": 0,
             "finished_count": 3,
-            "invalid_count": 0,
             "paused": False,
             "latency_seconds": 4.5,
             "live_worker_count": 1,
@@ -143,7 +142,6 @@ def test_metric_samples_preserve_iterator_order_zeroes_and_database_scope(monkey
         "blocked_count": 4,
         "failed_count": 5,
         "finished_count": 6,
-        "invalid_count": 7,
         "paused": latency is None,
         "latency_seconds": latency,
         "live_worker_count": 0,
@@ -193,7 +191,6 @@ def test_metric_samples_preserve_iterator_order_zeroes_and_database_scope(monkey
       ("blocked", 4),
       ("failed", 5),
       ("finished", 6),
-      ("invalid", 7),
     )
   )
   assert by_name["dj_queue_queue_latency_seconds"] == tuple(

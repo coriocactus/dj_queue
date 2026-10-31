@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from dj_queue import observability
-from dj_queue.queue_state import QUEUE_STATE_DEFINITIONS
+from dj_queue.queue_state import SUMMARY_STATE_DEFINITIONS
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +60,7 @@ def _queue_metric_families(snapshots):
   for snapshot in snapshots:
     for queue in snapshot.queue_rows:
       labels = (snapshot.backend_alias, queue["name"])
-      for definition in QUEUE_STATE_DEFINITIONS:
+      for definition in SUMMARY_STATE_DEFINITIONS:
         jobs.append(
           MetricSample(labels=(*labels, definition.name), value=queue[definition.count_key])
         )

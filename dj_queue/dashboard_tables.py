@@ -7,7 +7,7 @@ from django.core.paginator import Paginator
 from django.db.models import F
 
 from dj_queue.queue_state import (
-  QUEUE_STATE_DEFINITIONS,
+  SUMMARY_STATE_DEFINITIONS,
 )
 
 OVERVIEW_COUNT_LABELS = {
@@ -30,7 +30,7 @@ OVERVIEW_SORTS = {
           "key": definition.count_key,
           "default_desc": True,
         }
-        for definition in QUEUE_STATE_DEFINITIONS
+        for definition in SUMMARY_STATE_DEFINITIONS
       },
       "paused": {"label": "paused", "key": "paused", "default_desc": True},
       "latency": {"label": "latency", "key": "latency_seconds", "default_desc": True},

@@ -12,9 +12,9 @@ from dj_queue.dashboard_tables import OVERVIEW_COUNT_LABELS, OVERVIEW_SORTS, QUE
 from dj_queue.db import database_capabilities, get_database_alias
 from dj_queue.observability import backend_choices, configured_backend_aliases
 from dj_queue.queue_state import (
-  QUEUE_STATE_DEFINITIONS,
   QUEUE_STATE_LABELS,
   QUEUE_STATES,
+  SUMMARY_STATE_DEFINITIONS,
   queue_state_count_key,
   queue_state_queryset,
 )
@@ -154,13 +154,13 @@ def queue_page_context(*, backend_alias, queue_name, state, page_number, query_p
   )
   queue_info = QueueInfo(queue_name, backend_alias=backend_alias)
   state_counts = {
-    definition.name: queue_row[definition.count_key] for definition in QUEUE_STATE_DEFINITIONS
+    definition.name: queue_row[definition.count_key] for definition in SUMMARY_STATE_DEFINITIONS
   }
   state_tabs = [
     {
       "name": state_name,
       "label": label,
-      "count": state_counts[state_name],
+      "count": state_counts.get(state_name),
       "selected": state_name == state,
     }
     for state_name, label in QUEUE_STATES
@@ -239,7 +239,6 @@ def _summary_cards(*, backend_alias, queue_rows, process_rows, recurring_count, 
   scheduled_count = sum(row[queue_state_count_key("scheduled")] for row in queue_rows)
   failed_count = sum(row[queue_state_count_key("failed")] for row in queue_rows)
   blocked_count = sum(row[queue_state_count_key("blocked")] for row in queue_rows)
-  invalid_count = sum(row[queue_state_count_key("invalid")] for row in queue_rows)
   live_processes = sum(1 for row in process_rows if row["is_live"])
   stale_processes = len(process_rows) - live_processes
 
@@ -256,21 +255,16 @@ def _summary_cards(*, backend_alias, queue_rows, process_rows, recurring_count, 
     },
     {
       "label": "attention",
-      "value": failed_count + blocked_count + invalid_count,
+      "value": failed_count + blocked_count,
       "detail_parts": (
         {
           "label": f"{failed_count} failed",
           "url": _job_changelist_url(backend_alias=backend_alias, status="failed"),
         },
-        {"label": ","},
+        {"label": "and"},
         {
           "label": f"{blocked_count} blocked",
           "url": _job_changelist_url(backend_alias=backend_alias, status="blocked"),
-        },
-        {"label": "and"},
-        {
-          "label": f"{invalid_count} invalid",
-          "url": _job_changelist_url(backend_alias=backend_alias, status="invalid"),
         },
       ),
     },

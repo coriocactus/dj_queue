@@ -247,12 +247,12 @@
               {% if tab.selected %}
                 <span class="queue-state-tab queue-state-tab-current" aria-current="page">
                   <span>{{ tab.label }}</span>
-                  <span class="queue-state-tab-count">{{ tab.count }}</span>
+                  {% if tab.count is not None %}<span class="queue-state-tab-count">{{ tab.count }}</span>{% endif %}
                 </span>
               {% else %}
                 <a class="queue-state-tab" href="{% url 'admin:dj_queue_dashboard_queue' queue_name %}?backend={{ backend_alias }}&state={{ tab.name }}">
                   <span>{{ tab.label }}</span>
-                  <span class="queue-state-tab-count">{{ tab.count }}</span>
+                  {% if tab.count is not None %}<span class="queue-state-tab-count">{{ tab.count }}</span>{% endif %}
                 </a>
               {% endif %}
             {% endfor %}

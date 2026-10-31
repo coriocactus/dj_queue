@@ -11,7 +11,6 @@ from dj_queue.models import (
   Job,
   Pause,
   Process,
-  ReadyExecution,
   RecurringExecution,
   RecurringTask,
   Semaphore,
@@ -240,22 +239,6 @@ def test_postgres_health_problems_report_bloat_and_xmin_blockers(monkeypatch):
     "1 PostgreSQL queue tables have high dead tuples: dj_queue_ready_executions",
     "1 PostgreSQL sessions or slots may be pinning xmin",
   )
-
-
-def test_queue_rows_use_canonical_job_queue_names():
-  now = timezone.now()
-  ready = enqueue_ready_job(queue_name="canonical")
-  ReadyExecution.objects.filter(job=ready).update(queue_name="drifted")
-
-  rows = observability.queue_rows(
-    backend_alias="default",
-    now=now,
-    process_cutoff=now - timedelta(minutes=1),
-  )
-
-  assert [row["name"] for row in rows] == ["canonical"]
-  assert rows[0]["ready_count"] == 1
-  assert rows[0]["latency_seconds"] is not None
 
 
 def test_process_rows_expose_shutdown_drain_state():

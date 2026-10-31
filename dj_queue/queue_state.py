@@ -18,7 +18,6 @@ from dj_queue.models.jobs import (
   invalid_execution_state_query,
   job_status_query_filter,
 )
-from dj_queue.sql import common as sql_common
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,10 +107,13 @@ QUEUE_STATE_DEFINITIONS = (
   ),
 )
 
+SUMMARY_STATE_DEFINITIONS = tuple(
+  definition for definition in QUEUE_STATE_DEFINITIONS if definition.name != INVALID_JOB_STATUS
+)
 QUEUE_STATE_BY_NAME = {definition.name: definition for definition in QUEUE_STATE_DEFINITIONS}
 QUEUE_STATES = tuple((definition.name, definition.label) for definition in QUEUE_STATE_DEFINITIONS)
 QUEUE_STATE_LABELS = {definition.name: definition.label for definition in QUEUE_STATE_DEFINITIONS}
-QUEUE_STATE_COUNT_KEYS = tuple(definition.count_key for definition in QUEUE_STATE_DEFINITIONS)
+QUEUE_STATE_COUNT_KEYS = tuple(definition.count_key for definition in SUMMARY_STATE_DEFINITIONS)
 
 
 def queue_state_definition(state):
@@ -128,7 +130,8 @@ def queue_state_count_key(state):
 
 def queue_state_count_fields(counts):
   return {
-    definition.count_key: counts.get(definition.name, 0) for definition in QUEUE_STATE_DEFINITIONS
+    definition.count_key: counts.get(definition.name, 0)
+    for definition in SUMMARY_STATE_DEFINITIONS
   }
 
 
@@ -155,45 +158,17 @@ def queue_state_queryset(*, backend_alias, queue_name, state):
 
 
 def queue_state_summary(*, backend_alias, queue_name):
-  alias = get_database_alias(backend_alias)
-  if _invalid_execution_state_exists(alias, backend_alias, queue_name=queue_name):
-    return _job_state_summary(alias, backend_alias=backend_alias, queue_name=queue_name)
-  return _state_table_summaries_by_queue(
-    alias,
-    backend_alias=backend_alias,
-    queue_name=queue_name,
-  ).get(queue_name) or empty_queue_state_summary(queue_name)
+  return _state_table_summaries_by_queue(backend_alias=backend_alias, queue_name=queue_name).get(
+    queue_name
+  ) or empty_queue_state_summary(queue_name)
 
 
 def queue_state_summaries_by_queue(*, backend_alias):
+  return _state_table_summaries_by_queue(backend_alias=backend_alias)
+
+
+def _state_table_summaries_by_queue(*, backend_alias, queue_name=None):
   alias = get_database_alias(backend_alias)
-  if _invalid_execution_state_exists(alias, backend_alias):
-    return _job_state_summaries_by_queue(alias, backend_alias=backend_alias)
-  return _state_table_summaries_by_queue(alias, backend_alias=backend_alias)
-
-
-def _job_state_summary(alias, *, backend_alias, queue_name):
-  base_queryset = Job.objects.using(alias).filter(
-    backend_alias=backend_alias,
-    queue_name=queue_name,
-  )
-  return _summary_from_row(
-    queue_name,
-    base_queryset.aggregate(**_summary_annotations()),
-  )
-
-
-def _job_state_summaries_by_queue(alias, *, backend_alias):
-  base_queryset = Job.objects.using(alias).filter(backend_alias=backend_alias)
-  return {
-    row["queue_name"]: _summary_from_row(row["queue_name"], row)
-    for row in base_queryset.values("queue_name")
-    .annotate(**_summary_annotations())
-    .order_by("queue_name")
-  }
-
-
-def _state_table_summaries_by_queue(alias, *, backend_alias, queue_name=None):
   rows = {}
   _merge_ready_summary(rows, alias=alias, backend_alias=backend_alias, queue_name=queue_name)
   _merge_scheduled_summary(rows, alias=alias, backend_alias=backend_alias, queue_name=queue_name)
@@ -207,7 +182,7 @@ def _state_table_summaries_by_queue(alias, *, backend_alias, queue_name=None):
 def _empty_summary_values(queue_name):
   return {
     "queue_name": queue_name,
-    **{definition.name: 0 for definition in QUEUE_STATE_DEFINITIONS},
+    **{definition.name: 0 for definition in SUMMARY_STATE_DEFINITIONS},
     "oldest_ready_at": None,
     "oldest_scheduled_at": None,
     "oldest_blocked_at": None,
@@ -284,14 +259,6 @@ def _merge_finished_summary(rows, *, alias, backend_alias, queue_name):
     _summary_values(rows, row["queue_name"])["finished"] = row["count"]
 
 
-def _invalid_execution_state_exists(alias, backend_alias, *, queue_name=None):
-  return sql_common.invalid_execution_state_exists(
-    alias,
-    backend_alias=backend_alias,
-    queue_name=queue_name,
-  )
-
-
 def empty_queue_state_summary(queue_name):
   return QueueStateSummary(
     queue_name=queue_name,
@@ -310,31 +277,6 @@ def status_rank_expression():
   )
 
 
-def _summary_annotations():
-  return {
-    **_state_count_annotations(),
-    "oldest_ready_at": Min(
-      _ready_latency_expression(),
-      filter=_state_query(QUEUE_STATE_BY_NAME["ready"]),
-    ),
-    "oldest_scheduled_at": Min(
-      "scheduled_execution__scheduled_at",
-      filter=_state_query(QUEUE_STATE_BY_NAME["scheduled"]),
-    ),
-    "oldest_blocked_at": Min(
-      "blocked_execution__expires_at",
-      filter=_state_query(QUEUE_STATE_BY_NAME["blocked"]),
-    ),
-  }
-
-
-def _state_count_annotations():
-  return {
-    definition.name: Count("id", filter=_state_query(definition))
-    for definition in QUEUE_STATE_DEFINITIONS
-  }
-
-
 def _summary_from_row(queue_name, row):
   return QueueStateSummary(
     queue_name=queue_name,
@@ -347,12 +289,8 @@ def _summary_from_row(queue_name, row):
 
 def _state_counts_tuple(counts):
   return tuple(
-    (definition.name, counts.get(definition.name, 0)) for definition in QUEUE_STATE_DEFINITIONS
+    (definition.name, counts.get(definition.name, 0)) for definition in SUMMARY_STATE_DEFINITIONS
   )
-
-
-def _ready_latency_expression():
-  return Coalesce("ready_execution__latency_started_at", "ready_execution__created_at")
 
 
 def _filter_state_queryset(queryset, definition):

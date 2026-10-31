@@ -14,7 +14,7 @@ pytestmark = pytest.mark.django_db
   [("ready", ReadyExecution), ("scheduled", ScheduledExecution), ("blocked", BlockedExecution)],
 )
 @pytest.mark.parametrize("backend_alias", ["default", "other"])
-def test_health_reports_queue_drift_in_scope_without_changing_canonical_counts(
+def test_health_reports_queue_drift_that_summaries_count_by_state_row(
   state, model, backend_alias, settings, django_assert_num_queries
 ):
   settings.TASKS = {
@@ -38,8 +38,8 @@ def test_health_reports_queue_drift_in_scope_without_changing_canonical_counts(
 
   summaries = queue_state_summaries_by_queue(backend_alias="default")
   if backend_alias == "default":
-    assert list(summaries) == ["canonical"]
-    assert summaries["canonical"].count(state) == 1
+    assert list(summaries) == ["drifted"]
+    assert summaries["drifted"].count(state) == 1
   else:
     assert summaries == {}
   diagnostic = f"1 {state} execution rows have mismatched queue ownership"

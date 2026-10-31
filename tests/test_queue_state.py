@@ -51,7 +51,7 @@ def test_queue_state_counts_and_count_fields_follow_state_definitions():
   assert queue_state_count_fields(counts)["ready_count"] == 1
 
 
-def test_queue_state_counts_report_invalid_jobs_without_double_counting():
+def test_queue_state_querysets_separate_invalid_jobs():
   job = make_job()
   ReadyExecution.objects.create(
     job=job,
@@ -66,11 +66,6 @@ def test_queue_state_counts_report_invalid_jobs_without_double_counting():
     traceback="traceback",
   )
 
-  counts = queue_state_summary(backend_alias="default", queue_name="default").counts_by_state()
-
-  assert counts["ready"] == 0
-  assert counts["failed"] == 0
-  assert counts["invalid"] == 1
   assert (
     list(queue_state_queryset(backend_alias="default", queue_name="default", state="ready")) == []
   )
@@ -79,7 +74,7 @@ def test_queue_state_counts_report_invalid_jobs_without_double_counting():
   ) == [job]
 
 
-def test_queue_state_summaries_by_queue_follow_canonical_job_rows():
+def test_queue_state_summaries_by_queue_count_state_rows():
   now = timezone.now()
   ready = enqueue_ready_job(queue_name="alpha")
   ReadyExecution.objects.filter(job=ready).update(
@@ -99,19 +94,19 @@ def test_queue_state_summaries_by_queue_follow_canonical_job_rows():
 
   summaries = queue_state_summaries_by_queue(backend_alias="default")
 
-  assert sorted(summaries) == ["alpha", "beta"]
+  assert sorted(summaries) == ["alpha", "beta", "drifted"]
   alpha = summaries["alpha"]
-  assert alpha.count("ready") == 1
+  assert alpha.count("ready") == 0
   assert alpha.count("blocked") == 1
   assert alpha.count("finished") == 1
   assert alpha.count("failed") == 0
-  assert alpha.count_fields()["ready_count"] == 1
-  assert alpha.oldest_ready_at == now - timedelta(seconds=10)
+  assert summaries["drifted"].count_fields()["ready_count"] == 1
+  assert summaries["drifted"].oldest_ready_at == now - timedelta(seconds=10)
   assert summaries["beta"].count("scheduled") == 1
   assert summaries["beta"].count("failed") == 1
 
 
-def test_queue_state_summaries_by_queue_uses_state_table_reads_for_valid_counts():
+def test_queue_state_summaries_by_queue_read_one_aggregate_per_state():
   enqueue_ready_job(queue_name="alpha")
   make_failed_job(queue_name="beta")
 
@@ -119,21 +114,7 @@ def test_queue_state_summaries_by_queue_uses_state_table_reads_for_valid_counts(
     summaries = queue_state_summaries_by_queue(backend_alias="default")
 
   assert sorted(summaries) == ["alpha", "beta"]
-  assert 1 < len(captured.captured_queries) <= 7
-
-
-def test_queue_state_summaries_use_state_row_queue_names_when_state_is_valid(monkeypatch):
-  ready = enqueue_ready_job(queue_name="canonical")
-  ReadyExecution.objects.filter(job=ready).update(queue_name="denormalized")
-  monkeypatch.setattr(
-    "dj_queue.queue_state._invalid_execution_state_exists",
-    lambda *_args, **_kwargs: False,
-  )
-
-  summaries = queue_state_summaries_by_queue(backend_alias="default")
-
-  assert sorted(summaries) == ["denormalized"]
-  assert summaries["denormalized"].count("ready") == 1
+  assert len(captured.captured_queries) == 6
 
 
 def test_filter_queue_state_uses_the_canonical_state_definition():
