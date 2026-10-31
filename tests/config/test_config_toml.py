@@ -19,7 +19,6 @@ database_alias = "queue"
 preserve_finished_jobs = true
 clear_finished_jobs_after = 86400
 listen_notify = true # comments are ignored
-silence_polling = true
 
 [[workers]]
 queues = ["default", "email*"]

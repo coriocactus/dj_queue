@@ -122,7 +122,6 @@ TASKS = {
       "clear_failed_jobs_after": None,
       "clear_recurring_executions_after": None,
       "listen_notify": False,
-      "silence_polling": True,
     },
   }
 }

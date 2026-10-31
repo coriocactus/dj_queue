@@ -912,12 +912,13 @@ Global options:
 | `default_concurrency_duration` | `180` | default semaphore TTL in seconds |
 | `use_skip_locked` | `true` | use `SKIP LOCKED` when the active backend supports it |
 | `listen_notify` | `true` | PostgreSQL-only worker wakeup optimization layered on top of polling |
-| `silence_polling` | `true` | suppress `dj_queue`'s own poll-cycle noise without mutating Django's global SQL logger |
 | `process_heartbeat_interval` | `60` | seconds between process heartbeat writes |
 | `process_alive_threshold` | `300` | seconds before a process row is stale |
 | `shutdown_timeout` | `5` | graceful drain window before standalone shutdown gives up on waiting |
 | `supervisor_pidfile` | `null` | optional pidfile guard for standalone supervisors |
 | `on_thread_error` | `null` | dotted callback path for runtime infrastructure exceptions |
+
+`silence_polling` is deprecated: it never had an effect, still loads with a `FutureWarning`, and will be rejected in a future release, so remove it from settings and TOML overlays.
 
 Worker entry options:
 
@@ -1000,7 +1001,6 @@ database_alias = "queue"
 preserve_finished_jobs = true
 clear_finished_jobs_after = 86400
 listen_notify = true
-silence_polling = true
 
 [[workers]]
 queues = ["default", "email*"]

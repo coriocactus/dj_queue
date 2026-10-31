@@ -97,7 +97,6 @@ TASKS = {
       "clear_recurring_executions_after": None,
       "default_concurrency_duration": 60,
       "listen_notify": False,
-      "silence_polling": True,
     },
   }
 }

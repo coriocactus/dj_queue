@@ -79,7 +79,7 @@ def enqueue_job_with_dispatch(
   if dispatch_outcome.should_notify:
     notify_ready_queues_on_commit((job.queue_name,), config=config)
 
-  if event_logging_enabled(backend_alias=backend_alias):
+  if event_logging_enabled():
     log_event(
       "job.enqueued",
       backend_alias=backend_alias,
@@ -161,7 +161,7 @@ def _enqueue_bulk_once(submissions, *, config):
 
 
 def _log_bulk_enqueued(outcomes, *, backend_alias):
-  if not event_logging_enabled(backend_alias=backend_alias):
+  if not event_logging_enabled():
     return
   counts = {outcome: 0 for outcome in DispatchOutcome}
   job_count = 0

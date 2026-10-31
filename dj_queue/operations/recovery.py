@@ -195,7 +195,7 @@ def _fail_claimed_jobs(jobs, error, *, traceback_text, config):
     for job in release_recovered_concurrency_slots(jobs, config=config):
       release_concurrency_slot(job, config=config)
 
-  if event_logging_enabled(backend_alias=backend_alias):
+  if event_logging_enabled():
     for job in jobs:
       log_event(
         "job.failed",

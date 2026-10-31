@@ -62,11 +62,12 @@ DEFAULT_OPTIONS = {
   "database_alias": "default",
   "use_skip_locked": True,
   "listen_notify": True,
-  "silence_polling": True,
   "async_thread_sensitive": False,
   "async_close_connections": False,
   "on_thread_error": None,
 }
+
+DEPRECATED_OPTIONS = ("silence_polling",)
 
 DJ_QUEUE_BACKEND_PATH = "dj_queue.backend.DjQueueBackend"
 
@@ -138,7 +139,6 @@ class BackendConfig(ConfigValue):
   database_alias: str = "default"
   use_skip_locked: bool = True
   listen_notify: bool = True
-  silence_polling: bool = True
   async_thread_sensitive: bool = False
   async_close_connections: bool = False
   on_thread_error: str | None = None
@@ -301,7 +301,6 @@ def _build_backend_config(
     database_alias=_string_option(resolved_options["database_alias"], "database_alias"),
     use_skip_locked=_bool_option(resolved_options["use_skip_locked"], "use_skip_locked"),
     listen_notify=_bool_option(resolved_options["listen_notify"], "listen_notify"),
-    silence_polling=_bool_option(resolved_options["silence_polling"], "silence_polling"),
     async_thread_sensitive=_bool_option(
       resolved_options["async_thread_sensitive"], "async_thread_sensitive"
     ),
@@ -397,6 +396,7 @@ def _resolved_options(
   settings_options = backend_block.get("OPTIONS", {})
   if not isinstance(settings_options, Mapping):
     raise ImproperlyConfigured("TASKS backend OPTIONS must be a mapping")
+  settings_options = _without_deprecated_options(settings_options, "TASKS backend OPTIONS")
   _reject_unknown_options(settings_options, DEFAULT_OPTIONS, "TASKS backend OPTIONS")
 
   resolved_options = dict(DEFAULT_OPTIONS)
@@ -452,8 +452,24 @@ def _load_toml_options(config_path: Any, *, backend_alias: str) -> dict[str, Any
 
 
 def _validated_toml_options(options: Mapping[str, Any], setting_name: str) -> dict[str, Any]:
-  options = _json_serializable_options(options, setting_name)
+  options = _without_deprecated_options(
+    _json_serializable_options(options, setting_name), setting_name
+  )
   _reject_unknown_options(options, DEFAULT_OPTIONS, setting_name)
+  return options
+
+
+def _without_deprecated_options(options: Mapping[str, Any], setting_name: str) -> dict[str, Any]:
+  options = dict(options)
+  for name in DEPRECATED_OPTIONS:
+    if name in options:
+      del options[name]
+      warnings.warn(
+        f"dj_queue {setting_name} option {name!r} has no effect and will be rejected in a "
+        "future release; remove it",
+        FutureWarning,
+        stacklevel=2,
+      )
   return options
 
 

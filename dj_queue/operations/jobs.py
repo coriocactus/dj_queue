@@ -105,7 +105,7 @@ def dispatch_scheduled_job_now(job_id, *, backend_alias="default", config=None):
   if dispatch_outcome.should_notify:
     notify_ready_queues_on_commit((job.queue_name,), config=config)
 
-  if event_logging_enabled(backend_alias=backend_alias):
+  if event_logging_enabled():
     log_event(
       "job.dispatched_now",
       backend_alias=backend_alias,
@@ -310,7 +310,7 @@ def _redispatch_jobs(jobs, *, config, isolate_policy_errors=False, reset_results
 
 
 def _log_jobs_retried(jobs, *, backend_alias):
-  if not event_logging_enabled(backend_alias=backend_alias):
+  if not event_logging_enabled():
     return
   for job in jobs:
     log_event(
@@ -323,7 +323,7 @@ def _log_jobs_retried(jobs, *, backend_alias):
 
 
 def _log_dispatch_policy_failures(failures, *, backend_alias):
-  if not event_logging_enabled(backend_alias=backend_alias):
+  if not event_logging_enabled():
     return
   for job, error in failures:
     log_event(
@@ -412,7 +412,7 @@ def _discard_state_jobs(
       for job in jobs:
         release_concurrency_slot(job, config=config)
 
-  should_log = event_logging_enabled(backend_alias=backend_alias)
+  should_log = event_logging_enabled()
   for job in jobs:
     if should_log:
       log_event(

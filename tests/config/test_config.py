@@ -275,15 +275,15 @@ def test_config_precedence_cli_over_env_over_toml_over_settings(settings, tmp_pa
       "OPTIONS": {
         "mode": "fork",
         "listen_notify": False,
-        "silence_polling": False,
+        "use_skip_locked": False,
       },
     },
   }
   env_config_path = tmp_path / "env.toml"
-  env_config_path.write_text('mode = "fork"\nsilence_polling = false\n', encoding="utf-8")
+  env_config_path.write_text('mode = "fork"\nuse_skip_locked = false\n', encoding="utf-8")
   cli_config_path = tmp_path / "cli.toml"
   cli_config_path.write_text(
-    'mode = "fork"\nlisten_notify = true\nsilence_polling = true\n', encoding="utf-8"
+    'mode = "fork"\nlisten_notify = true\nuse_skip_locked = true\n', encoding="utf-8"
   )
 
   env_config = load_backend_config(
@@ -304,10 +304,27 @@ def test_config_precedence_cli_over_env_over_toml_over_settings(settings, tmp_pa
   )
 
   assert env_config.mode == "async"
-  assert env_config.silence_polling is False
+  assert env_config.use_skip_locked is False
   assert cli_config.mode == "fork"
   assert cli_config.listen_notify is True
-  assert cli_config.silence_polling is True
+  assert cli_config.use_skip_locked is True
+
+
+def test_deprecated_silence_polling_is_ignored_with_a_warning(settings, tmp_path):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {"silence_polling": True},
+    },
+  }
+  path = tmp_path / "dj_queue.toml"
+  path.write_text("silence_polling = false\n", encoding="utf-8")
+
+  with pytest.warns(FutureWarning, match="'silence_polling' has no effect") as warned:
+    config = load_backend_config(cli_overrides={"config": str(path)})
+
+  assert len(warned) == 2
+  assert not hasattr(config, "silence_polling")
 
 
 def test_multi_backend_toml_selects_requested_alias(settings, tmp_path):
@@ -647,7 +664,6 @@ def test_boolean_environment_values_parse_truthy_and_falsy_forms(settings, value
     "preserve_finished_jobs",
     "use_skip_locked",
     "listen_notify",
-    "silence_polling",
   ),
 )
 def test_boolean_options_parse_truthy_and_falsy_strings(settings, setting_name):
@@ -697,7 +713,6 @@ def test_nested_boolean_options_parse_truthy_and_falsy_strings(settings, section
     ("preserve_finished_jobs", "sometimes"),
     ("use_skip_locked", "sometimes"),
     ("listen_notify", "sometimes"),
-    ("silence_polling", "sometimes"),
   ),
 )
 def test_boolean_options_reject_unknown_strings(settings, setting_name, value):

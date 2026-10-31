@@ -64,7 +64,7 @@ def claim_ready_jobs(
     using=alias,
   )
 
-  if event_logging_enabled(backend_alias=backend_alias):
+  if event_logging_enabled():
     for claimed_job in claimed_jobs:
       log_event(
         "job.claimed",
