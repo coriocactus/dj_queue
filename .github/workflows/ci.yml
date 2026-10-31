@@ -16,7 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: astral-sh/ruff-action@v4.1.0
-      - run: ruff check
+        with:
+          version-file: uv.lock
       - run: ruff format --check --diff
 
   package:
@@ -25,9 +26,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
-          version: "0.13.5"
+          version: "0.13.6"
       - run: uv build --no-sources
       - run: uv run --isolated --no-project --with 'django>=6.0,<6.1' --with dist/*.whl tests/smoke_publish.py
       - run: uv run --isolated --no-project --with 'django>=6.1,<6.2' --with dist/*.tar.gz tests/smoke_publish.py
@@ -57,8 +58,9 @@ jobs:
               group: django61
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
+          version: "0.13.6"
           python-version: ${{ matrix.python-version }}
       - run: uv sync --locked --group ${{ matrix.django.group }}
       - run: uv run --no-sync pytest
@@ -98,8 +100,9 @@ jobs:
           --health-retries 15
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
+          version: "0.13.6"
           python-version: "3.14"
       - run: uv sync --locked --group ${{ matrix.group }}
       - run: uv run --no-sync pytest
@@ -141,8 +144,9 @@ jobs:
           --health-retries 15
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
+          version: "0.13.6"
           python-version: "3.14"
       - run: uv sync --locked --group ${{ matrix.group }}
       - run: uv run --no-sync pytest
@@ -184,8 +188,9 @@ jobs:
           --health-retries 15
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
+          version: "0.13.6"
           python-version: "3.14"
       - run: uv sync --locked --group ${{ matrix.group }}
       - run: uv run --no-sync pytest
