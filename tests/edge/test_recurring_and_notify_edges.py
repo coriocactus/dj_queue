@@ -13,7 +13,8 @@ from dj_queue.cron import latest_cron_run
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import Job, ReadyExecution, RecurringExecution, RecurringTask
 from dj_queue.operations import recurring
-from dj_queue.operations.jobs import claim_ready_jobs, execute_claimed_job
+from dj_queue.operations.claiming import claim_ready_jobs
+from dj_queue.operations.execution import execute_claimed_job
 from dj_queue.runtime.notify import (
   NoopWakeupBackend,
   NotifyWakeupBackend,

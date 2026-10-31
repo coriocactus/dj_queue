@@ -29,20 +29,20 @@ from dj_queue.models import (
   ScheduledExecution,
   Semaphore,
 )
+from dj_queue.operations.claiming import claim_ready_jobs
 from dj_queue.operations.cleanup import (
   clear_failed_jobs,
   clear_finished_jobs,
   clear_recurring_executions,
 )
 from dj_queue.operations.concurrency import promote_expired_blocked_jobs
+from dj_queue.operations.dispatch import DispatchOutcome
+from dj_queue.operations.enqueue import enqueue_job_with_dispatch
 from dj_queue.operations.jobs import (
-  DispatchOutcome,
-  claim_ready_jobs,
   discard_failed_job,
   discard_ready_jobs,
   discard_scheduled_jobs,
   dispatch_scheduled_job_now,
-  enqueue_job_with_dispatch,
   promote_failed_job_retries,
   promote_scheduled_jobs,
   retry_failed_job,

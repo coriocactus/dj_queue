@@ -6,7 +6,7 @@ from django.db import connections
 
 from dj_queue.config import WorkerConfig, load_backend_config
 from dj_queue.models import ClaimedExecution, Job, ReadyExecution
-from dj_queue.operations.jobs import claim_ready_jobs
+from dj_queue.operations.claiming import claim_ready_jobs
 from dj_queue.runtime.worker import Worker
 from tests.tasks import echo
 

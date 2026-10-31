@@ -9,7 +9,8 @@ from django.utils import timezone
 from dj_queue.config import load_backend_config
 from dj_queue.models import Job, RecurringExecution, RecurringTask
 from dj_queue.operations import recurring
-from dj_queue.operations.jobs import claim_ready_jobs, execute_claimed_job
+from dj_queue.operations.claiming import claim_ready_jobs
+from dj_queue.operations.execution import execute_claimed_job
 
 pytestmark = [
   pytest.mark.django_db(transaction=True),

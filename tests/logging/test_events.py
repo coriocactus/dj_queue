@@ -5,7 +5,8 @@ from django.utils import timezone
 
 from dj_queue.log import event_logging_enabled, log_event
 from dj_queue.models import Process
-from dj_queue.operations.jobs import claim_ready_jobs, enqueue_job_with_dispatch
+from dj_queue.operations.claiming import claim_ready_jobs
+from dj_queue.operations.enqueue import enqueue_job_with_dispatch
 from tests.tasks import echo
 
 

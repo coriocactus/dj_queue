@@ -4,7 +4,7 @@ import pytest
 from django.db import OperationalError
 
 from dj_queue.models import ClaimedExecution, Job, ScheduledExecution
-from dj_queue.operations import dispatch, enqueue, execution, jobs
+from dj_queue.operations import claiming, dispatch, enqueue, execution
 from tests.tasks import echo, limited_discard
 
 
@@ -19,15 +19,15 @@ def test_completion_retry_keeps_identity_and_executes_task_once(
       "OPTIONS": {"preserve_finished_jobs": preserve_finished},
     }
   }
-  job = jobs.enqueue_job(echo, ["done"], {})
+  job = enqueue.enqueue_job(echo, ["done"], {})
   job_id = job.pk
-  claimed = jobs.claim_ready_jobs(limit=1)[0]
+  claimed = claiming.claim_ready_jobs(limit=1)[0]
   call_task = Mock(wraps=execution._call_task)
   release = Mock(side_effect=[OperationalError("database is locked"), None])
   monkeypatch.setattr(execution, "_call_task", call_task)
   monkeypatch.setattr(execution, "release_concurrency_slot", release)
 
-  jobs.execute_claimed_job(claimed)
+  execution.execute_claimed_job(claimed)
 
   assert call_task.call_count == 1
   assert release.call_count == 2
@@ -62,11 +62,11 @@ def test_bulk_retry_rebuilds_discarded_jobs_when_capacity_changes(monkeypatch):
   monkeypatch.setattr(enqueue, "_bulk_create", create_with_conflict)
   monkeypatch.setattr(dispatch, "semaphore_acquire_many", acquire_after_retry)
 
-  [(job, _task, outcome)] = jobs.enqueue_jobs_bulk([(limited_discard, [1], {})])
+  [(job, _task, outcome)] = enqueue.enqueue_jobs_bulk([(limited_discard, [1], {})])
 
   assert attempts == 2
   assert job_ids[0] == job_ids[1]
-  assert outcome is jobs.DispatchOutcome.READY
+  assert outcome is dispatch.DispatchOutcome.READY
   job.refresh_from_db()
   assert job.finished_at is None
   assert job.status == "ready"

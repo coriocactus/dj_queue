@@ -9,7 +9,8 @@ from benchmarks.tasks import limited, noop
 from dj_queue import observability
 from dj_queue.config import load_backend_config
 from dj_queue.models import BlockedExecution, ClaimedExecution, Job, ReadyExecution
-from dj_queue.operations.jobs import claim_ready_jobs, execute_claimed_job
+from dj_queue.operations.claiming import claim_ready_jobs
+from dj_queue.operations.execution import execute_claimed_job
 from dj_queue.runtime.supervisor import AsyncSupervisor
 
 

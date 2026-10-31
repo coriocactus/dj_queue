@@ -19,12 +19,8 @@ from dj_queue.models import (
   Process,
   ReadyExecution,
 )
-from dj_queue.operations.jobs import (
-  ClaimedJob,
-  claim_ready_jobs,
-  complete_claimed_job,
-  execute_claimed_job,
-)
+from dj_queue.operations.claiming import ClaimedJob, claim_ready_jobs
+from dj_queue.operations.execution import complete_claimed_job, execute_claimed_job
 from dj_queue.runtime.base import DJ_QUEUE_VERSION, ROLLOUT_PROTOCOL_VERSION
 from dj_queue.runtime.worker import Worker
 from tests.tasks import echo, fail, limited, nan_result, non_json_result, with_context

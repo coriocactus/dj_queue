@@ -7,7 +7,7 @@ from django.db import connections
 from django.db.utils import OperationalError
 
 from dj_queue.models import ClaimedExecution, Job, ReadyExecution
-from dj_queue.operations.jobs import claim_ready_jobs
+from dj_queue.operations.claiming import claim_ready_jobs
 from tests.tasks import echo
 
 pytestmark = pytest.mark.django_db(transaction=True)

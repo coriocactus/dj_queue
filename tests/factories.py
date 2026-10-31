@@ -8,7 +8,7 @@ from dj_queue.models import (
   ReadyExecution,
   ScheduledExecution,
 )
-from dj_queue.operations.jobs import enqueue_job
+from dj_queue.operations.enqueue import enqueue_job
 from tests.tasks import echo
 
 

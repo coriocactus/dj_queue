@@ -651,7 +651,7 @@ def scenario_ordered_selector_claim():
   from benchmarks.tasks import noop
   from dj_queue.models import ClaimedExecution, Job, ReadyExecution
   from dj_queue.operations.claiming import claim_ready_jobs
-  from dj_queue.operations.jobs import execute_claimed_job
+  from dj_queue.operations.execution import execute_claimed_job
 
   selectors = (
     "profile-selector-alpha",

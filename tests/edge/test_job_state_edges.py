@@ -5,6 +5,7 @@ from django.tasks import TaskResultStatus
 from django.utils import timezone
 
 from dj_queue.config import load_backend_config
+from dj_queue.exceptions import EnqueueError
 from dj_queue.models import (
   BlockedExecution,
   ClaimedExecution,
@@ -21,7 +22,6 @@ from dj_queue.operations.concurrency import (
   unblock_next_blocked_job,
 )
 from dj_queue.operations.jobs import (
-  EnqueueError,
   discard_blocked_jobs,
   discard_ready_jobs,
   promote_scheduled_jobs,

@@ -18,6 +18,7 @@ import dj_queue.operations.execution as execution_operations
 import dj_queue.operations.jobs as job_operations
 from dj_queue.api import QueueInfo
 from dj_queue.config import load_backend_config
+from dj_queue.exceptions import EnqueueError
 from dj_queue.models import (
   BlockedExecution,
   ClaimedExecution,
@@ -31,6 +32,7 @@ from dj_queue.models import (
   ScheduledExecution,
   Semaphore,
 )
+from dj_queue.operations.claiming import claim_ready_jobs
 from dj_queue.operations.concurrency import (
   cleanup_expired_semaphores,
   promote_expired_blocked_jobs,
@@ -38,13 +40,13 @@ from dj_queue.operations.concurrency import (
   semaphore_acquire_many,
   semaphore_release,
 )
-from dj_queue.operations.jobs import (
-  EnqueueError,
-  claim_ready_jobs,
+from dj_queue.operations.execution import (
   complete_claimed_job,
-  discard_ready_jobs,
   execute_claimed_job,
   fail_claimed_job,
+)
+from dj_queue.operations.jobs import (
+  discard_ready_jobs,
   promote_failed_job_retries,
   promote_scheduled_jobs,
 )

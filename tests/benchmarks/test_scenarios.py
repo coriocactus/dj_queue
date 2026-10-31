@@ -5,7 +5,7 @@ from django.db import connection
 
 from benchmarks.scenarios import enqueue, runtime, scheduling
 from dj_queue.models import Job
-from dj_queue.operations.jobs import ClaimedJob
+from dj_queue.operations.claiming import ClaimedJob
 
 
 @pytest.mark.django_db

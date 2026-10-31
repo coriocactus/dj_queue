@@ -8,7 +8,7 @@ from django.utils import timezone
 from dj_queue.config import load_backend_config
 from dj_queue.management.commands.dj_queue import build_supervisor
 from dj_queue.models import Job, Pause, Process, ReadyExecution, ScheduledExecution, Semaphore
-from dj_queue.operations.jobs import enqueue_job
+from dj_queue.operations.enqueue import enqueue_job
 from dj_queue.operations.queues import pause_queue, resume_queue
 from dj_queue.runtime.notify import NoopWakeupBackend
 from dj_queue.runtime.worker import Worker
