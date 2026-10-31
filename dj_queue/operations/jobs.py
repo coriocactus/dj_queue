@@ -25,9 +25,7 @@ from dj_queue.operations._helpers import (
   _bulk_create_ready_executions_locked,
   _consume_selected_rows,
   _ensure_job_ids_have_no_other_execution_state,
-  _ensure_no_other_execution_state,
   _ensure_state_rows_belong_to_backend,
-  _ready_execution_rows,
 )
 from dj_queue.operations.claiming import ClaimedJob, claim_ready_jobs
 from dj_queue.operations.concurrency import release_concurrency_slot
@@ -98,8 +96,6 @@ def promote_scheduled_jobs(*, batch_size, config):
 
   def promote_transition():
     now = timezone.now()
-    ready_queue_names = []
-    policy_failures = []
     with transaction.atomic(using=alias):
       queryset = (
         ScheduledExecution.objects.using(alias)
@@ -118,38 +114,12 @@ def promote_scheduled_jobs(*, batch_size, config):
       if not scheduled_rows:
         return [], [], []
 
-      jobs = [row.job for row in scheduled_rows]
-
-      direct_jobs = [job for job in jobs if not job.concurrency_key]
-      if direct_jobs:
-        _bulk_create_ready_executions_locked(
-          alias,
-          _ready_execution_rows(
-            sorted(direct_jobs, key=lambda job: job.pk),
-            backend_alias=backend_alias,
-            ready_at=now,
-            created_at=now,
-          ),
-          backend_alias=backend_alias,
-          check_conflicts=True,
-        )
-        ready_queue_names.extend(job.queue_name for job in direct_jobs)
-
-      direct_job_ids = {job.pk for job in direct_jobs}
-      promoted_jobs = list(direct_jobs)
-      for job in jobs:
-        if job.pk in direct_job_ids:
-          continue
-        try:
-          dispatch_outcome = dispatch_job(job, config=config)
-        except DispatchPolicyError as error:
-          _record_dispatch_policy_failure(alias, job, error)
-          policy_failures.append((job, error))
-          continue
-        promoted_jobs.append(job)
-        if dispatch_outcome.should_notify:
-          ready_queue_names.append(job.queue_name)
-    return promoted_jobs, ready_queue_names, policy_failures
+      return _redispatch_jobs(
+        [row.job for row in scheduled_rows],
+        isolate_policy_errors=True,
+        reset_results=False,
+        config=config,
+      )
 
   promoted_jobs, ready_queue_names, policy_failures = retry_transient_database_errors(
     promote_transition, using=alias
@@ -237,8 +207,8 @@ def retry_failed_job(job_id: UUID | str, *, backend_alias: str = "default", conf
       failed_rows = _consume_selected_rows(alias, FailedExecution, [failed])
       if not failed_rows:
         raise EnqueueError("job is not failed")
-      jobs, ready_queue_names, _policy_failures = _dispatch_consumed_failed_rows(
-        failed_rows, config=config
+      jobs, ready_queue_names, _policy_failures = _redispatch_jobs(
+        [failed.job for failed in failed_rows], config=config
       )
       return jobs[0], ready_queue_names
 
@@ -285,7 +255,9 @@ def retry_failed_jobs(
       if not failed_rows:
         return [], [], []
 
-      return _dispatch_consumed_failed_rows(failed_rows, isolate_policy_errors=True, config=config)
+      return _redispatch_jobs(
+        [failed.job for failed in failed_rows], isolate_policy_errors=True, config=config
+      )
 
   jobs, ready_queue_names, policy_failures = retry_transient_database_errors(
     retry_transition, using=alias
@@ -324,7 +296,9 @@ def promote_failed_job_retries(*, batch_size, config):
       if not failed_rows:
         return [], [], []
 
-      return _dispatch_consumed_failed_rows(failed_rows, isolate_policy_errors=True, config=config)
+      return _redispatch_jobs(
+        [failed.job for failed in failed_rows], isolate_policy_errors=True, config=config
+      )
 
   jobs, ready_queue_names, policy_failures = retry_transient_database_errors(
     promote_transition, using=alias
@@ -338,19 +312,19 @@ def promote_failed_job_retries(*, batch_size, config):
   return jobs
 
 
-def _dispatch_consumed_failed_rows(failed_rows, *, config, isolate_policy_errors=False):
+def _redispatch_jobs(jobs, *, config, isolate_policy_errors=False, reset_results=True):
   alias = config.database_alias
   backend_alias = config.backend_alias
   now = timezone.now()
-  failed_jobs = [failed.job for failed in failed_rows]
-  _ensure_job_ids_have_no_other_execution_state(alias, [job.id for job in failed_jobs])
+  _ensure_job_ids_have_no_other_execution_state(alias, [job.id for job in jobs])
 
   prepared = []
   policy_failures = []
-  for job in failed_jobs:
-    job.return_value = None
-    job.finished_at = None
-    job.updated_at = now
+  for job in jobs:
+    if reset_results:
+      job.return_value = None
+      job.finished_at = None
+      job.updated_at = now
     try:
       decision = dispatch_decision(job, now=now, config=config)
     except DispatchPolicyError as error:
@@ -362,10 +336,12 @@ def _dispatch_consumed_failed_rows(failed_rows, *, config, isolate_policy_errors
 
   rows = build_dispatch_rows(prepared, now=now, config=config)
 
-  Job.objects.using(alias).bulk_update(
-    failed_jobs,
-    ["return_value", "finished_at", "updated_at"],
-  )
+  updated_jobs = jobs if reset_results else rows.discarded
+  if updated_jobs:
+    Job.objects.using(alias).bulk_update(
+      updated_jobs,
+      ["return_value", "finished_at", "updated_at"],
+    )
   _bulk_create_ready_executions_locked(
     alias, rows.ready, backend_alias=backend_alias, check_conflicts=False
   )
@@ -399,16 +375,6 @@ def _log_jobs_retried(jobs, *, backend_alias):
       queue_name=job.queue_name,
       priority=job.priority,
     )
-
-
-def _record_dispatch_policy_failure(alias, job, error):
-  _ensure_no_other_execution_state(alias, job)
-  FailedExecution.objects.using(alias).create(
-    job_id=job.id,
-    exception_class=exception_path(error),
-    message=str(error),
-    traceback="",
-  )
 
 
 def _log_dispatch_policy_failures(failures, *, backend_alias):

@@ -191,18 +191,6 @@ def _bulk_create_ready_executions_locked(alias, ready_rows, *, backend_alias, ch
   return _bulk_create(alias, ReadyExecution, ready_rows)
 
 
-def _ready_execution_rows(jobs, *, backend_alias, ready_at=None, created_at=None):
-  return [
-    _ready_execution_row(
-      job,
-      backend_alias=backend_alias,
-      ready_at=ready_at,
-      created_at=created_at,
-    )
-    for job in jobs
-  ]
-
-
 def _scheduled_execution_row(job, *, backend_alias, scheduled_at=None, created_at=None):
   return ScheduledExecution(
     **_scheduled_execution_fields(

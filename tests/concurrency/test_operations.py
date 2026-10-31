@@ -791,7 +791,7 @@ def test_retry_failed_jobs_retries_transient_database_deadlock(monkeypatch):
     traceback="traceback",
   )
   calls = 0
-  original_dispatch = job_operations._dispatch_consumed_failed_rows
+  original_dispatch = job_operations._redispatch_jobs
 
   def dispatch_with_deadlock_once(*args, **kwargs):
     nonlocal calls
@@ -802,7 +802,7 @@ def test_retry_failed_jobs_retries_transient_database_deadlock(monkeypatch):
 
   monkeypatch.setattr(
     job_operations,
-    "_dispatch_consumed_failed_rows",
+    "_redispatch_jobs",
     dispatch_with_deadlock_once,
   )
 
