@@ -1,6 +1,5 @@
 import os
 import signal
-import socket
 import sys
 import threading
 import time
@@ -36,44 +35,18 @@ class Supervisor(BaseRunner):
   hook_prefix = "supervisor"
   polling_interval = 0.1
 
-  def __init__(
-    self,
-    config,
-    *,
-    name=None,
-    pid=None,
-    hostname=None,
-    sleeper=None,
-    heartbeat_interval=None,
-    standalone=True,
-  ):
-    super().__init__(
-      config,
-      backend_config=config,
-      name=name or f"supervisor-{os.getpid()}",
-      pid=pid or os.getpid(),
-      hostname=hostname or socket.gethostname(),
-      sleeper=sleeper,
-      heartbeat_interval=heartbeat_interval,
-      process_alive_threshold=config.process_alive_threshold,
-    )
+  def __init__(self, config, *, standalone=True, **kwargs):
+    super().__init__(config, backend_config=config, **kwargs)
     self.standalone = standalone
     self.pidfile = None
     self._last_housekeeping_at = None
     self._restart_failures = {}
+    self._graceful_shutdown_requested = False
+    self._exit_fn = sys.exit
 
   @classmethod
   def from_backend_config(
-    cls,
-    *,
-    backend_alias="default",
-    tasks_settings=None,
-    cli_overrides=None,
-    env=None,
-    name=None,
-    pid=None,
-    hostname=None,
-    standalone=True,
+    cls, *, backend_alias="default", tasks_settings=None, cli_overrides=None, env=None, **kwargs
   ):
     config = load_backend_config(
       backend_alias,
@@ -81,16 +54,36 @@ class Supervisor(BaseRunner):
       cli_overrides=cli_overrides,
       env=env,
     )
-    return cls(
-      config,
-      name=name,
-      pid=pid,
-      hostname=hostname,
-      standalone=standalone,
-    )
+    return cls(config, **kwargs)
 
   def start(self):
     return self._start_supervisor_process(start_heartbeat=True)
+
+  def register_signal_handlers(self):
+    signal.signal(signal.SIGTERM, self.handle_sigterm)
+    signal.signal(signal.SIGINT, self.handle_sigterm)
+    signal.signal(signal.SIGQUIT, self.handle_sigquit)
+
+  def handle_sigterm(self, *_args):
+    if self._graceful_shutdown_requested:
+      return False
+
+    self._graceful_shutdown_requested = True
+    self.request_stop()
+    return True
+
+  def handle_sigquit(self, *_args):
+    self.request_stop()
+    self._exit_fn(1)
+
+  def _runner_kwargs(self, config, name):
+    return {
+      "config": config,
+      "backend_config": self.backend_config,
+      "name": name,
+      "hostname": self.hostname,
+      "supervisor": self.process.pk if self.process is not None else None,
+    }
 
   def _start_supervisor_process(self, *, start_heartbeat):
     try:
@@ -221,8 +214,6 @@ class AsyncSupervisor(Supervisor):
     super().__init__(*args, **kwargs)
     self.runners = []
     self.runner_threads = []
-    self._graceful_shutdown_requested = False
-    self._exit_fn = sys.exit
 
   def start(self):
     process = super().start()
@@ -256,23 +247,6 @@ class AsyncSupervisor(Supervisor):
     self.runners = active_runners
     self.runner_threads = active_threads
     return super().stop()
-
-  def register_signal_handlers(self):
-    signal.signal(signal.SIGTERM, self.handle_sigterm)
-    signal.signal(signal.SIGINT, self.handle_sigterm)
-    signal.signal(signal.SIGQUIT, self.handle_sigquit)
-
-  def handle_sigterm(self, *_args):
-    if self._graceful_shutdown_requested:
-      return False
-
-    self._graceful_shutdown_requested = True
-    self.request_stop()
-    return True
-
-  def handle_sigquit(self, *_args):
-    self.request_stop()
-    self._exit_fn(1)
 
   def start_runners(self):
     if self.runners:
@@ -365,29 +339,12 @@ class AsyncSupervisor(Supervisor):
       )
 
   def _rebuild_runner(self, runner):
-    kwargs = {
-      "config": runner.config,
-      "backend_config": self.backend_config,
-      "name": runner.name,
-      "pid": self.pid,
-      "hostname": self.hostname,
-      "heartbeat_interval": self.config.process_heartbeat_interval,
-      "process_alive_threshold": self.config.process_alive_threshold,
-      "supervisor": self.process,
-    }
-    return runner.__class__(**kwargs)
+    return runner.__class__(**self._runner_kwargs(runner.config, runner.name), pid=self.pid)
 
   def _build_runners(self):
     return [
       definition.runner_class(
-        definition.config,
-        backend_config=self.backend_config,
-        name=definition.name,
-        pid=self.pid,
-        hostname=self.hostname,
-        heartbeat_interval=self.config.process_heartbeat_interval,
-        process_alive_threshold=self.config.process_alive_threshold,
-        supervisor=self.process,
+        **self._runner_kwargs(definition.config, definition.name), pid=self.pid
       )
       for definition in runner_definitions(self.config)
     ]
@@ -407,47 +364,11 @@ class ForkSupervisor(Supervisor):
     self.children = {}
     self._child_started_at = {}
     self._pending_child_replacements = []
-    self._graceful_shutdown_requested = False
     self._launcher = launcher or self._default_launcher
     self._waitpid = waitpid or os.waitpid
     self._killer = killer or os.kill
     self._exit_fn = exit_fn or sys.exit
     self._child_exit_fn = os._exit
-
-  @classmethod
-  def from_backend_config(
-    cls,
-    *,
-    backend_alias="default",
-    tasks_settings=None,
-    cli_overrides=None,
-    env=None,
-    name=None,
-    pid=None,
-    hostname=None,
-    standalone=True,
-    launcher=None,
-    waitpid=None,
-    killer=None,
-    exit_fn=None,
-  ):
-    config = load_backend_config(
-      backend_alias,
-      tasks_settings=tasks_settings,
-      cli_overrides=cli_overrides,
-      env=env,
-    )
-    return cls(
-      config,
-      name=name,
-      pid=pid,
-      hostname=hostname,
-      standalone=standalone,
-      launcher=launcher,
-      waitpid=waitpid,
-      killer=killer,
-      exit_fn=exit_fn,
-    )
 
   def start(self):
     process = self._start_supervisor_process(start_heartbeat=False)
@@ -481,23 +402,6 @@ class ForkSupervisor(Supervisor):
       self._child_started_at.pop(pid, None)
     self._pending_child_replacements.clear()
     return super().stop()
-
-  def register_signal_handlers(self):
-    signal.signal(signal.SIGTERM, self.handle_sigterm)
-    signal.signal(signal.SIGINT, self.handle_sigterm)
-    signal.signal(signal.SIGQUIT, self.handle_sigquit)
-
-  def handle_sigterm(self, *_args):
-    if self._graceful_shutdown_requested:
-      return False
-
-    self._graceful_shutdown_requested = True
-    self.request_stop()
-    return True
-
-  def handle_sigquit(self, *_args):
-    self.request_stop()
-    self._exit_fn(1)
 
   def start_children(self):
     if self.children:
@@ -624,27 +528,14 @@ class ForkSupervisor(Supervisor):
       )
 
   def _build_runner_specs(self):
-    specs = []
-    supervisor_id = self.process.pk if self.process else None
-
-    for definition in runner_definitions(self.config):
-      specs.append(
-        {
-          "kind": definition.kind,
-          "runner_class": definition.runner_class,
-          "kwargs": {
-            "config": definition.config,
-            "backend_config": self.backend_config,
-            "name": definition.name,
-            "hostname": self.hostname,
-            "heartbeat_interval": self.config.process_heartbeat_interval,
-            "process_alive_threshold": self.config.process_alive_threshold,
-            "supervisor": supervisor_id,
-          },
-        }
-      )
-
-    return specs
+    return [
+      {
+        "kind": definition.kind,
+        "runner_class": definition.runner_class,
+        "kwargs": self._runner_kwargs(definition.config, definition.name),
+      }
+      for definition in runner_definitions(self.config)
+    ]
 
   def _default_launcher(self, spec):
     connections.close_all()

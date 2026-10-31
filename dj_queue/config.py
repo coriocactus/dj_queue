@@ -150,6 +150,14 @@ class BackendConfig(ConfigValue):
   def has_scheduler_work(self) -> bool:
     return self.scheduler is not None
 
+  @property
+  def cleanup_enabled(self) -> bool:
+    return (
+      (self.preserve_finished_jobs and self.clear_finished_jobs_after is not None)
+      or self.clear_failed_jobs_after is not None
+      or self.clear_recurring_executions_after is not None
+    )
+
 
 def resolve_backend_config(
   backend_alias: str = "default", config: BackendConfig | None = None
@@ -669,12 +677,7 @@ def _build_recurring_config(
 
 
 def _scheduler_has_work(config: BackendConfig) -> bool:
-  has_cleanup = (
-    (config.preserve_finished_jobs and config.clear_finished_jobs_after is not None)
-    or config.clear_failed_jobs_after is not None
-    or config.clear_recurring_executions_after is not None
-  )
-  return config.scheduler.dynamic_tasks_enabled or bool(config.recurring) or has_cleanup
+  return config.scheduler.dynamic_tasks_enabled or bool(config.recurring) or config.cleanup_enabled
 
 
 def _as_queue_selectors(value: Any) -> tuple[str, ...]:

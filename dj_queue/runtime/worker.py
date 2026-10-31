@@ -1,5 +1,3 @@
-import os
-import socket
 import threading
 import traceback
 
@@ -19,35 +17,8 @@ class Worker(BaseRunner):
   process_kind = "Worker"
   hook_prefix = "worker"
 
-  def __init__(
-    self,
-    config,
-    *,
-    backend_config,
-    name=None,
-    pid=None,
-    hostname=None,
-    sleeper=None,
-    pool=None,
-    wakeup_backend=None,
-    heartbeat_interval=None,
-    process_alive_threshold=None,
-    supervisor=None,
-  ):
-    resolved_name = name or f"worker-{os.getpid()}"
-    resolved_pid = pid or os.getpid()
-    resolved_hostname = hostname or socket.gethostname()
-    super().__init__(
-      config,
-      backend_config=backend_config,
-      name=resolved_name,
-      pid=resolved_pid,
-      hostname=resolved_hostname,
-      sleeper=sleeper,
-      heartbeat_interval=heartbeat_interval,
-      process_alive_threshold=process_alive_threshold,
-      supervisor=supervisor,
-    )
+  def __init__(self, config, *, pool=None, wakeup_backend=None, **kwargs):
+    super().__init__(config, **kwargs)
     self.pool = pool or WorkerPool(config.threads, wake_up=self.sleeper.wake_up)
     self.wakeup_backend = wakeup_backend or build_wakeup_backend(
       queues=config.queues,

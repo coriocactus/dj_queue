@@ -1,6 +1,3 @@
-import os
-import socket
-
 from django.utils import timezone
 
 from dj_queue.operations.concurrency import (
@@ -15,30 +12,8 @@ class Dispatcher(BaseRunner):
   process_kind = "Dispatcher"
   hook_prefix = "dispatcher"
 
-  def __init__(
-    self,
-    config,
-    *,
-    backend_config,
-    name=None,
-    pid=None,
-    hostname=None,
-    sleeper=None,
-    heartbeat_interval=None,
-    process_alive_threshold=None,
-    supervisor=None,
-  ):
-    super().__init__(
-      config,
-      backend_config=backend_config,
-      name=name or f"dispatcher-{os.getpid()}",
-      pid=pid or os.getpid(),
-      hostname=hostname or socket.gethostname(),
-      sleeper=sleeper,
-      heartbeat_interval=heartbeat_interval,
-      process_alive_threshold=process_alive_threshold,
-      supervisor=supervisor,
-    )
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
     self._last_maintenance_at = None
 
   def poll_once(self):

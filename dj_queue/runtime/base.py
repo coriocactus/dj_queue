@@ -1,3 +1,5 @@
+import os
+import socket
 import threading
 import time
 import weakref
@@ -72,9 +74,9 @@ class BaseRunner:
     config,
     *,
     backend_config,
-    name,
-    pid,
-    hostname,
+    name=None,
+    pid=None,
+    hostname=None,
     sleeper=None,
     heartbeat_interval=None,
     process_alive_threshold=None,
@@ -83,9 +85,9 @@ class BaseRunner:
     self.config = config
     self.backend_config = backend_config
     self.backend_alias = backend_config.backend_alias
-    self.name = name
-    self.pid = pid
-    self.hostname = hostname
+    self.name = name or f"{self.hook_prefix}-{os.getpid()}"
+    self.pid = pid or os.getpid()
+    self.hostname = hostname or socket.gethostname()
     self.sleeper = sleeper or InterruptibleSleeper()
     self.supervisor = supervisor
     self.supervisor_id = getattr(supervisor, "pk", supervisor)

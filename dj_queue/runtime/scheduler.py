@@ -1,6 +1,3 @@
-import os
-import socket
-
 from django.utils import timezone
 
 from dj_queue.config import load_backend_config
@@ -25,44 +22,14 @@ class Scheduler(BaseRunner):
   def polling_interval(self):
     return self.config.scheduler.polling_interval
 
-  def __init__(
-    self,
-    config,
-    *,
-    backend_config,
-    name=None,
-    pid=None,
-    hostname=None,
-    sleeper=None,
-    heartbeat_interval=None,
-    process_alive_threshold=None,
-    supervisor=None,
-  ):
-    super().__init__(
-      config,
-      backend_config=backend_config,
-      name=name or f"scheduler-{os.getpid()}",
-      pid=pid or os.getpid(),
-      hostname=hostname or socket.gethostname(),
-      sleeper=sleeper,
-      heartbeat_interval=heartbeat_interval,
-      process_alive_threshold=process_alive_threshold,
-      supervisor=supervisor,
-    )
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
     self._static_tasks_synced = False
     self._last_cleanup_at = None
 
   @classmethod
   def from_backend_config(
-    cls,
-    *,
-    backend_alias="default",
-    tasks_settings=None,
-    cli_overrides=None,
-    env=None,
-    name=None,
-    pid=None,
-    hostname=None,
+    cls, *, backend_alias="default", tasks_settings=None, cli_overrides=None, env=None, **kwargs
   ):
     config = load_backend_config(
       backend_alias,
@@ -72,13 +39,7 @@ class Scheduler(BaseRunner):
     )
     if config.scheduler is None:
       return None
-    return cls(
-      config,
-      backend_config=config,
-      name=name,
-      pid=pid,
-      hostname=hostname,
-    )
+    return cls(config, backend_config=config, **kwargs)
 
   def start(self):
     process = super().start()
@@ -90,13 +51,7 @@ class Scheduler(BaseRunner):
       "dynamic_tasks_enabled": self.config.scheduler.dynamic_tasks_enabled,
       "polling_interval": self.config.scheduler.polling_interval,
       "static_task_count": len(self.config.recurring),
-      "cleanup_enabled": any(
-        (
-          self.config.preserve_finished_jobs and self.config.clear_finished_jobs_after is not None,
-          self.config.clear_failed_jobs_after is not None,
-          self.config.clear_recurring_executions_after is not None,
-        )
-      ),
+      "cleanup_enabled": self.config.cleanup_enabled,
     }
 
   def sync_static_tasks(self):
@@ -136,20 +91,11 @@ class Scheduler(BaseRunner):
     return self.config.scheduler.dynamic_tasks_enabled or bool(self.config.recurring)
 
   def _cleanup_due(self, now):
-    if not self._cleanup_enabled():
+    if not self.config.cleanup_enabled:
       return False
     if self._last_cleanup_at is None:
       return True
     return (now - self._last_cleanup_at).total_seconds() >= CLEANUP_INTERVAL
-
-  def _cleanup_enabled(self):
-    return any(
-      (
-        self.config.preserve_finished_jobs and self.config.clear_finished_jobs_after is not None,
-        self.config.clear_failed_jobs_after is not None,
-        self.config.clear_recurring_executions_after is not None,
-      )
-    )
 
   def _run_cleanup(self, now):
     deleted = 0

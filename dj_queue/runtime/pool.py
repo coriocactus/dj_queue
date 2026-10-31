@@ -35,7 +35,7 @@ class WorkerPool:
     try:
       future = self._executor.submit(self._run, fn, args, kwargs)
     except Exception:
-      self._forget_unsubmitted_work()
+      self._complete(None)
       raise
     with self._lock:
       self._futures.add(future)
@@ -77,17 +77,6 @@ class WorkerPool:
     callback = None
     with self._lock:
       self._futures.discard(future)
-      self._in_flight -= 1
-      if self._in_flight == 0 and not self._futures:
-        callback = self._on_drained
-        self._on_drained = None
-    if callback is not None:
-      callback()
-    self._wake_up()
-
-  def _forget_unsubmitted_work(self):
-    callback = None
-    with self._lock:
       self._in_flight -= 1
       if self._in_flight == 0 and not self._futures:
         callback = self._on_drained
