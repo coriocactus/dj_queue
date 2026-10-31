@@ -55,6 +55,7 @@ class Worker(BaseRunner):
       backend_alias=backend_alias,
       queues=config.queues,
       wake_up=self.sleeper.wake_up,
+      config=self.backend_config,
     )
 
   def start(self):

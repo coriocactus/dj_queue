@@ -10,6 +10,8 @@ from dj_queue.management.commands.dj_queue import build_supervisor
 from dj_queue.models import Job, Pause, Process, ReadyExecution, ScheduledExecution, Semaphore
 from dj_queue.operations.jobs import enqueue_job
 from dj_queue.operations.queues import pause_queue, resume_queue
+from dj_queue.runtime.notify import NoopWakeupBackend
+from dj_queue.runtime.worker import Worker
 from tests.config.test_queue_db_runtime import (
   _dj_queue_tables,
   _queue_tasks,
@@ -83,6 +85,18 @@ polling_interval = 0.01
     finally:
       supervisor.stop()
     assert not Process.objects.using("queue").exists()
+
+
+def test_worker_wakeup_backend_uses_cli_configuration(tmp_path, monkeypatch):
+  monkeypatch.setattr("dj_queue.runtime.notify.supports_listen_notify", lambda alias: True)
+  path = tmp_path / "queue.toml"
+  path.write_text("listen_notify = false\n")
+  config = load_backend_config(cli_overrides={"config": str(path)})
+
+  worker = Worker(config.workers[0], backend_config=config, name="w", pid=1, hostname="h")
+  worker.sleeper.close()
+
+  assert isinstance(worker.wakeup_backend, NoopWakeupBackend)
 
 
 def test_explicit_config_does_not_change_other_callers(
