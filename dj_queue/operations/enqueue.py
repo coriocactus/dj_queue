@@ -17,7 +17,7 @@ from dj_queue.models import (
 )
 from dj_queue.operations._helpers import (
   _bulk_create,
-  _bulk_create_ready_executions_locked,
+  _bulk_create_ready_executions,
   _normalize_payload,
   _task_option,
 )
@@ -150,9 +150,7 @@ def _enqueue_bulk_once(submissions, *, config):
   with transaction.atomic(using=alias):
     _bulk_create(alias, Job, [entry.job for entry in prepared])
     rows = build_dispatch_rows(prepared, now=now, config=config)
-    _bulk_create_ready_executions_locked(
-      alias, rows.ready, backend_alias=config.backend_alias, check_conflicts=False
-    )
+    _bulk_create_ready_executions(alias, rows.ready, check_conflicts=False)
     _bulk_create(alias, ScheduledExecution, rows.scheduled)
     _bulk_create(alias, BlockedExecution, rows.blocked)
     if rows.discarded:

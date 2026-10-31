@@ -23,13 +23,12 @@ from dj_queue.models import (
   Semaphore,
 )
 from dj_queue.operations._helpers import (
-  _bulk_create_ready_executions_locked,
+  _bulk_create_ready_executions,
   _consume_selected_rows,
   _create_blocked_execution,
-  _create_ready_execution_locked,
+  _create_ready_execution,
   _ensure_no_other_execution_state,
   _ensure_state_rows_belong_to_backend,
-  _lock_active_pauses,
   _ready_execution_row,
   _task_option,
 )
@@ -296,7 +295,7 @@ def _release_recovered_concurrency_group(
       update_fields=["value", "active_count", "limit", "expires_at", "updated_at"],
     )
 
-    _bulk_create_ready_executions_locked(
+    _bulk_create_ready_executions(
       alias,
       [
         _ready_execution_row(
@@ -308,7 +307,6 @@ def _release_recovered_concurrency_group(
         )
         for blocked in promoted_rows
       ],
-      backend_alias=backend_alias,
       check_conflicts=True,
     )
 
@@ -601,7 +599,6 @@ def _create_ready_execution_after_blocked_consume(
   priority,
   ready_at,
 ):
-  _lock_active_pauses(alias, backend_alias, {queue_name})
   created = sql_common.create_ready_execution_after_blocked_consume(
     alias,
     job=job,
@@ -760,7 +757,7 @@ def _fail_blocked_policy(alias, blocked, error, *, consumed):
 def _promote_blocked_execution(alias, blocked, *, ready_at, consumed):
   if not consumed:
     blocked.delete(using=alias)
-  _create_ready_execution_locked(
+  _create_ready_execution(
     alias,
     job=blocked.job,
     backend_alias=blocked.backend_alias,

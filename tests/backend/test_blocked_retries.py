@@ -35,7 +35,7 @@ def test_blocked_maintenance_retries_whole_owned_transaction(monkeypatch, failur
     )
   notify = Mock()
   log = Mock()
-  create_ready = concurrency._create_ready_execution_locked
+  create_ready = concurrency._create_ready_execution
   calls = 0
   conflict = OperationalError(1213, "deadlock found when trying to get lock")
 
@@ -47,7 +47,7 @@ def test_blocked_maintenance_retries_whole_owned_transaction(monkeypatch, failur
       raise conflict
     return result
 
-  monkeypatch.setattr(concurrency, "_create_ready_execution_locked", create_then_conflict)
+  monkeypatch.setattr(concurrency, "_create_ready_execution", create_then_conflict)
   monkeypatch.setattr(concurrency, "notify_ready_queues_on_commit", notify)
   monkeypatch.setattr(concurrency, "log_event", log)
 

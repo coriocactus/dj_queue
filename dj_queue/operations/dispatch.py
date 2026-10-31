@@ -7,7 +7,7 @@ from django.utils import timezone
 from dj_queue.models import BlockedExecution, Job, ReadyExecution, ScheduledExecution
 from dj_queue.operations._helpers import (
   _create_blocked_execution,
-  _create_ready_execution_locked,
+  _create_ready_execution,
   _create_scheduled_execution,
   _finish_job_if_no_execution_state,
   _ready_execution_row,
@@ -170,7 +170,7 @@ def dispatch_job(job, *, config, now=None, check_conflicts=True, task=None):
       check_conflicts=check_conflicts,
     )
   elif outcome is DispatchOutcome.READY:
-    _create_ready_execution_locked(
+    _create_ready_execution(
       alias,
       job=job,
       backend_alias=backend_alias,

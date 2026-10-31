@@ -22,7 +22,7 @@ from dj_queue.models import (
 )
 from dj_queue.operations._helpers import (
   _bulk_create,
-  _bulk_create_ready_executions_locked,
+  _bulk_create_ready_executions,
   _consume_selected_rows,
   _ensure_job_ids_have_no_other_execution_state,
   _ensure_state_rows_belong_to_backend,
@@ -314,7 +314,6 @@ def promote_failed_job_retries(*, batch_size, config):
 
 def _redispatch_jobs(jobs, *, config, isolate_policy_errors=False, reset_results=True):
   alias = config.database_alias
-  backend_alias = config.backend_alias
   now = timezone.now()
   _ensure_job_ids_have_no_other_execution_state(alias, [job.id for job in jobs])
 
@@ -342,9 +341,7 @@ def _redispatch_jobs(jobs, *, config, isolate_policy_errors=False, reset_results
       updated_jobs,
       ["return_value", "finished_at", "updated_at"],
     )
-  _bulk_create_ready_executions_locked(
-    alias, rows.ready, backend_alias=backend_alias, check_conflicts=False
-  )
+  _bulk_create_ready_executions(alias, rows.ready, check_conflicts=False)
   _bulk_create(alias, ScheduledExecution, rows.scheduled)
   _bulk_create(alias, BlockedExecution, rows.blocked)
   _bulk_create(

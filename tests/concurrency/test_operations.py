@@ -579,7 +579,7 @@ def test_execute_claimed_job_with_waiter_avoids_nested_unblock_savepoint():
   with CaptureQueriesContext(connection) as ctx:
     execute_claimed_job(claimed_job)
 
-  expected_queries = 6 if connection.vendor == "postgresql" else 9
+  expected_queries = 5 if connection.vendor == "postgresql" else 8
   assert len(ctx.captured_queries) == expected_queries
 
 
@@ -601,7 +601,7 @@ def test_execute_claimed_job_with_worker_promotes_waiter_with_bounded_queries():
   with CaptureQueriesContext(connection) as ctx:
     execute_claimed_job(claimed_job)
 
-  expected_queries = 6 if connection.vendor == "postgresql" else 9
+  expected_queries = 5 if connection.vendor == "postgresql" else 8
   assert len(ctx.captured_queries) == expected_queries
 
 

@@ -141,7 +141,7 @@ def test_enqueue_immediate_uses_fresh_ready_query_budget():
   with CaptureQueriesContext(connection) as ctx:
     echo.enqueue("ready")
 
-  assert len(ctx.captured_queries) == 5
+  assert len(ctx.captured_queries) == 4
 
 
 @pytest.mark.django_db
@@ -335,7 +335,7 @@ def test_enqueue_bulk_immediate_query_budget_stays_batch_sized():
 def test_enqueue_bulk_retries_transient_database_deadlock(monkeypatch):
   import dj_queue.operations.enqueue as job_operations
 
-  original_create_ready = job_operations._bulk_create_ready_executions_locked
+  original_create_ready = job_operations._bulk_create_ready_executions
   calls = 0
 
   def create_ready_with_deadlock_once(*args, **kwargs):
@@ -347,7 +347,7 @@ def test_enqueue_bulk_retries_transient_database_deadlock(monkeypatch):
 
   monkeypatch.setattr(
     job_operations,
-    "_bulk_create_ready_executions_locked",
+    "_bulk_create_ready_executions",
     create_ready_with_deadlock_once,
   )
 

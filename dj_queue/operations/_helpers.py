@@ -154,7 +154,7 @@ def _ready_execution_row(
   )
 
 
-def _create_ready_execution_locked(
+def _create_ready_execution(
   alias,
   job,
   *,
@@ -167,7 +167,6 @@ def _create_ready_execution_locked(
 ):
   if check_conflicts:
     _ensure_no_other_execution_state(alias, job)
-  _lock_active_pauses(alias, backend_alias, {queue_name})
   return ReadyExecution.objects.using(alias).create(
     **_ready_execution_fields(
       job,
@@ -180,14 +179,13 @@ def _create_ready_execution_locked(
   )
 
 
-def _bulk_create_ready_executions_locked(alias, ready_rows, *, backend_alias, check_conflicts):
+def _bulk_create_ready_executions(alias, ready_rows, *, check_conflicts):
   ready_rows = tuple(ready_rows)
   if not ready_rows:
     return None
 
   if check_conflicts:
     _ensure_job_ids_have_no_other_execution_state(alias, [row.job_id for row in ready_rows])
-  _lock_active_pauses(alias, backend_alias, {row.queue_name for row in ready_rows})
   return _bulk_create(alias, ReadyExecution, ready_rows)
 
 
