@@ -486,10 +486,11 @@ def delete_claimed_and_finish_job_if_no_execution_state(alias, job, return_value
   finished_at_column = quote(Job._meta.get_field("finished_at").column)
   return_value_column = quote(Job._meta.get_field("return_value").column)
   updated_at_column = quote(Job._meta.get_field("updated_at").column)
+  # every table is read by the job id as a constant, so no plan depends on join order
   state_checks = state_absence_checks_sql(
     state_models_except(ClaimedExecution),
     quote=quote,
-    job_id_expression=f"{jobs_table}.{job_id_column}",
+    job_id_expression="%(job_id)s",
   )
   job_id = Job._meta.get_field("id").get_db_prep_value(
     job.pk,
@@ -506,35 +507,40 @@ def delete_claimed_and_finish_job_if_no_execution_state(alias, job, return_value
       f"""
       WITH claim AS (
         SELECT
-          {claimed_table}.{claimed_job_id_column},
-          {jobs_table}.{backend_alias_column} = %s AND {state_checks} AS completable
+          EXISTS (
+            SELECT 1 FROM {jobs_table}
+            WHERE {jobs_table}.{job_id_column} = %(job_id)s
+              AND {jobs_table}.{backend_alias_column} = %(backend_alias)s
+          ) AND {state_checks} AS completable
         FROM {claimed_table}
-        JOIN {jobs_table}
-          ON {jobs_table}.{job_id_column} = {claimed_table}.{claimed_job_id_column}
-        WHERE {claimed_table}.{claimed_job_id_column} = %s
+        WHERE {claimed_table}.{claimed_job_id_column} = %(job_id)s
       ),
       deleted_claim AS (
         DELETE FROM {claimed_table}
-        USING claim
-        WHERE {claimed_table}.{claimed_job_id_column} = claim.{claimed_job_id_column}
-          AND claim.completable
+        WHERE {claimed_table}.{claimed_job_id_column} = %(job_id)s
+          AND (SELECT claim.completable FROM claim)
         RETURNING {claimed_table}.{claimed_job_id_column}
       ),
       updated_job AS (
         UPDATE {jobs_table}
         SET
-          {finished_at_column} = %s,
-          {return_value_column} = %s,
-          {updated_at_column} = %s
-        FROM deleted_claim
-        WHERE {jobs_table}.{job_id_column} = deleted_claim.{claimed_job_id_column}
+          {finished_at_column} = %(finished_at)s,
+          {return_value_column} = %(return_value)s,
+          {updated_at_column} = %(finished_at)s
+        WHERE {jobs_table}.{job_id_column} = %(job_id)s
+          AND EXISTS (SELECT 1 FROM deleted_claim)
         RETURNING {jobs_table}.{job_id_column}
       )
       SELECT
         EXISTS (SELECT 1 FROM updated_job),
         EXISTS (SELECT 1 FROM claim WHERE NOT claim.completable)
       """,
-      [job.backend_alias, job_id, finished_at, prepared_return_value, finished_at],
+      {
+        "job_id": job_id,
+        "backend_alias": job.backend_alias,
+        "finished_at": finished_at,
+        "return_value": prepared_return_value,
+      },
     )
     return cursor.fetchone()
 

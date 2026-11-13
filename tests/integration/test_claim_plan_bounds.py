@@ -7,8 +7,10 @@ import pytest
 from django.db import connection, transaction
 from django.utils import timezone
 
+from dj_queue.config import load_backend_config
 from dj_queue.models import Job, ReadyExecution
 from dj_queue.operations.claiming import claim_ready_jobs
+from dj_queue.operations.execution import complete_claimed_job
 from tests.tasks import echo
 
 logger = logging.getLogger("dj_queue.stress")
@@ -47,7 +49,7 @@ STATES = (
 )
 
 
-class ClaimCaptured(Exception):
+class Captured(Exception):
   pass
 
 
@@ -99,6 +101,23 @@ def test_claim_cost_is_bounded_by_the_claim_limit(state, maintenance):
   assert not any(jit.values()), jit
   # every form selected a full claim of ready rows and read their jobs
   assert rows == dict.fromkeys(SELECTOR_FORMS, 2 * LIMIT)
+
+
+@pytest.mark.parametrize("state", STATES)
+def test_completion_cost_does_not_follow_the_jobs_table(state, maintenance):
+  _build_state(state, maintenance)
+  claimed = claim_ready_jobs(limit=LIMIT, queues="*")
+
+  (plan,) = _explain([_completion_statement(claimed[0].job)])
+  buffers = plan["Plan"]["Shared Hit Blocks"] + plan["Plan"]["Shared Read Blocks"]
+  logger.info(
+    "completion plan bounds server=%s state=%r buffers=%s", connection.pg_version, state, buffers
+  )
+
+  # the ready-state check may still scan the ready table after a drained backlog, which stays
+  # under the bound at this backlog; a plan that walks the jobs table or its index does not
+  assert buffers < BUFFER_BOUND, buffers
+  assert "JIT" not in plan
 
 
 def _build_state(state, maintenance):
@@ -159,13 +178,25 @@ def _claim_statements(queues):
   # aborting before the consume leaves every selector form the same state to claim from
   def capture(execute, sql, params, many, context):
     if "dj_queue_claimed_executions" in sql:
-      raise ClaimCaptured
+      raise Captured
     statements.append(connection.ops.compose_sql(sql, params))
     return execute(sql, params, many, context)
 
-  with connection.execute_wrapper(capture), pytest.raises(ClaimCaptured):
+  with connection.execute_wrapper(capture), pytest.raises(Captured):
     claim_ready_jobs(limit=LIMIT, queues=queues)
   return statements
+
+
+def _completion_statement(job):
+  statements = []
+
+  def capture(execute, sql, params, many, context):
+    statements.append(connection.ops.compose_sql(sql, params))
+    raise Captured
+
+  with connection.execute_wrapper(capture), pytest.raises(Captured):
+    complete_claimed_job(job, "done", config=load_backend_config())
+  return statements[0]
 
 
 def _explain(statements):
