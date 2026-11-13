@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: astral-sh/setup-uv@v10.3.3
         with:
-          version: "0.13.6"
+          version: "0.13.8"
       - run: uv build --no-sources
       - run: uv run --isolated --no-project --with 'django>=6.0,<6.1' --with dist/*.whl tests/smoke_publish.py
       - run: uv run --isolated --no-project --with 'django>=6.1,<6.2' --with dist/*.tar.gz tests/smoke_publish.py
@@ -60,7 +60,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: astral-sh/setup-uv@v10.3.3
         with:
-          version: "0.13.6"
+          version: "0.13.8"
           python-version: ${{ matrix.python-version }}
       - run: uv sync --locked --group ${{ matrix.django.group }}
       - run: uv run --no-sync pytest
@@ -109,7 +109,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: astral-sh/setup-uv@v10.3.3
         with:
-          version: "0.13.6"
+          version: "0.13.8"
           python-version: "3.14"
       - run: uv sync --locked --group ${{ matrix.group }}
       - if: matrix.psycopg == 'python'
@@ -156,7 +156,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: astral-sh/setup-uv@v10.3.3
         with:
-          version: "0.13.6"
+          version: "0.13.8"
           python-version: "3.14"
       - run: uv sync --locked --group ${{ matrix.group }}
       - run: uv run --no-sync pytest
@@ -200,7 +200,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: astral-sh/setup-uv@v10.3.3
         with:
-          version: "0.13.6"
+          version: "0.13.8"
           python-version: "3.14"
       - run: uv sync --locked --group ${{ matrix.group }}
       - run: uv run --no-sync pytest

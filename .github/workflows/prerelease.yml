@@ -82,7 +82,7 @@ jobs:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v10.3.3
         with:
-          version: "0.13.6"
+          version: "0.13.8"
           python-version: "3.14"
       - name: Install harness dependencies
         run: uv sync --locked
