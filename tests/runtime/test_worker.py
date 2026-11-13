@@ -6,6 +6,8 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from django.db import connection, connections, transaction
+from django.db.utils import OperationalError
 from django.utils import timezone
 
 import dj_queue.operations._helpers as operation_helpers
@@ -788,6 +790,88 @@ def test_worker_timeout_shutdown_keeps_process_until_work_finishes():
 
   release.set()
   wait_until(lambda: Process.objects.filter(name="worker-timeout-shutdown").exists() is False)
+
+
+def test_worker_timeout_shutdown_retries_sqlite_process_table_lock(monkeypatch):
+  if connection.vendor != "sqlite":
+    pytest.skip("requires SQLite shared-cache table locks")
+  release = threading.Event()
+  worker = Worker(
+    WorkerConfig(queues=("*",), threads=1, processes=1, polling_interval=0.1),
+    name="worker-draining-lock",
+    pid=12345,
+    hostname="localhost",
+    backend_config=load_backend_config(),
+  )
+  worker.start()
+  process_pk = worker.process.pk
+  worker._execute_job = lambda _job: release.wait(timeout=5)
+  worker.pool.submit(worker._execute_job, "slow-job")
+  writing = threading.Event()
+  commit = threading.Event()
+
+  def hold_process_table_write():
+    try:
+      with transaction.atomic():
+        Process.objects.filter(pk=process_pk).update(hostname="other")
+        writing.set()
+        commit.wait(timeout=5)
+    finally:
+      connections.close_all()
+
+  writer = threading.Thread(target=hold_process_table_write)
+  writer.start()
+
+  def commit_writer(seconds):
+    commit.set()
+    writer.join(timeout=5)
+
+  # the retry sleeps after a locked attempt, which is when the writer commits
+  monkeypatch.setattr("dj_queue.runtime.base.time.sleep", commit_writer)
+  try:
+    assert writing.wait(timeout=5)
+    assert worker.stop(timeout=0.01) is False
+    assert Process.objects.get(pk=process_pk).metadata["shutdown_state"] == "draining"
+  finally:
+    commit.set()
+    writer.join(timeout=5)
+    release.set()
+  wait_until(lambda: worker.process is None)
+  assert Process.objects.filter(pk=process_pk).exists() is False
+
+
+def test_worker_finishes_draining_when_deregistration_fails(monkeypatch):
+  handled = []
+  monkeypatch.setattr(
+    "dj_queue.runtime.worker.handle_thread_error",
+    lambda error, **kwargs: handled.append((str(error), kwargs["context"])),
+  )
+  release = threading.Event()
+  worker = Worker(
+    WorkerConfig(queues=("*",), threads=1, processes=1, polling_interval=0.1),
+    name="worker-deregistration-fails",
+    pid=12345,
+    hostname="localhost",
+    backend_config=load_backend_config(),
+  )
+  worker.start()
+  process_pk = worker.process.pk
+  worker._execute_job = lambda _job: release.wait(timeout=5)
+  worker.pool.submit(worker._execute_job, "slow-job")
+
+  def database_unavailable():
+    raise OperationalError("database unavailable")
+
+  worker._deregister_process = database_unavailable
+  try:
+    assert worker.stop(timeout=0.01) is False
+  finally:
+    release.set()
+
+  wait_until(lambda: worker.process is None)
+  assert handled == [("database unavailable", "worker.stop")]
+  # the row is left to supervisor replacement or stale-process pruning
+  assert Process.objects.filter(pk=process_pk).exists() is True
 
 
 def test_worker_timeout_shutdown_keeps_heartbeat_until_work_finishes():

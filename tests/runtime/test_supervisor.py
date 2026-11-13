@@ -1065,6 +1065,51 @@ def test_async_supervisor_replaces_runner_whose_recovery_and_stop_fail(monkeypat
   )
 
 
+def test_async_supervisor_replaces_draining_runner_whose_deregistration_fails():
+  release = threading.Event()
+  tasks_settings = async_tasks_settings(dispatchers=[])
+  tasks_settings["default"]["OPTIONS"]["shutdown_timeout"] = 0.01
+  supervisor = build_async_supervisor(tasks_settings=tasks_settings)
+  process = supervisor.start()
+
+  try:
+    wait_until(lambda: Process.objects.filter(supervisor=process, kind="Worker").count() == 1)
+
+    worker = supervisor.runners[0]
+    original_process_pk = worker.process.pk
+    worker._execute_job = lambda _job: release.wait(timeout=5)
+    worker.pool.submit(worker._execute_job, "slow-job")
+
+    def database_unavailable():
+      raise OperationalError("database unavailable")
+
+    def crashing_poll():
+      raise RuntimeError("simulated worker crash")
+
+    worker._deregister_process = database_unavailable
+    worker.poll_once = crashing_poll
+
+    # the crashed runner has work in flight, so it drains before it is replaced
+    wait_until(
+      lambda: (
+        Process.objects.get(pk=original_process_pk).metadata.get("shutdown_state") == "draining"
+      ),
+      timeout=2,
+    )
+    release.set()
+    wait_until(
+      lambda: (
+        supervisor.runners[0] is not worker
+        and supervisor.runners[0].process is not None
+        and not Process.objects.filter(pk=original_process_pk).exists()
+      ),
+      timeout=2,
+    )
+  finally:
+    release.set()
+    supervisor.stop()
+
+
 def test_async_supervisor_stop_does_not_restart_runner_after_stop_request():
   supervisor = build_async_supervisor(
     tasks_settings=async_tasks_settings(dispatchers=[]),

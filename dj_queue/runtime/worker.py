@@ -7,7 +7,7 @@ from dj_queue.exceptions import ProcessExitError
 from dj_queue.models import Process
 from dj_queue.operations.claiming import claim_ready_jobs
 from dj_queue.operations.execution import execute_claimed_job, fail_claimed_job
-from dj_queue.runtime.base import BaseRunner, app_executor
+from dj_queue.runtime.base import BaseRunner, _process_write_context, app_executor, sqlite_retry
 from dj_queue.runtime.errors import handle_thread_error
 from dj_queue.runtime.notify import build_wakeup_backend
 from dj_queue.runtime.pool import WorkerPool
@@ -82,8 +82,15 @@ class Worker(BaseRunner):
         if self.process is None:
           return
         self._stop_heartbeat_thread()
-        with app_executor():
-          self._finish_stop(process)
+        try:
+          with app_executor():
+            self._finish_stop(process)
+        except Exception as error:
+          handle_thread_error(
+            error, context=f"{self.hook_prefix}.stop", config=self.backend_config
+          )
+          # the row is left to supervisor replacement or stale-process pruning
+          self.process = None
       return
 
     self.wakeup_backend.stop(timeout=timeout)
@@ -124,8 +131,11 @@ class Worker(BaseRunner):
       metadata["active_jobs"] = active_jobs
     process.metadata = metadata
     alias = self.backend_config.database_alias
-    with app_executor():
-      Process.objects.using(alias).filter(pk=process.pk).update(metadata=metadata)
+    with app_executor(), _process_write_context(alias):
+      sqlite_retry(
+        lambda: Process.objects.using(alias).filter(pk=process.pk).update(metadata=metadata),
+        alias=alias,
+      )
 
   def _execute_job(self, claimed_job):
     with app_executor():
