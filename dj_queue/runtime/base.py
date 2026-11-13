@@ -172,7 +172,9 @@ class BaseRunner:
 
     alias = self.backend_config.database_alias
     with app_executor():
-      exists = Process.objects.using(alias).filter(pk=self.process.pk).exists()
+      exists = sqlite_retry(
+        lambda: Process.objects.using(alias).filter(pk=self.process.pk).exists(), alias=alias
+      )
     self._last_liveness_check_at = time.monotonic()
     if exists:
       return True

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from django.db import connection, connections, transaction
 
 from dj_queue.config import load_backend_config
 from dj_queue.hooks import clear_hooks, register_hook
@@ -94,6 +95,42 @@ def test_runner_deleted_process_row_stops_cleanly():
   assert runner.should_continue() is False
   runner.stop()
   assert runner.process is None
+
+
+def test_runner_liveness_check_retries_sqlite_process_table_lock(monkeypatch):
+  if connection.vendor != "sqlite":
+    pytest.skip("requires SQLite shared-cache table locks")
+  runner = DummyRunner(heartbeat_interval=60)
+  runner.start()
+  writing = threading.Event()
+  release = threading.Event()
+
+  def hold_process_table_write():
+    try:
+      with transaction.atomic():
+        Process.objects.filter(pk=runner.process.pk).update(hostname="other")
+        writing.set()
+        release.wait(timeout=5)
+    finally:
+      connections.close_all()
+
+  writer = threading.Thread(target=hold_process_table_write)
+  writer.start()
+
+  def commit_writer(seconds):
+    release.set()
+    writer.join(timeout=5)
+
+  # the retry sleeps after a locked attempt, which is when the writer commits
+  monkeypatch.setattr("dj_queue.runtime.base.time.sleep", commit_writer)
+  try:
+    assert writing.wait(timeout=5)
+    assert runner.should_continue() is True
+    assert writer.is_alive() is False
+  finally:
+    release.set()
+    writer.join(timeout=5)
+    runner.stop()
 
 
 def test_runner_liveness_check_uses_app_executor(monkeypatch):

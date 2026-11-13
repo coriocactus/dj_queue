@@ -7,7 +7,7 @@ from dj_queue.operations.cleanup import (
   clear_recurring_executions,
 )
 from dj_queue.operations.recurring import fire_due_recurring_tasks, upsert_static_recurring_tasks
-from dj_queue.runtime.base import BaseRunner, app_executor
+from dj_queue.runtime.base import BaseRunner, app_executor, sqlite_retry
 
 CLEANUP_BATCH_SIZE = 500
 CLEANUP_INTERVAL = 60
@@ -61,7 +61,7 @@ class Scheduler(BaseRunner):
     if self._static_tasks_synced:
       return False
     with app_executor():
-      self.sync_static_tasks()
+      sqlite_retry(self.sync_static_tasks, alias=self.backend_config.database_alias)
     self._static_tasks_synced = True
     return True
 

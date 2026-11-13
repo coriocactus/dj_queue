@@ -1,9 +1,10 @@
+import threading
 import time
 from datetime import datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from django.db import OperationalError, transaction
+from django.db import OperationalError, connection, connections, transaction
 from django.db.models.query import QuerySet
 from django.utils import timezone
 
@@ -14,6 +15,7 @@ from dj_queue.models import FailedExecution, Job, Process, RecurringExecution, R
 from dj_queue.operations import recurring as recurring_operations
 from dj_queue.operations.recurring import fire_recurring_task
 from dj_queue.runtime.scheduler import Scheduler
+from tests.factories import make_process
 from tests.tasks import echo
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -201,6 +203,51 @@ def test_scheduler_does_not_sync_static_tasks_on_every_poll(monkeypatch):
 
   assert calls == [True]
   scheduler.stop()
+
+
+def test_scheduler_static_sync_retries_sqlite_write_lock(monkeypatch):
+  if connection.vendor != "sqlite":
+    pytest.skip("requires SQLite shared-cache write locks")
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      recurring={
+        "static-task": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "0 0 * * *",
+        }
+      }
+    )
+  )
+  writing = threading.Event()
+  release = threading.Event()
+
+  def hold_write_transaction():
+    try:
+      with transaction.atomic():
+        make_process()
+        writing.set()
+        release.wait(timeout=5)
+    finally:
+      connections.close_all()
+
+  writer = threading.Thread(target=hold_write_transaction)
+  writer.start()
+
+  def commit_writer(seconds):
+    release.set()
+    writer.join(timeout=5)
+
+  # the retry sleeps after a locked attempt, which is when the writer commits
+  monkeypatch.setattr("dj_queue.runtime.base.time.sleep", commit_writer)
+  try:
+    assert writing.wait(timeout=5)
+    assert scheduler.ensure_static_tasks_synced() is True
+    assert writer.is_alive() is False
+  finally:
+    release.set()
+    writer.join(timeout=5)
+
+  assert RecurringTask.objects.filter(backend_alias="default", key="static-task").exists()
 
 
 def test_scheduler_static_sync_rejects_taking_over_dynamic_task_key():

@@ -912,13 +912,15 @@ def test_async_supervisor_starts_configured_runners_in_one_pid():
 
   process = supervisor.start()
 
-  wait_until(lambda: Process.objects.filter(supervisor=process).count() == 3)
-  children = list(Process.objects.filter(supervisor=process).order_by("kind", "name"))
+  try:
+    wait_until(lambda: Process.objects.filter(supervisor=process).count() == 3)
+    children = list(Process.objects.filter(supervisor=process).order_by("kind", "name"))
 
-  assert {child.kind for child in children} == {"Worker", "Dispatcher", "Scheduler"}
-  assert {child.pid for child in children} == {process.pid}
-  assert len({child.name for child in children}) == 3
-  supervisor.stop()
+    assert {child.kind for child in children} == {"Worker", "Dispatcher", "Scheduler"}
+    assert {child.pid for child in children} == {process.pid}
+    assert len({child.name for child in children}) == 3
+  finally:
+    supervisor.stop()
 
 
 def test_async_supervisor_restarts_crashed_runner_and_fails_its_claimed_jobs():
