@@ -796,8 +796,11 @@ policy, and autovacuum tuning.
   logs `connection_budget.warning` on startup when the local worker footprint
   appears close to PostgreSQL connection capacity.
 - Keep retention short. Set `preserve_finished_jobs = False` if you do not need
-  successful results. Otherwise use bounded `clear_finished_jobs_after`,
-  `clear_failed_jobs_after`, and `clear_recurring_executions_after` values.
+  successful results. That still reduces table growth, but completion without
+  retention sends more statements per job than completion with retention (11
+  against 1) and is slower per completion. Otherwise use bounded
+  `clear_finished_jobs_after`, `clear_failed_jobs_after`, and
+  `clear_recurring_executions_after` values.
 - Run `python manage.py dj_queue_prune` regularly for stricter cleanup.
 - Keep `use_skip_locked = True` and `listen_notify = True` unless you have a
   specific reason not to.
