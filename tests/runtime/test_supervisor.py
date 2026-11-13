@@ -923,6 +923,32 @@ def test_async_supervisor_starts_configured_runners_in_one_pid():
     supervisor.stop()
 
 
+def test_async_supervisor_start_stops_a_runner_whose_start_fails(monkeypatch):
+  def fail_sync(_scheduler):
+    raise RuntimeError("static sync failed")
+
+  monkeypatch.setattr("dj_queue.runtime.scheduler.Scheduler.sync_static_tasks", fail_sync)
+  supervisor = build_async_supervisor(
+    tasks_settings=async_tasks_settings(
+      recurring={
+        "static-task": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "* * * * *",
+        }
+      }
+    )
+  )
+
+  try:
+    with pytest.raises(RuntimeError, match="static sync failed"):
+      supervisor.start()
+  finally:
+    supervisor.stop()
+
+  assert Process.objects.count() == 0
+  assert [thread.name for thread in threading.enumerate() if "heartbeat" in thread.name] == []
+
+
 def test_async_supervisor_restarts_crashed_runner_and_fails_its_claimed_jobs():
   supervisor = build_async_supervisor(
     tasks_settings=async_tasks_settings(dispatchers=[]),
@@ -987,6 +1013,56 @@ def test_async_supervisor_restarts_crashed_runner_and_fails_its_claimed_jobs():
   )
 
   assert Process.objects.filter(supervisor=process, kind="Worker").exists() is False
+
+
+def test_async_supervisor_replaces_runner_whose_recovery_and_stop_fail(monkeypatch):
+  handled = []
+  monkeypatch.setattr(
+    "dj_queue.runtime.supervisor.handle_thread_error",
+    lambda error, **kwargs: handled.append((str(error), kwargs["context"])),
+  )
+  supervisor = build_async_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[]),
+  )
+  process = supervisor.start()
+
+  try:
+    wait_until(lambda: Process.objects.filter(supervisor=process, kind="Worker").count() == 1)
+
+    worker = supervisor.runners[0]
+    original_process_pk = worker.process.pk
+    job = make_job(task_path="tests.tasks.echo", queue_name="default")
+    make_claimed_execution(job=job, process=worker.process)
+
+    def database_unavailable(*_args):
+      raise OperationalError("database unavailable")
+
+    def crashing_poll():
+      raise RuntimeError("simulated worker crash")
+
+    supervisor._fail_crashed_runner_jobs = database_unavailable
+    worker._deregister_process = database_unavailable
+    worker.poll_once = crashing_poll
+
+    wait_until(
+      lambda: (
+        supervisor.runners[0] is not worker
+        and supervisor.runners[0].process is not None
+        and not Process.objects.filter(pk=original_process_pk).exists()
+      ),
+      timeout=2,
+    )
+    assert supervisor.runner_threads[0].is_alive() is True
+  finally:
+    supervisor.stop()
+
+  # the registration the failed stop left behind was removed with its claims failed
+  assert ("database unavailable", "supervisor.replace") in handled
+  assert ClaimedExecution.objects.filter(job=job).exists() is False
+  failed = FailedExecution.objects.get(job=job)
+  assert failed.exception_class == (
+    f"{ProcessExitError.__module__}.{ProcessExitError.__qualname__}"
+  )
 
 
 def test_async_supervisor_stop_does_not_restart_runner_after_stop_request():
@@ -1097,6 +1173,128 @@ def test_async_supervisor_preserves_active_claims_until_drain_finishes():
 
   assert thread.is_alive() is False
   assert events == ["poll", "stop", "rebuild"]
+
+
+def _record_handled_errors(monkeypatch):
+  handled = []
+  monkeypatch.setattr(
+    "dj_queue.runtime.supervisor.handle_thread_error",
+    lambda error, **kwargs: handled.append((str(error), kwargs["context"])),
+  )
+  return handled
+
+
+def test_async_supervisor_replaces_crashed_runner_when_recovery_and_stop_raise(monkeypatch):
+  supervisor = build_async_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[]),
+  )
+  events = []
+  handled = _record_handled_errors(monkeypatch)
+
+  class Runner:
+    process = object()
+    process_kind = "Worker"
+    name = "worker-1"
+
+    def run_managed_poll_loop(self, *, host_stop_requested):
+      events.append("poll")
+      return False
+
+    def stop(self):
+      events.append("stop")
+      raise RuntimeError("stop failed")
+
+  def fail_recovery(_runner):
+    events.append("fail")
+    raise RuntimeError("recovery failed")
+
+  _record_crash_recovery(supervisor, events)
+  supervisor._fail_crashed_runner_jobs = fail_recovery
+
+  supervisor._run_managed_runner(Runner())
+
+  assert events == ["poll", "fail", "stop", "rebuild"]
+  assert handled == [
+    ("recovery failed", "supervisor.replace"),
+    ("stop failed", "supervisor.replace"),
+  ]
+
+
+def test_async_supervisor_waits_for_drain_when_stopping_an_active_runner_raises(monkeypatch):
+  supervisor = build_async_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[]),
+  )
+  events = []
+  handled = _record_handled_errors(monkeypatch)
+
+  class Runner:
+    process = object()
+    process_kind = "Worker"
+    name = "worker-1"
+    pool = type("Pool", (), {"idle_capacity": 0, "max_workers": 1})()
+
+    def run_managed_poll_loop(self, *, host_stop_requested):
+      events.append("poll")
+      return False
+
+    def stop(self):
+      events.append("stop")
+      raise RuntimeError("stop failed")
+
+  _record_crash_recovery(supervisor, events)
+  supervisor._wait_for_runner_stop = lambda _runner: events.append("wait") or True
+
+  supervisor._run_managed_runner(Runner())
+
+  assert events == ["poll", "stop", "wait", "rebuild"]
+  assert handled == [("stop failed", "supervisor.replace")]
+
+
+def test_async_supervisor_keeps_replacing_when_stopping_a_failed_replacement_raises(monkeypatch):
+  supervisor = build_async_supervisor(
+    tasks_settings=async_tasks_settings(dispatchers=[]),
+  )
+  events = []
+  handled = _record_handled_errors(monkeypatch)
+
+  class Runner:
+    process = None
+    process_kind = "Worker"
+    name = "worker-1"
+
+    def run_managed_poll_loop(self, *, host_stop_requested):
+      events.append("poll")
+      return False
+
+    def stop(self):
+      events.append("stop")
+
+  class FailedReplacement:
+    def start(self):
+      raise RuntimeError("start failed")
+
+    def stop(self):
+      raise RuntimeError("stop failed")
+
+  class Replacement:
+    def start(self):
+      supervisor.request_stop()
+
+  replacements = [FailedReplacement(), Replacement()]
+
+  def rebuild(_runner):
+    events.append("rebuild")
+    return replacements.pop(0)
+
+  supervisor._rebuild_runner = rebuild
+
+  supervisor._run_managed_runner(Runner())
+
+  assert events == ["poll", "stop", "rebuild", "rebuild"]
+  assert handled == [
+    ("start failed", "supervisor.replace"),
+    ("stop failed", "supervisor.replace"),
+  ]
 
 
 def test_async_supervisor_starts_managed_runners_inside_app_executor(monkeypatch):

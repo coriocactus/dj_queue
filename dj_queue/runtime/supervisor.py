@@ -257,7 +257,11 @@ class AsyncSupervisor(Supervisor):
 
     for runner in self._build_runners():
       with app_executor():
-        runner.start()
+        try:
+          runner.start()
+        except Exception:
+          self._stop_runner(runner)
+          raise
       thread = threading.Thread(target=self._run_managed_runner, args=(runner,))
       self.runners.append(runner)
       self.runner_threads.append(thread)
@@ -273,9 +277,12 @@ class AsyncSupervisor(Supervisor):
 
         # runner crashed; stopping a draining runner deregisters it, so claims it
         # leaves behind are recovered later as orphans
-        if not self._runner_has_active_work(runner):
-          self._fail_crashed_runner_jobs(runner)
-        drained = runner.stop()
+        try:
+          if not self._runner_has_active_work(runner):
+            self._fail_crashed_runner_jobs(runner)
+        except Exception as error:
+          handle_thread_error(error, context="supervisor.replace", config=self.backend_config)
+        drained = self._stop_runner(runner)
         if self.stop_requested():
           return
         if drained is False and not self._wait_for_runner_stop(runner):
@@ -286,6 +293,7 @@ class AsyncSupervisor(Supervisor):
         while not self.stop_requested():
           replacement = self._rebuild_runner(runner)
           try:
+            self._remove_runner_registration(runner.name)
             replacement.start()
           except Exception as error:
             handle_thread_error(
@@ -293,7 +301,7 @@ class AsyncSupervisor(Supervisor):
               context="supervisor.replace",
               config=self.backend_config,
             )
-            replacement.stop()
+            self._stop_runner(replacement)
             delay = self._restart_backoff_delay(runner.name)
             if delay and self._wait_restart_backoff(delay):
               return
@@ -311,6 +319,29 @@ class AsyncSupervisor(Supervisor):
     finally:
       if not self.stop_requested():
         runner.stop()
+
+  def _stop_runner(self, runner):
+    try:
+      return runner.stop()
+    except Exception as error:
+      handle_thread_error(error, context="supervisor.replace", config=self.backend_config)
+      # a runner with work in flight still deregisters itself when the work drains
+      return not self._runner_has_active_work(runner)
+
+  def _remove_runner_registration(self, name):
+    # a stop that failed leaves the process row, whose name blocks the replacement
+    supervisor = self.process
+    if supervisor is None:
+      return
+    with app_executor():
+      fail_claimed_jobs_for_child(
+        pid=self.pid,
+        name=name,
+        supervisor_id=supervisor.pk,
+        error=ProcessExitError("runner thread crashed"),
+        traceback_text="runner thread crashed",
+        config=self.backend_config,
+      )
 
   def _wait_for_runner_stop(self, runner):
     while runner.process is not None and not self.stop_requested():
