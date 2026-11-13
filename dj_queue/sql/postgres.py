@@ -299,6 +299,47 @@ def consume_next_blocked_job(alias, *, backend_alias, key, use_skip_locked):
   }
 
 
+def disable_sort_for_transaction(alias):
+  with connections[alias].cursor() as cursor:
+    cursor.execute("SET LOCAL enable_sort = off")
+
+
+def select_ready_rows(alias, *, backend_alias, limit, use_skip_locked, excluded_ids):
+  connection = connections[alias]
+  quote = connection.ops.quote_name
+  ready_table = quote(ReadyExecution._meta.db_table)
+  pause_table = quote(Pause._meta.db_table)
+  ready_pk_column = quote(ReadyExecution._meta.pk.column)
+  ready_backend_column = quote(ReadyExecution._meta.get_field("backend_alias").column)
+  ready_queue_column = quote(ReadyExecution._meta.get_field("queue_name").column)
+  ready_priority_column = quote(ReadyExecution._meta.get_field("priority").column)
+  pause_backend_column = quote(Pause._meta.get_field("backend_alias").column)
+  pause_queue_column = quote(Pause._meta.get_field("queue_name").column)
+  ready_columns = _model_columns_sql(ReadyExecution, quote=quote, table_alias="ready")
+  skip_locked_sql = " SKIP LOCKED" if use_skip_locked else ""
+
+  with connection.cursor() as cursor:
+    cursor.execute(
+      f"""
+      SELECT
+          {ready_columns}
+      FROM {ready_table} ready
+      WHERE ready.{ready_backend_column} = %s
+        AND ready.{ready_pk_column} <> ALL(%s::bigint[])
+        AND ready.{ready_queue_column} NOT IN (
+          SELECT pause.{pause_queue_column}
+          FROM {pause_table} pause
+          WHERE pause.{pause_backend_column} = %s
+        )
+      ORDER BY ready.{ready_priority_column} DESC, ready.{ready_pk_column} ASC
+      LIMIT %s
+      FOR UPDATE OF ready{skip_locked_sql}
+      """,
+      [backend_alias, list(excluded_ids), backend_alias, limit],
+    )
+    return _ready_rows_from_cursor(alias, cursor, with_jobs=False)
+
+
 def select_ready_rows_by_exact_queues(
   alias,
   *,
@@ -306,6 +347,7 @@ def select_ready_rows_by_exact_queues(
   selectors,
   limit,
   use_skip_locked,
+  join_jobs,
 ):
   selectors = tuple(dict.fromkeys(selectors))
   if not selectors or limit <= 0:
@@ -324,8 +366,13 @@ def select_ready_rows_by_exact_queues(
   job_pk_column = quote(Job._meta.pk.column)
   pause_backend_column = quote(Pause._meta.get_field("backend_alias").column)
   pause_queue_column = quote(Pause._meta.get_field("queue_name").column)
-  ready_columns = _model_columns_sql(ReadyExecution, quote=quote, table_alias="ready")
-  job_columns = _model_columns_sql(Job, quote=quote, table_alias="job")
+  columns = _model_columns_sql(ReadyExecution, quote=quote, table_alias="ready")
+  join_sql = ""
+  order_sql = ""
+  if join_jobs:
+    columns += ",\n          " + _model_columns_sql(Job, quote=quote, table_alias="job")
+    join_sql = f"JOIN {jobs_table} job ON job.{job_pk_column} = ready.{ready_job_column}"
+    order_sql = "ORDER BY selector_rank ASC, ready_priority DESC, ready_id ASC"
   skip_locked_sql = " SKIP LOCKED" if use_skip_locked else ""
 
   ctes = []
@@ -340,11 +387,9 @@ def select_ready_rows_by_exact_queues(
       selector_{index} AS (
         SELECT
           {index} AS selector_rank,
-          {ready_columns},
-          {job_columns}
+          {columns}
         FROM {ready_table} ready
-        JOIN {jobs_table} job
-          ON job.{job_pk_column} = ready.{ready_job_column}
+        {join_sql}
         WHERE ready.{ready_backend_column} = %s
           AND ready.{ready_queue_column} = %s
           AND NOT EXISTS (
@@ -370,15 +415,11 @@ def select_ready_rows_by_exact_queues(
       WITH {", ".join(ctes)}
       SELECT *
       FROM ({selectors_sql}) selected_ready
-      ORDER BY selector_rank ASC, ready_priority DESC, ready_id ASC
+      {order_sql}
       """,
       params,
     )
-    columns = [column[0] for column in cursor.description]
-    return [
-      _ready_row_from_record(alias, dict(zip(columns, row, strict=True)))
-      for row in cursor.fetchall()
-    ]
+    return _ready_rows_from_cursor(alias, cursor, with_jobs=join_jobs)
 
 
 def consume_ready_and_create_claimed_executions(alias, ready_rows, *, process, claimed_at):
@@ -516,12 +557,17 @@ def _model_columns_sql(model, *, quote, table_alias):
   )
 
 
-def _ready_row_from_record(alias, record):
+def _ready_rows_from_cursor(alias, cursor, *, with_jobs):
   connection = connections[alias]
-  job = _model_from_record(Job, alias, connection, record, prefix="job")
-  ready = _model_from_record(ReadyExecution, alias, connection, record, prefix="ready")
-  ready.job = job
-  return ready
+  columns = [column[0] for column in cursor.description]
+  rows = []
+  for values in cursor.fetchall():
+    record = dict(zip(columns, values, strict=True))
+    ready = _model_from_record(ReadyExecution, alias, connection, record, prefix="ready")
+    if with_jobs:
+      ready.job = _model_from_record(Job, alias, connection, record, prefix="job")
+    rows.append(ready)
+  return rows
 
 
 def _model_from_record(model, alias, connection, record, *, prefix):

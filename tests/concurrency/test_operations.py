@@ -1579,7 +1579,7 @@ def test_claim_ready_jobs_uses_fixed_query_budget_for_successful_claim():
     claim_ready_jobs(limit=1)
 
   if connection.vendor == "postgresql":
-    expected_queries = 5
+    expected_queries = 6
   elif connection.vendor == "mysql":
     expected_queries = 8
   else:
@@ -1832,7 +1832,7 @@ def test_postgres_exact_selector_claim_uses_one_selection_after_earlier_empty():
     "beta",
     "beta",
   ]
-  assert len(ctx.captured_queries) <= 5
+  assert len(ctx.captured_queries) <= 7
 
 
 @pytest.mark.django_db
@@ -1902,7 +1902,7 @@ def test_claim_ready_jobs_rejects_conflicting_state_with_fixed_query_budget():
     claim_ready_jobs(limit=1)
 
   if connection.vendor == "postgresql":
-    expected_queries = 7
+    expected_queries = 8
   elif connection.vendor == "mysql":
     expected_queries = 6
   else:

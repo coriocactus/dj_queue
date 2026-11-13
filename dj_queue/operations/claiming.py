@@ -10,6 +10,7 @@ from dj_queue.config import resolve_backend_config
 from dj_queue.db import (
   database_capabilities,
   locked_queryset,
+  owns_transaction,
   retry_transient_database_errors,
 )
 from dj_queue.exceptions import EnqueueError
@@ -85,10 +86,13 @@ def _claim_ready_jobs_once(
   use_skip_locked,
   alias,
 ):
+  disable_sort = _selects_ready_rows_without_jobs(alias, queues) and owns_transaction(alias)
   with transaction.atomic(using=alias):
     if process is not None and process.backend_alias != backend_alias:
       raise EnqueueError(f"process {process.name!r} belongs to backend {process.backend_alias!r}")
 
+    if disable_sort:
+      backend_sql(alias).disable_sort_for_transaction(alias)
     claimed_insert_checks_conflicts = _claimed_insert_checks_conflicts(alias)
     queryset = (
       ReadyExecution.objects.using(alias).select_related("job").filter(backend_alias=backend_alias)
@@ -171,6 +175,15 @@ def _claim_ready_jobs_once(
 
 
 def _select_ready_rows(queryset, *, limit, queues, use_skip_locked, alias, backend_alias):
+  if _selects_ready_rows_without_jobs(alias, queues):
+    return _select_ready_rows_then_jobs(
+      limit=limit,
+      queues=queues,
+      use_skip_locked=use_skip_locked,
+      alias=alias,
+      backend_alias=backend_alias,
+    )
+
   if selectors_match_all(queues):
     select_ready_row_ids = getattr(backend_sql(alias), "select_ready_row_ids", None)
     if select_ready_row_ids is not None:
@@ -215,6 +228,42 @@ def _select_ready_rows(queryset, *, limit, queues, use_skip_locked, alias, backe
   return selected_rows
 
 
+def _selects_ready_rows_without_jobs(alias, queues):
+  return database_capabilities(alias).backend_family == "postgresql" and not any(
+    selector != "*" and selector.endswith("*") for selector in normalize_queue_selectors(queues)
+  )
+
+
+def _select_ready_rows_then_jobs(*, limit, queues, use_skip_locked, alias, backend_alias):
+  sql = backend_sql(alias)
+  selectors = ("*",) if selectors_match_all(queues) else normalize_queue_selectors(queues)
+  exact_selectors = selectors[: selectors.index("*")] if "*" in selectors else selectors
+  rows = sql.select_ready_rows_by_exact_queues(
+    alias,
+    backend_alias=backend_alias,
+    selectors=exact_selectors,
+    limit=limit,
+    use_skip_locked=use_skip_locked,
+    join_jobs=False,
+  )
+  rows.sort(key=lambda row: (exact_selectors.index(row.queue_name), -row.priority, row.pk))
+  if "*" in selectors and len(rows) < limit:
+    rows += sql.select_ready_rows(
+      alias,
+      backend_alias=backend_alias,
+      limit=limit - len(rows),
+      use_skip_locked=use_skip_locked,
+      excluded_ids=[row.pk for row in rows],
+    )
+
+  jobs_by_id = Job.objects.using(alias).in_bulk([row.job_id for row in rows])
+  for row in rows:
+    if row.job_id not in jobs_by_id:
+      raise EnqueueError(f"job {row.job_id} does not exist")
+    row.job = jobs_by_id[row.job_id]
+  return rows
+
+
 def _selectors_are_exact_queues(selectors):
   return all(not selector.endswith("*") for selector in selectors)
 
@@ -236,6 +285,7 @@ def _select_exact_queue_rows(
       selectors=selectors,
       limit=limit,
       use_skip_locked=use_skip_locked,
+      join_jobs=True,
     )
 
   selected_rows = []
