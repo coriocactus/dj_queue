@@ -2,7 +2,7 @@
 
 > Median key metric on the 10k workload across PostgreSQL, MariaDB, MySQL, and SQLite.
 
-Generated: 2026-09-02T22:25:20.330216+00:00
+Generated: 2026-11-13T15:31:33.071639+00:00
 
 ## Metadata
 
@@ -10,13 +10,13 @@ Generated: 2026-09-02T22:25:20.330216+00:00
 |---|---|---|---|---|
 | database | `postgresql` | `mysql` | `mysql` | `sqlite` |
 | database name | `dj_queue_benchmark` | `dj_queue_benchmark` | `dj_queue_benchmark` | `benchmark-results/dj_queue_benchmark.sqlite3` |
-| database version | `PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit` | `12.3.3-MariaDB-ubu2404` | `9.7.2` | `3.50.4` |
-| Python | `3.14.5` | `3.14.5` | `3.14.5` | `3.14.5` |
-| Django | `6.1` | `6.1` | `6.1` | `6.1` |
-| dj_queue | `0.14.0` | `0.14.0` | `0.14.0` | `0.14.0` |
-| platform | `macOS-26.6.2-arm64-arm-64bit-Mach-O` | `macOS-26.6.2-arm64-arm-64bit-Mach-O` | `macOS-26.6.2-arm64-arm-64bit-Mach-O` | `macOS-26.6.2-arm64-arm-64bit-Mach-O` |
+| database version | `PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit` | `12.3.3-MariaDB-ubu2404` | `9.7.4` | `3.54.1` |
+| Python | `3.14.10` | `3.14.10` | `3.14.10` | `3.14.10` |
+| Django | `6.1.2` | `6.1.2` | `6.1.2` | `6.1.2` |
+| dj_queue | `0.15.0` | `0.15.0` | `0.15.0` | `0.15.0` |
+| platform | `macOS-27.2.1-arm64-arm-64bit-Mach-O` | `macOS-27.2.1-arm64-arm-64bit-Mach-O` | `macOS-27.2.1-arm64-arm-64bit-Mach-O` | `macOS-27.2.1-arm64-arm-64bit-Mach-O` |
 | machine | `arm64` | `arm64` | `arm64` | `arm64` |
-| revision | `2ae301b9176e` | `2ae301b9176e` | `2ae301b9176e` | `2ae301b9176e` |
+| revision | `32fdd401633f` | `0e72b86317b1` | `99e78cea0c28` | `876465e887a1` |
 | workers | `4` | `4` | `4` | `1` |
 | worker threads | `8` | `8` | `8` | `1` |
 | preserve finished jobs | `True` | `True` | `True` | `True` |
@@ -40,12 +40,12 @@ Generated: 2026-09-02T22:25:20.330216+00:00
 
 | scenario | key metric | postgres | mariadb | mysql | sqlite |
 |---|---|---|---|---|---|
-| `single-enqueue` | `latency_p95_ms` | 5.216 | 3.146 | 6.350 | 1.282 |
-| `bulk-enqueue` | `jobs_per_second` | 12490.362 | 8158.447 | 6996.658 | 13032.834 |
-| `scheduled-promotion` | `rows_per_second` | 8925.698 | 10584.954 | 9336.504 | 9663.570 |
-| `recurring-scale` | `duration_seconds` | 0.002 | 0.008 | 0.011 | 0.003 |
-| `worker-drain` | `jobs_per_second` | 811.862 | 1035.240 | 1070.261 | 437.047 |
-| `held-xmin-worker-drain` | `jobs_per_second` | 796.739 | not supported | not supported | not supported |
-| `concurrency-contention` | `drain_jobs_per_second` | 91.289 | 64.127 | 61.577 | not supported |
-| `runtime-hot-key-contention` | `drain_jobs_per_second` | 157.248 | 131.654 | 128.685 | not supported |
-| `ordered-selector-claim` | `jobs_per_second` | 182.025 | 153.443 | 198.250 | not supported |
+| `single-enqueue` | `latency_p95_ms` | 3.625 | 2.870 | 3.484 | 0.771 |
+| `bulk-enqueue` | `jobs_per_second` | 18040.192 | 11541.660 | 10012.942 | 18381.469 |
+| `scheduled-promotion` | `rows_per_second` | 20108.917 | 13757.779 | 13051.736 | 13542.571 |
+| `recurring-scale` | `duration_seconds` | 0.001 | 0.011 | 0.008 | 0.002 |
+| `worker-drain` | `jobs_per_second` | 4076.570 | 2207.285 | 1720.482 | 666.479 |
+| `held-xmin-worker-drain` | `jobs_per_second` | 4105.960 | not supported | not supported | not supported |
+| `concurrency-contention` | `drain_jobs_per_second` | 111.491 | 50.591 | 58.011 | not supported |
+| `runtime-hot-key-contention` | `drain_jobs_per_second` | 122.611 | 108.793 | 84.794 | not supported |
+| `ordered-selector-claim` | `jobs_per_second` | 258.082 | 393.708 | 233.689 | not supported |
