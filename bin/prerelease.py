@@ -166,7 +166,7 @@ def build_runtime(label, revision, *, django_range, backend, result_dir, work_di
   python = venv / "bin" / "python"
   dependencies = [str(wheel), f"django{django_range}"]
   if backend == "postgres":
-    dependencies.append("psycopg>=3.3.3")
+    dependencies.append("psycopg[binary]>=3.3.3")
   elif backend in {"mysql", "mariadb"}:
     dependencies.extend(["pymysql>=1.1.2", "cryptography>=46.0.6"])
   subprocess.run(["uv", "pip", "install", "--python", str(python), *dependencies], check=True)

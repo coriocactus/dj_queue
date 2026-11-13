@@ -212,6 +212,7 @@ def run_benchmarks(args):
 
 def configure_environment(args):
   os.environ.setdefault("DJANGO_SETTINGS_MODULE", "benchmarks.settings")
+  os.environ.setdefault("PSYCOPG_IMPL", "binary")
   os.environ["BENCHMARK_BACKEND"] = args.backend
   if args.database_name:
     os.environ["BENCHMARK_DB_NAME"] = args.database_name

@@ -1,3 +1,4 @@
+import logging
 import os
 import signal
 import sys
@@ -9,6 +10,7 @@ from django.db import connections
 from django.utils import timezone
 
 from dj_queue.config import load_backend_config
+from dj_queue.db import psycopg_implementation
 from dj_queue.exceptions import ProcessExitError, ProcessMissingError, ProcessPrunedError
 from dj_queue.log import log_event
 from dj_queue.operations.recovery import (
@@ -90,6 +92,7 @@ class Supervisor(BaseRunner):
       self._acquire_pidfile()
       process = self._start_process(start_heartbeat=start_heartbeat)
       warn_if_persistent_connection_budget_is_tight(self.config)
+      warn_if_psycopg_is_pure_python(self.config)
       self.fail_orphaned_jobs()
       return process
     except Exception:
@@ -578,3 +581,18 @@ def _child_exit_message(status):
   if os.WIFSIGNALED(status):
     return f"child process exited from signal {os.WTERMSIG(status)}"
   return f"child process exited with wait status {status}"
+
+
+def warn_if_psycopg_is_pure_python(config):
+  implementation = psycopg_implementation(config.database_alias)
+  if implementation != "python":
+    return
+
+  log_event(
+    "psycopg_pure_python.warning",
+    level=logging.WARNING,
+    backend_alias=config.backend_alias,
+    database_alias=config.database_alias,
+    psycopg_implementation=implementation,
+    install="psycopg[binary] or psycopg[c]",
+  )

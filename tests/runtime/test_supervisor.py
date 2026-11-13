@@ -1,8 +1,10 @@
+import logging
 import signal
 import threading
 import time
 from contextlib import contextmanager
 from datetime import timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -12,7 +14,7 @@ from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 import dj_queue.operations.recovery as recovery_operations
-from dj_queue.config import load_backend_config
+from dj_queue.config import BackendConfig, load_backend_config
 from dj_queue.exceptions import ProcessExitError, ProcessMissingError, ProcessPrunedError
 from dj_queue.models import (
   BlockedExecution,
@@ -23,7 +25,12 @@ from dj_queue.models import (
   ReadyExecution,
   Semaphore,
 )
-from dj_queue.runtime.supervisor import AsyncSupervisor, ForkSupervisor, Supervisor
+from dj_queue.runtime.supervisor import (
+  AsyncSupervisor,
+  ForkSupervisor,
+  Supervisor,
+  warn_if_psycopg_is_pure_python,
+)
 from tests.tasks import limited
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -301,6 +308,69 @@ def test_supervisor_start_checks_persistent_connection_budget(monkeypatch):
   supervisor.stop()
 
   assert seen == [supervisor.config]
+
+
+def test_supervisor_start_checks_psycopg_implementation(monkeypatch):
+  seen = []
+  monkeypatch.setattr("dj_queue.runtime.supervisor.warn_if_psycopg_is_pure_python", seen.append)
+  supervisor = make_supervisor(name="supervisor-psycopg-implementation")
+
+  supervisor.start()
+  supervisor.stop()
+
+  assert seen == [supervisor.config]
+
+
+def fake_postgres_driver(monkeypatch, *, backend_family, is_psycopg3, implementation):
+  monkeypatch.setattr(
+    "dj_queue.db.database_capabilities",
+    lambda alias: SimpleNamespace(backend_family=backend_family),
+  )
+  monkeypatch.setattr("django.db.backends.postgresql.psycopg_any.is_psycopg3", is_psycopg3)
+  monkeypatch.setattr("psycopg.pq.__impl__", implementation)
+
+
+def test_warn_if_psycopg_is_pure_python_logs_warning(monkeypatch, caplog):
+  fake_postgres_driver(
+    monkeypatch, backend_family="postgresql", is_psycopg3=True, implementation="python"
+  )
+
+  with caplog.at_level(logging.WARNING, logger="dj_queue"):
+    warn_if_psycopg_is_pure_python(BackendConfig(database_alias="queue"))
+
+  assert [record.event for record in caplog.records] == ["psycopg_pure_python.warning"]
+  assert caplog.records[-1].levelno == logging.WARNING
+  assert caplog.records[-1].dj_queue == {
+    "backend_alias": "default",
+    "database_alias": "queue",
+    "psycopg_implementation": "python",
+    "install": "psycopg[binary] or psycopg[c]",
+  }
+
+
+@pytest.mark.parametrize(
+  ("backend_family", "is_psycopg3", "implementation"),
+  (
+    ("postgresql", True, "binary"),
+    ("postgresql", True, "c"),
+    ("postgresql", False, "python"),
+    ("sqlite", True, "python"),
+  ),
+)
+def test_warn_if_psycopg_is_pure_python_skips_other_drivers(
+  monkeypatch, caplog, backend_family, is_psycopg3, implementation
+):
+  fake_postgres_driver(
+    monkeypatch,
+    backend_family=backend_family,
+    is_psycopg3=is_psycopg3,
+    implementation=implementation,
+  )
+
+  with caplog.at_level(logging.WARNING, logger="dj_queue"):
+    warn_if_psycopg_is_pure_python(BackendConfig(database_alias="queue"))
+
+  assert caplog.records == []
 
 
 def test_supervisor_start_failure_cleans_process_row_and_pidfile(monkeypatch, tmp_path):

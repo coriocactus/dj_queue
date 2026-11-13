@@ -27,6 +27,7 @@ def test_render_markdown_report_includes_environment_and_metrics():
           },
           "python": "3.14",
           "django": "6.0",
+          "psycopg_implementation": "binary",
           "dj_queue": "0.6.4",
           "platform": "test-platform",
           "machine": "test-machine",
@@ -37,6 +38,7 @@ def test_render_markdown_report_includes_environment_and_metrics():
   )
 
   assert "# dj_queue PostgreSQL Benchmark Report" in markdown
+  assert "- Django: `6.0`\n- psycopg implementation: `binary`\n" in markdown
   assert "`dj_queue_benchmark`" in markdown
   assert "bulk-enqueue" in markdown
   assert (

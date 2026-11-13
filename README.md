@@ -54,9 +54,14 @@ PEP 561-compatible type checkers.
 Optional extras:
 
 ```bash
-pip install "dj-queue[postgres]"    # psycopg for PostgreSQL + LISTEN/NOTIFY
-pip install "dj-queue[prometheus]"  # prometheus_client for /dj_queue/metrics
+pip install "dj-queue[postgres]" "psycopg[binary]"  # psycopg for PostgreSQL + LISTEN/NOTIFY
+pip install "dj-queue[prometheus]"                  # prometheus_client for /dj_queue/metrics
 ```
+
+Deployments that manage libpq through the operating system should install
+`psycopg[c]` instead of `psycopg[binary]`. The `postgres` extra on its own pulls
+in `psycopg` without choosing an implementation, which leaves the pure-Python
+driver: it needs a system libpq and is much slower.
 
 Add `dj_queue` to `INSTALLED_APPS`, register the router, and point Django's task
 backend at `DjQueueBackend`:
@@ -960,7 +965,7 @@ Recurring entry options:
 
 On PostgreSQL, `listen_notify` uses the same Django PostgreSQL driver
 configuration as the main database connection. Install a compatible driver in
-your project, or use `dj-queue[postgres]` to pull in `psycopg`.
+your project, as shown under [Installation](#installation).
 
 ### Precedence
 

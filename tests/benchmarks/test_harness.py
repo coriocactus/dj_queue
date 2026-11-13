@@ -6,6 +6,7 @@ import pytest
 from benchmarks.harness import (
   assert_persistent_connection_budget,
   ensure_database_exists,
+  environment_metadata,
   parse_sizes,
   revision,
 )
@@ -50,6 +51,15 @@ def test_revision_reads_the_benchmarked_working_copy(monkeypatch):
 
   assert revision() == "abc123"
   assert calls == [["jj", "log", "-r", "@", "--no-graph", "-T", "commit_id.short()"]]
+
+
+def test_environment_metadata_records_psycopg_implementation(monkeypatch):
+  monkeypatch.setattr("benchmarks.harness.database_info", dict)
+  monkeypatch.setattr("benchmarks.harness.benchmark_settings_info", dict)
+  monkeypatch.setattr("benchmarks.harness.revision", lambda: "abc123")
+  monkeypatch.setattr("benchmarks.harness.psycopg_implementation", lambda alias: "binary")
+
+  assert environment_metadata(backend="postgres")["psycopg_implementation"] == "binary"
 
 
 @pytest.mark.parametrize(

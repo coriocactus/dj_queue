@@ -196,6 +196,7 @@ def render_markdown(rows, *, input_path=None, output_path=None, run_command=None
     f"- database version: `{database['version']}`",
     f"- Python: `{metadata['python']}`",
     f"- Django: `{metadata['django']}`",
+    f"- psycopg implementation: `{metadata.get('psycopg_implementation')}`",
     f"- dj_queue: `{metadata['dj_queue']}`",
     f"- platform: `{metadata['platform']}`",
     f"- machine: `{metadata['machine']}`",

@@ -121,6 +121,18 @@ def test_all_backends_runs_benchmarks_and_reports_with_default_outputs(monkeypat
   ]
 
 
+@pytest.mark.parametrize(
+  ("environ", "expected"),
+  (({}, "binary"), ({"PSYCOPG_IMPL": "python"}, "python")),
+)
+def test_configure_environment_defaults_psycopg_to_binary(monkeypatch, environ, expected):
+  monkeypatch.setattr(benchmark_cli.os, "environ", environ)
+
+  benchmark_cli.configure_environment(benchmark_cli.parse_args(["quick"]))
+
+  assert environ["PSYCOPG_IMPL"] == expected
+
+
 def test_sqlite_all_and_quick_skip_locking_scenarios():
   names = (
     "single-enqueue",

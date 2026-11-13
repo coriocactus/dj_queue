@@ -90,6 +90,21 @@ def supports_listen_notify(alias: str) -> bool:
   return database_capabilities(alias).supports_listen_notify
 
 
+def psycopg_implementation(alias: str) -> str | None:
+  if database_capabilities(alias).backend_family != "postgresql":
+    return None
+
+  # psycopg_any fails to import when no PostgreSQL driver is installed
+  from django.db.backends.postgresql.psycopg_any import is_psycopg3
+
+  if not is_psycopg3:
+    return None
+
+  import psycopg
+
+  return psycopg.pq.__impl__
+
+
 def get_queue_connection(backend_alias: str = "default"):
   return connections[get_database_alias(backend_alias)]
 

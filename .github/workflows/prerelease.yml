@@ -91,6 +91,7 @@ jobs:
           FROM_REF: ${{ inputs.from_ref }}
           TO_REF: ${{ inputs.to_ref }}
           RESULT_DIR: benchmark-results/${{ matrix.database }}
+          PSYCOPG_IMPL: binary
         run: >-
           bin/prerelease.py
           --from-ref "$FROM_REF"

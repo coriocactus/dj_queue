@@ -68,7 +68,7 @@ jobs:
           DB_BACKEND: sqlite
 
   postgres:
-    name: PostgreSQL ${{ matrix.postgres-version }} / Django ${{ matrix.django }}
+    name: PostgreSQL ${{ matrix.postgres-version }} / Django ${{ matrix.django }}${{ matrix.psycopg == 'python' && ' / pure-Python psycopg' || '' }}
     needs: lint
     runs-on: ubuntu-latest
     strategy:
@@ -78,12 +78,19 @@ jobs:
           - postgres-version: "14"
             django: "6.0"
             group: django60
+            psycopg: binary
           - postgres-version: "18"
             django: "6.0"
             group: django60
+            psycopg: binary
           - postgres-version: "18"
             django: "6.1"
             group: django61
+            psycopg: binary
+          - postgres-version: "18"
+            django: "6.1"
+            group: django61
+            psycopg: python
     services:
       postgres:
         image: postgres:${{ matrix.postgres-version }}
@@ -105,10 +112,13 @@ jobs:
           version: "0.13.6"
           python-version: "3.14"
       - run: uv sync --locked --group ${{ matrix.group }}
+      - if: matrix.psycopg == 'python'
+        run: sudo apt-get update && sudo apt-get install -y libpq5
       - run: uv run --no-sync pytest
         env:
           DB_BACKEND: postgres
           DB_PORT: "5432"
+          PSYCOPG_IMPL: ${{ matrix.psycopg }}
 
   mysql:
     name: MySQL ${{ matrix.mysql-version }} / Django ${{ matrix.django }}

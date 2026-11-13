@@ -14,6 +14,7 @@ from django.conf import settings
 from django.core.management import call_command
 from django.db import connection, connections
 
+from dj_queue.db import psycopg_implementation
 from dj_queue.runtime.connection_budget import (
   estimate_persistent_worker_connections,
   persistent_connections_enabled,
@@ -101,7 +102,7 @@ def ensure_postgres_database_exists():
   try:
     import psycopg
   except ImportError as exc:
-    raise RuntimeError("creating PostgreSQL benchmark databases requires psycopg") from exc
+    raise RuntimeError(f"creating PostgreSQL benchmark databases requires psycopg: {exc}") from exc
 
   conninfo = {
     "dbname": os.environ.get("BENCHMARK_MAINTENANCE_DB", "postgres"),
@@ -237,6 +238,7 @@ def environment_metadata(*, backend):
     "benchmark": benchmark_settings_info(),
     "python": sys.version.split()[0],
     "django": django.get_version(),
+    "psycopg_implementation": psycopg_implementation(connection.alias),
     "dj_queue": package_version("dj-queue"),
     "platform": platform.platform(),
     "processor": platform.processor(),
