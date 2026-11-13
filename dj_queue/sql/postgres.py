@@ -504,10 +504,21 @@ def delete_claimed_and_finish_job_if_no_execution_state(alias, job, return_value
   with connection.cursor() as cursor:
     cursor.execute(
       f"""
-      WITH deleted_claim AS (
-        DELETE FROM {claimed_table}
+      WITH claim AS (
+        SELECT
+          {claimed_table}.{claimed_job_id_column},
+          {jobs_table}.{backend_alias_column} = %s AND {state_checks} AS completable
+        FROM {claimed_table}
+        JOIN {jobs_table}
+          ON {jobs_table}.{job_id_column} = {claimed_table}.{claimed_job_id_column}
         WHERE {claimed_table}.{claimed_job_id_column} = %s
-        RETURNING {claimed_job_id_column}
+      ),
+      deleted_claim AS (
+        DELETE FROM {claimed_table}
+        USING claim
+        WHERE {claimed_table}.{claimed_job_id_column} = claim.{claimed_job_id_column}
+          AND claim.completable
+        RETURNING {claimed_table}.{claimed_job_id_column}
       ),
       updated_job AS (
         UPDATE {jobs_table}
@@ -515,18 +526,15 @@ def delete_claimed_and_finish_job_if_no_execution_state(alias, job, return_value
           {finished_at_column} = %s,
           {return_value_column} = %s,
           {updated_at_column} = %s
-        WHERE
-          {jobs_table}.{job_id_column} = %s
-          AND {jobs_table}.{backend_alias_column} = %s
-          AND EXISTS (SELECT 1 FROM deleted_claim)
-          AND {state_checks}
-        RETURNING {job_id_column}
+        FROM deleted_claim
+        WHERE {jobs_table}.{job_id_column} = deleted_claim.{claimed_job_id_column}
+        RETURNING {jobs_table}.{job_id_column}
       )
       SELECT
-        (SELECT COUNT(*) FROM deleted_claim),
-        (SELECT COUNT(*) FROM updated_job)
+        EXISTS (SELECT 1 FROM updated_job),
+        EXISTS (SELECT 1 FROM claim WHERE NOT claim.completable)
       """,
-      [job_id, finished_at, prepared_return_value, finished_at, job_id, job.backend_alias],
+      [job.backend_alias, job_id, finished_at, prepared_return_value, finished_at],
     )
     return cursor.fetchone()
 

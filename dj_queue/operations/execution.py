@@ -10,6 +10,7 @@ from django.utils.module_loading import import_string
 from dj_queue.config import resolve_backend_config
 from dj_queue.db import (
   database_capabilities,
+  owns_transaction,
   retry_transient_database_errors,
 )
 from dj_queue.exceptions import EnqueueError, exception_path
@@ -103,9 +104,24 @@ def complete_claimed_job(job, return_value, *, config, task=None):
   if isinstance(job, ClaimedJob):
     job = job.job
   job = _resolve_claimed_job(job, config=config)
+  statement_is_transaction = (
+    config.preserve_finished_jobs
+    and not job.concurrency_key
+    and database_capabilities(alias).backend_family == "postgresql"
+    and owns_transaction(alias)
+  )
 
   def complete_transition():
     completed = copy(job)
+    if statement_is_transaction:
+      _delete_claimed_and_finish_job_if_no_execution_state(
+        alias,
+        completed,
+        return_value,
+        finished_at=timezone.now(),
+      )
+      return completed
+
     with transaction.atomic(using=alias):
       now = timezone.now()
 
@@ -220,18 +236,16 @@ def _delete_claimed_execution(alias, job_id):
 
 
 def _delete_claimed_and_finish_job_if_no_execution_state(alias, job, return_value, *, finished_at):
-  deleted_count, updated_count = backend_sql(
-    alias
-  ).delete_claimed_and_finish_job_if_no_execution_state(
+  finished, conflicted = backend_sql(alias).delete_claimed_and_finish_job_if_no_execution_state(
     alias,
     job,
     return_value,
     finished_at=finished_at,
   )
-  if deleted_count != 1:
-    raise ClaimedExecution.DoesNotExist
-  if updated_count != 1:
+  if conflicted:
     raise EnqueueError(f"job {job.id} already has an execution-state row")
+  if not finished:
+    raise ClaimedExecution.DoesNotExist
   job.finished_at = finished_at
   job.return_value = return_value
   job.updated_at = finished_at

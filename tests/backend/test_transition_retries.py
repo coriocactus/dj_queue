@@ -5,7 +5,7 @@ from django.db import OperationalError
 
 from dj_queue.models import ClaimedExecution, Job, ScheduledExecution
 from dj_queue.operations import claiming, dispatch, enqueue, execution
-from tests.tasks import echo, limited_discard
+from tests.tasks import limited, limited_discard
 
 
 @pytest.mark.django_db(transaction=True)
@@ -19,7 +19,7 @@ def test_completion_retry_keeps_identity_and_executes_task_once(
       "OPTIONS": {"preserve_finished_jobs": preserve_finished},
     }
   }
-  job = enqueue.enqueue_job(echo, ["done"], {})
+  job = enqueue.enqueue_job(limited, [1], {"value": "done"})
   job_id = job.pk
   claimed = claiming.claim_ready_jobs(limit=1)[0]
   call_task = Mock(wraps=execution._call_task)

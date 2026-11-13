@@ -427,14 +427,9 @@ def test_execute_claimed_job_uses_terminal_update_query_budget():
 
 @pytest.mark.django_db(transaction=True)
 def test_execute_claimed_job_retries_terminal_deadlock_without_repeating_task(monkeypatch):
-  job = make_job(args=["done"])
-  ReadyExecution.objects.create(
-    job=job,
-    backend_alias=job.backend_alias,
-    queue_name=job.queue_name,
-    priority=job.priority,
-  )
+  limited.enqueue(1, value="done")
   claimed_job = claim_ready_jobs(limit=1)[0]
+  job = claimed_job.job
   task_calls = 0
   transition_calls = 0
   original_call_task = execution_operations._call_task
