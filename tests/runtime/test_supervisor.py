@@ -438,6 +438,29 @@ def test_prune_stale_process_rows_fails_their_claimed_jobs():
   supervisor.stop()
 
 
+def test_prune_stale_process_rows_prunes_supervisors_whose_children_share_a_name():
+  stale_at = timezone.now() - timedelta(minutes=10)
+  jobs = []
+  for index in range(2):
+    dead_supervisor = make_process(
+      kind="Supervisor",
+      name=f"dead-supervisor-{index}",
+      last_heartbeat_at=stale_at - timedelta(minutes=1),
+    )
+    worker_process = make_process(
+      name="worker-1", supervisor=dead_supervisor, last_heartbeat_at=stale_at
+    )
+    job = make_job()
+    make_claimed_execution(job=job, process=worker_process)
+    jobs.append(job)
+
+  pruned = make_supervisor().prune_stale_process_rows()
+
+  assert len(pruned) == 4
+  assert Process.objects.exists() is False
+  assert FailedExecution.objects.filter(job__in=jobs).count() == 2
+
+
 def test_prune_stale_process_rows_fails_multiple_claimed_jobs_for_process():
   stale_process = make_process(
     name="stale-worker",
@@ -1564,6 +1587,34 @@ def test_async_supervisor_stop_preserves_undrained_worker_until_work_finishes(mo
       assert thread.is_alive() is False
     assert worker.process is None
     assert Process.objects.filter(pk=worker_process_pk).exists() is False
+
+
+def test_async_supervisors_stop_while_same_named_workers_drain(monkeypatch):
+  release = threading.Event()
+  tasks_settings = async_tasks_settings(dispatchers=[])
+  tasks_settings["default"]["OPTIONS"]["shutdown_timeout"] = 0.01
+  supervisors = [build_async_supervisor(tasks_settings=tasks_settings) for _ in range(2)]
+  runner_threads = []
+
+  try:
+    for supervisor in supervisors:
+      supervisor.start()
+      worker = supervisor.runners[0]
+      monkeypatch.setattr(worker, "_execute_job", lambda job_id: release.wait())
+      worker.pool.submit(worker._execute_job, "slow-job")
+      runner_threads.append(supervisor.runner_threads[0])
+
+    for supervisor in supervisors:
+      supervisor.stop()
+
+    assert Process.objects.filter(kind="Supervisor").exists() is False
+    assert Process.objects.filter(name="worker-1", supervisor__isnull=True).count() == 2
+  finally:
+    release.set()
+    for thread in runner_threads:
+      thread.join(timeout=1)
+      assert thread.is_alive() is False
+    wait_until(lambda: Process.objects.exists() is False)
 
 
 def test_async_supervisor_passes_backend_heartbeat_interval_to_managed_runners():

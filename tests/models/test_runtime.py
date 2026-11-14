@@ -125,8 +125,8 @@ def test_process_identity_is_scoped_by_backend_alias():
 
 
 @pytest.mark.django_db
-def test_root_process_identity_unique_by_name():
+def test_root_processes_may_share_a_name():
   make_process(kind="Supervisor", name="supervisor-1", pid=100)
+  make_process(kind="Supervisor", name="supervisor-1", pid=999)
 
-  with pytest.raises(IntegrityError), transaction.atomic():
-    make_process(kind="Supervisor", name="supervisor-1", pid=999)
+  assert Process.objects.filter(name="supervisor-1").count() == 2
