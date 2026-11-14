@@ -2,8 +2,17 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore: &unchecked
+      - "**.md"
+      - docs/**
+      - compose.yml
+      - .pre-commit-config.yaml
+      - .github/dependabot.yml
+      - .github/workflows/prerelease.yml
+      - .github/workflows/publish.yml
   pull_request:
     branches: [main]
+    paths-ignore: *unchecked
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
