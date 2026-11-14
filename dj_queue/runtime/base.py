@@ -1,4 +1,5 @@
 import os
+import secrets
 import socket
 import threading
 import time
@@ -85,7 +86,7 @@ class BaseRunner:
     self.config = config
     self.backend_config = backend_config
     self.backend_alias = backend_config.backend_alias
-    self.name = name or f"{self.hook_prefix}-{os.getpid()}"
+    self.name = name or f"{self.hook_prefix}-{secrets.token_hex(10)}"
     self.pid = pid or os.getpid()
     self.hostname = hostname or socket.gethostname()
     self.sleeper = sleeper or InterruptibleSleeper()

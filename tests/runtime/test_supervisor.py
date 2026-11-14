@@ -398,6 +398,22 @@ def test_supervisor_start_failure_cleans_process_row_and_pidfile(monkeypatch, tm
   assert Process.objects.filter(name="failing-supervisor-start").exists() is False
 
 
+def test_supervisors_sharing_a_pid_register_side_by_side():
+  supervisors = [
+    Supervisor(load_backend_config(), pid=21, hostname=hostname, heartbeat_interval=0.01)
+    for hostname in ("replica-a", "replica-b")
+  ]
+
+  try:
+    for supervisor in supervisors:
+      supervisor.start()
+
+    assert Process.objects.filter(kind="Supervisor", pid=21).count() == 2
+  finally:
+    for supervisor in supervisors:
+      supervisor.stop()
+
+
 def test_prune_stale_process_rows_fails_their_claimed_jobs():
   stale_process = make_process(
     name="stale-worker",
