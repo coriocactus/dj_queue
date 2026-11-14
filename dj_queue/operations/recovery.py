@@ -61,23 +61,6 @@ def fail_claimed_jobs_for_process(
   return failed_jobs
 
 
-def fail_claimed_jobs_for_pid(pid, error, *, config, traceback_text=""):
-  processes = list(
-    Process.objects.using(config.database_alias).filter(
-      pid=pid, backend_alias=config.backend_alias
-    )[:2]
-  )
-  if len(processes) != 1:
-    return []
-  return fail_claimed_jobs_for_process(
-    processes[0],
-    error,
-    traceback_text=traceback_text,
-    delete_process=True,
-    config=config,
-  )
-
-
 def fail_claimed_jobs_for_child(*, pid, name, supervisor_id, error, config, traceback_text=""):
   process = (
     Process.objects.using(config.database_alias)

@@ -15,7 +15,6 @@ from dj_queue.exceptions import ProcessExitError, ProcessMissingError, ProcessPr
 from dj_queue.log import log_event
 from dj_queue.operations.recovery import (
   fail_claimed_jobs_for_child,
-  fail_claimed_jobs_for_pid,
   fail_claimed_jobs_for_process,
   fail_orphaned_claimed_jobs,
   prune_stale_processes,
@@ -539,8 +538,6 @@ class ForkSupervisor(Supervisor):
     return self.check_children()
 
   def _fail_claimed_jobs_for_child(self, pid, spec, *, status=None):
-    if spec is None:
-      return self._fail_claimed_jobs_for_pid(pid)
     message = _child_exit_message(status)
     with app_executor():
       return fail_claimed_jobs_for_child(
@@ -549,15 +546,6 @@ class ForkSupervisor(Supervisor):
         supervisor_id=self.process.pk if self.process is not None else None,
         error=ProcessExitError(message),
         traceback_text=message,
-        config=self.backend_config,
-      )
-
-  def _fail_claimed_jobs_for_pid(self, pid):
-    with app_executor():
-      return fail_claimed_jobs_for_pid(
-        pid,
-        ProcessExitError("child process exited"),
-        traceback_text="child process exited",
         config=self.backend_config,
       )
 
