@@ -215,15 +215,6 @@ class _Schedule:
   day_and: bool
   timezone: tzinfo | None
 
-  def matches_minute(self, moment: datetime) -> bool:
-    if not self.minutes.matches(moment.minute):
-      return False
-    if not self.hours.matches(moment.hour):
-      return False
-    if not self.months.matches(moment.month):
-      return False
-    return self._matches_day(moment)
-
   def _matches_day(self, moment: datetime) -> bool:
     day_of_month_matches = self._matches_day_of_month(moment)
     day_of_week_matches = self.day_of_week.matches(moment)
@@ -450,7 +441,7 @@ def _take_natural_segment(value: str) -> tuple[str, str]:
 
 def _parse_natural_segment(prefix: str | None, segment: str) -> list[_NaturalSlot]:
   if prefix == "every":
-    return _parse_every_segment(segment)
+    return _parse_subject_and_time(segment, _parse_every_subject, prefix)
   if prefix == "from":
     return _parse_from_segment(segment)
   if prefix == "at":
@@ -460,7 +451,7 @@ def _parse_natural_segment(prefix: str | None, segment: str) -> list[_NaturalSlo
   if prefix == "on":
     if _parse_timezone(segment, required=False) is not None:
       return [_parse_timezone_slot(segment)]
-    return _parse_on_segment(segment)
+    return _parse_subject_and_time(segment, _parse_on_object, prefix)
   return _parse_bare_natural_segment(segment)
 
 
@@ -474,9 +465,9 @@ def _parse_bare_natural_segment(segment: str) -> list[_NaturalSlot]:
   raise ValueError(f"invalid natural schedule segment {segment!r}")
 
 
-def _parse_every_segment(segment: str) -> list[_NaturalSlot]:
+def _parse_subject_and_time(segment: str, parse_subject, prefix: str) -> list[_NaturalSlot]:
   try:
-    return _parse_every_subject(segment)
+    return parse_subject(segment)
   except ValueError as exc:
     error = exc
 
@@ -485,10 +476,10 @@ def _parse_every_segment(segment: str) -> list[_NaturalSlot]:
     subject = " ".join(tokens[:index])
     time_text = " ".join(tokens[index:])
     try:
-      return [*_parse_every_subject(subject), *_parse_at_segment(time_text)]
+      return [*parse_subject(subject), *_parse_at_segment(time_text)]
     except ValueError:
       continue
-  raise ValueError(f"invalid natural every expression {segment!r}: {error}")
+  raise ValueError(f"invalid natural {prefix} expression {segment!r}: {error}")
 
 
 def _parse_every_subject(subject: str) -> list[_NaturalSlot]:
@@ -551,23 +542,6 @@ def _validate_natural_interval_count(count: int, unit: str) -> None:
   }.get(unit)
   if maximum is not None and count > maximum:
     raise ValueError(f"natural {unit} intervals cannot exceed {maximum}")
-
-
-def _parse_on_segment(segment: str) -> list[_NaturalSlot]:
-  try:
-    return _parse_on_object(segment)
-  except ValueError:
-    pass
-
-  tokens = segment.split()
-  for index in range(1, len(tokens)):
-    subject = " ".join(tokens[:index])
-    time_text = " ".join(tokens[index:])
-    try:
-      return [*_parse_on_object(subject), *_parse_at_segment(time_text)]
-    except ValueError:
-      continue
-  raise ValueError(f"invalid natural on expression {segment!r}")
 
 
 def _parse_on_object(segment: str) -> list[_NaturalSlot]:
@@ -637,7 +611,7 @@ def _parse_timezone_slot(segment: str) -> _NaturalSlot:
 
 
 def _parse_natural_times(segment: str) -> list[tuple[int, int]]:
-  return [_parse_natural_time(part) for part in _natural_time_parts(segment)]
+  return [_parse_natural_time(part) for part in _natural_list_parts(segment)]
 
 
 def _parse_weekday_range_slot(segment: str) -> _NaturalSlot:
@@ -737,7 +711,7 @@ def _determine_natural_hms(hms: list[_NaturalSlot]) -> list[_NaturalSlot]:
   if not hms:
     return [_NaturalSlot("hm", "*", "*")]
 
-  hms = [*_hms_clone(hms)]
+  hms = [_NaturalSlot(hm.key, hm.data0, hm.data1, hm.weak, hm.strong) for hm in hms]
   while len(hms) > 1:
     graded_index = next((index for index, hm in enumerate(hms) if hm.weak or hm.strong), None)
     if graded_index is None:
@@ -755,11 +729,6 @@ def _determine_natural_hms(hms: list[_NaturalSlot]) -> list[_NaturalSlot]:
     _NaturalSlot("hm", list(hours), sorted(minutes, key=_natural_sort_key))
     for hours, minutes in grouped.items()
   ]
-
-
-def _hms_clone(hms: list[_NaturalSlot]):
-  for hm in hms:
-    yield _NaturalSlot(hm.key, hm.data0, hm.data1, hm.weak, hm.strong)
 
 
 def _natural_cron_from_hm(slots: dict[str, _NaturalSlot], hm: _NaturalSlot) -> str:
@@ -819,13 +788,6 @@ def _natural_weekday_number(value: str) -> int:
     return _NATURAL_WEEKDAY_NAMES[value.strip().lower()]
   except KeyError as exc:
     raise ValueError(f"invalid natural weekday {value!r}") from exc
-
-
-def _natural_time_parts(time_text: str) -> tuple[str, ...]:
-  parts = tuple(part.strip() for part in _NATURAL_LIST_RE.split(time_text) if part.strip())
-  if not parts:
-    raise ValueError("natural schedule has no time")
-  return parts
 
 
 def _parse_natural_time(time_text: str) -> tuple[int, int]:
