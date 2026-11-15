@@ -4,7 +4,7 @@ from datetime import timedelta
 from enum import StrEnum
 
 from django.db import transaction
-from django.db.models import F, Q, Value
+from django.db.models import F, Value
 from django.db.models.functions import Least
 from django.utils import timezone
 from django.utils.module_loading import import_string
@@ -18,7 +18,8 @@ from dj_queue.exceptions import DispatchPolicyError, EnqueueError, exception_pat
 from dj_queue.log import log_event
 from dj_queue.models import (
   BlockedExecution,
-  Job,
+  ClaimedExecution,
+  ReadyExecution,
   Semaphore,
 )
 from dj_queue.operations.state_rows import (
@@ -450,13 +451,14 @@ def cleanup_expired_semaphores(*, config, batch_size=500):
       if not semaphores:
         return 0
       semaphore_keys = [key for _semaphore_id, key in semaphores]
-      active_keys = set(
-        Job.objects.using(alias)
-        .filter(concurrency_key__in=semaphore_keys)
-        .filter(Q(claimed_execution__isnull=False) | Q(ready_execution__isnull=False))
-        .values_list("concurrency_key", flat=True)
-        .distinct()
+      claimed_keys, ready_keys = (
+        model.objects.using(alias)
+        .filter(job__concurrency_key__in=semaphore_keys)
+        .values_list("job__concurrency_key", flat=True)
+        for model in (ClaimedExecution, ReadyExecution)
       )
+      # one statement, so a job claimed between two reads cannot be missed
+      active_keys = set(claimed_keys.union(ready_keys))
       semaphore_ids = [semaphore_id for semaphore_id, key in semaphores if key not in active_keys]
       if not semaphore_ids:
         return 0
