@@ -1160,7 +1160,6 @@ def test_async_supervisor_stop_does_not_restart_runner_after_stop_request():
 
     worker = supervisor.runners[0]
     crash_handled = threading.Event()
-    allow_runner_stop = threading.Event()
     original_stop = worker.stop
 
     def crashing_poll():
@@ -1168,17 +1167,14 @@ def test_async_supervisor_stop_does_not_restart_runner_after_stop_request():
 
     def gated_stop(*, timeout=None):
       crash_handled.set()
-      allow_runner_stop.wait(timeout=1)
+      supervisor._stop_event.wait(timeout=5)
       return original_stop(timeout=timeout)
 
     worker.poll_once = crashing_poll
     worker.stop = gated_stop
 
     wait_until(crash_handled.is_set, timeout=2)
-    supervisor.stop()
-    allow_runner_stop.set()
   finally:
-    allow_runner_stop.set()
     supervisor.stop()
 
   assert supervisor.runners == []
@@ -1729,10 +1725,13 @@ def test_fork_supervisor_records_child_exit_status():
       return waitpid_results.pop(0)
     return 0, 0
 
+  tasks_settings = async_tasks_settings(dispatchers=[], recurring={})
+  tasks_settings["default"]["OPTIONS"]["shutdown_timeout"] = 0
   supervisor = build_fork_supervisor(
-    tasks_settings=async_tasks_settings(dispatchers=[], recurring={}),
+    tasks_settings=tasks_settings,
     launcher=launcher,
     waitpid=waitpid,
+    killer=lambda pid, sig: None,
   )
   supervisor_process = supervisor.start()
   child_process = make_process(pid=80001, name="worker-1", supervisor=supervisor_process)
