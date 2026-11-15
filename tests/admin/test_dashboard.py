@@ -139,7 +139,7 @@ def test_dashboard_overview_query_count_is_pinned_across_data_sizes(admin_client
   def overview():
     assert admin_client.get(reverse("admin:dj_queue_dashboard_changelist")).status_code == 200
 
-  assert read_query_counts(overview) == [16, 16]
+  assert read_query_counts(overview) == [15, 15]
 
 
 def test_dashboard_queue_page_query_count_is_pinned_across_data_sizes(admin_client):
@@ -149,7 +149,7 @@ def test_dashboard_queue_page_query_count_is_pinned_across_data_sizes(admin_clie
     )
     assert response.status_code == 200
 
-  assert read_query_counts(queue_page) == [12, 12]
+  assert read_query_counts(queue_page) == [11, 11]
 
 
 def test_dashboard_backend_facts_show_effective_database_capabilities(settings):
@@ -1063,6 +1063,21 @@ def test_dashboard_queue_view_exposes_scheduled_and_finished_actions(admin_clien
   assert '<option value="discard">discard selected</option>' in scheduled.content.decode()
   assert finished.status_code == 200
   assert '<option value="enqueue">enqueue selected again</option>' in finished.content.decode()
+
+
+def test_dashboard_lists_finished_jobs_on_demand_without_counts(admin_client):
+  make_ready_job(queue_name="alpha")
+  finished_job = make_job(queue_name="alpha", finished_at=timezone.now())
+
+  overview = admin_client.get(reverse("admin:dj_queue_dashboard_changelist")).content.decode()
+  context = dashboard.queue_page_context(
+    backend_alias="default", queue_name="alpha", state="finished", page_number=1
+  )
+
+  assert "state=finished" not in overview
+  assert "queues_sort=-finished" not in overview
+  assert {tab["name"]: tab["count"] for tab in context["state_tabs"]}["finished"] is None
+  assert [job.pk for job in context["jobs"]] == [finished_job.pk]
 
 
 def test_dashboard_queue_controls_use_distinct_pause_resume_styles(admin_client):

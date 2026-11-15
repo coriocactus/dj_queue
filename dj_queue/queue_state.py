@@ -108,7 +108,9 @@ QUEUE_STATE_DEFINITIONS = (
 )
 
 SUMMARY_STATE_DEFINITIONS = tuple(
-  definition for definition in QUEUE_STATE_DEFINITIONS if definition.name != INVALID_JOB_STATUS
+  definition
+  for definition in QUEUE_STATE_DEFINITIONS
+  if definition.name not in {"finished", INVALID_JOB_STATUS}
 )
 QUEUE_STATE_BY_NAME = {definition.name: definition for definition in QUEUE_STATE_DEFINITIONS}
 QUEUE_STATES = tuple((definition.name, definition.label) for definition in QUEUE_STATE_DEFINITIONS)
@@ -175,7 +177,6 @@ def _state_table_summaries_by_queue(*, backend_alias, queue_name=None):
   _merge_blocked_summary(rows, alias=alias, backend_alias=backend_alias, queue_name=queue_name)
   _merge_claimed_summary(rows, alias=alias, backend_alias=backend_alias, queue_name=queue_name)
   _merge_failed_summary(rows, alias=alias, backend_alias=backend_alias, queue_name=queue_name)
-  _merge_finished_summary(rows, alias=alias, backend_alias=backend_alias, queue_name=queue_name)
   return {name: _summary_from_row(name, row) for name, row in sorted(rows.items())}
 
 
@@ -246,17 +247,6 @@ def _merge_failed_summary(rows, *, alias, backend_alias, queue_name):
     queryset = queryset.filter(job__queue_name=queue_name)
   for row in queryset.values("job__queue_name").annotate(count=Count("id")):
     _summary_values(rows, row["job__queue_name"])["failed"] = row["count"]
-
-
-def _merge_finished_summary(rows, *, alias, backend_alias, queue_name):
-  queryset = Job.objects.using(alias).filter(
-    backend_alias=backend_alias,
-    finished_at__isnull=False,
-  )
-  if queue_name is not None:
-    queryset = queryset.filter(queue_name=queue_name)
-  for row in queryset.values("queue_name").annotate(count=Count("id")):
-    _summary_values(rows, row["queue_name"])["finished"] = row["count"]
 
 
 def empty_queue_state_summary(queue_name):

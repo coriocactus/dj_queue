@@ -98,7 +98,7 @@ def test_queue_state_summaries_by_queue_count_state_rows():
   alpha = summaries["alpha"]
   assert alpha.count("ready") == 0
   assert alpha.count("blocked") == 1
-  assert alpha.count("finished") == 1
+  assert "finished_count" not in alpha.count_fields()
   assert alpha.count("failed") == 0
   assert summaries["drifted"].count_fields()["ready_count"] == 1
   assert summaries["drifted"].oldest_ready_at == now - timedelta(seconds=10)
@@ -114,7 +114,7 @@ def test_queue_state_summaries_by_queue_read_one_aggregate_per_state():
     summaries = queue_state_summaries_by_queue(backend_alias="default")
 
   assert sorted(summaries) == ["alpha", "beta"]
-  assert len(captured.captured_queries) == 6
+  assert len(captured.captured_queries) == 5
 
 
 def test_filter_queue_state_uses_the_canonical_state_definition():

@@ -4,9 +4,12 @@ from uuid import uuid4
 
 import pytest
 from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
-from dj_queue import health, observability, postgres_diagnostics
+from dj_queue import dashboard, health, observability, postgres_diagnostics
+from dj_queue.api import QueueInfo
+from dj_queue.metrics import metric_families
 from dj_queue.models import (
   FailedExecution,
   Job,
@@ -16,7 +19,7 @@ from dj_queue.models import (
   RecurringTask,
   Semaphore,
 )
-from tests.factories import enqueue_ready_job, make_failed_job, read_query_counts
+from tests.factories import enqueue_ready_job, make_failed_job, make_job, read_query_counts
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -165,9 +168,25 @@ def test_stats_payload_can_include_postgres_diagnostics(monkeypatch):
 
 def test_stats_payload_query_count_is_pinned_across_data_sizes():
   # postgresql adds four diagnostics queries
-  expected = 19 if connection.vendor == "postgresql" else 15
+  expected = 18 if connection.vendor == "postgresql" else 14
 
   assert read_query_counts(observability.stats_payload) == [expected, expected]
+
+
+def test_summary_reads_never_scan_the_jobs_table():
+  now = timezone.now()
+  enqueue_ready_job(queue_name="alpha")
+  make_failed_job(queue_name="alpha")
+  make_job(queue_name="alpha", finished_at=now)
+  jobs_table = connection.ops.quote_name(Job._meta.db_table)
+
+  with CaptureQueriesContext(connection) as ctx:
+    observability.stats_payload(now=now, include_postgres_diagnostics=False)
+    metric_families()
+    QueueInfo.all()
+    dashboard.dashboard_context(backend_alias="default")
+
+  assert [query["sql"] for query in ctx if f"FROM {jobs_table}" in query["sql"]] == []
 
 
 def test_backend_snapshot_exposes_failed_retention_metrics(settings):

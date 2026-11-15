@@ -54,7 +54,6 @@ def test_supplied_empty_queue_projection_does_not_reload(django_assert_num_queri
     "claimed_count": 0,
     "blocked_count": 0,
     "failed_count": 0,
-    "finished_count": 0,
     "paused": False,
     "latency_seconds": None,
     "oldest_scheduled_at": None,

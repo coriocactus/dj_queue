@@ -23,7 +23,6 @@ def test_metric_families_project_snapshot_without_prometheus_dependency():
             "scheduled_count": 0,
             "blocked_count": 0,
             "failed_count": 0,
-            "finished_count": 3,
             "paused": False,
             "latency_seconds": 4.5,
             "live_worker_count": 1,
@@ -144,7 +143,6 @@ def test_metric_samples_preserve_iterator_order_zeroes_and_database_scope(monkey
         "scheduled_count": 3,
         "blocked_count": 4,
         "failed_count": 5,
-        "finished_count": 6,
         "paused": latency is None,
         "latency_seconds": latency,
         "live_worker_count": 0,
@@ -193,7 +191,6 @@ def test_metric_samples_preserve_iterator_order_zeroes_and_database_scope(monkey
       ("claimed", 2),
       ("blocked", 4),
       ("failed", 5),
-      ("finished", 6),
     )
   )
   assert by_name["dj_queue_queue_latency_seconds"] == tuple(
@@ -225,4 +222,4 @@ def test_metric_samples_preserve_iterator_order_zeroes_and_database_scope(monkey
 
 @pytest.mark.django_db
 def test_metric_families_query_count_is_pinned_across_data_sizes():
-  assert read_query_counts(metric_families) == [15, 15]
+  assert read_query_counts(metric_families) == [14, 14]
