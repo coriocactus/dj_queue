@@ -159,6 +159,10 @@ If Django admin is installed, `dj_queue` adds an operator dashboard at
 - unschedule dynamic recurring tasks
 - queue drill-down pages for state-specific inspection
 
+Staff users can see the dashboard overview. Queue drill-down pages require the
+`dj_queue.view_job` permission, and each action requires its own model
+permission, such as `change_job` to retry or `delete_job` to discard.
+
 **Dashboard overview**
 
 ![dj_queue admin dashboard](docs/dashboard.png)
@@ -305,7 +309,7 @@ across queues. Prefer one primary scheduling mechanism per worker when you can.
 
 In standalone mode, both `fork` and `async` `python manage.py dj_queue` supervisors own runtime signal handling:
 
-- `SIGTERM` and `SIGINT` request graceful shutdown
+- `SIGTERM` and `SIGINT` request graceful shutdown, after which the process exits with status `0`
 - `SIGQUIT` stops without the graceful wait: the shutdown budget drops to zero and the process exits with status `1`
 - a supervisor that stops without a requested shutdown also exits with status `1`
 - `shutdown_timeout` controls how long the runtime waits for in-flight work to drain
@@ -429,7 +433,7 @@ The manual/reusable **Mixed-version upgrade check** workflow uses hosted runners
 for PostgreSQL 14, MySQL 8.0, and MariaDB 10.6 with Django 6.0. Run this check for
 upgrade-sensitive changes; backend-specific DDL changes may need extra database
 versions. This is a correctness check, not a capacity or latency benchmark.
-Use the [benchmark tools](docs/benchmarks.md) for performance comparisons.
+Use the [benchmark tools](docs/benchmarks/) for performance comparisons.
 
 ## Recurring Tasks
 
@@ -750,6 +754,11 @@ python manage.py migrate
 With this setup, `dj_queue`'s ORM queries and raw SQL helpers stay on the queue
 database.
 
+If several `dj_queue` backends use different databases, run
+`python manage.py migrate dj_queue --database <alias>` for each of those
+databases. The router then leaves `dj_queue` reads and writes unrouted, and each
+`dj_queue` operation selects its backend's database itself.
+
 ## Backend Coexistence
 
 Projects can mix `dj_queue` with other Django task backends in the same `TASKS` mapping:
@@ -921,6 +930,8 @@ Global options:
 | `default_concurrency_duration` | `180` | default semaphore TTL in seconds |
 | `use_skip_locked` | `true` | use `SKIP LOCKED` when the active backend supports it |
 | `listen_notify` | `true` | PostgreSQL-only worker wakeup optimization layered on top of polling |
+| `async_thread_sensitive` | `false` | run async backend calls through asgiref's thread-sensitive lane, serializing them |
+| `async_close_connections` | `false` | close all Django connections after each async backend call |
 | `process_heartbeat_interval` | `60` | seconds between process heartbeat writes |
 | `process_alive_threshold` | `300` | seconds before a process row is stale |
 | `shutdown_timeout` | `5` | graceful drain window before standalone shutdown gives up on waiting |
@@ -1110,7 +1121,7 @@ If the extra is missing, the endpoint returns `503` with an installation hint.
 
 Exported metric families:
 
-- `dj_queue_queue_jobs{backend,queue,state}`
+- `dj_queue_queue_jobs{backend,queue,state}`, where `state` is `ready`, `scheduled`, `claimed`, `blocked`, or `failed`
 - `dj_queue_queue_paused{backend,queue}`
 - `dj_queue_queue_latency_seconds{backend,queue}`
 - `dj_queue_queue_live_workers{backend,queue}`
