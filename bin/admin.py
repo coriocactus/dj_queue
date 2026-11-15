@@ -591,7 +591,6 @@ def seed_demo_data():
     Semaphore.objects.create(
       key=key,
       value=value,
-      active_count=limit - value,
       limit=limit,
       expires_at=now + timedelta(minutes=expiry_minutes),
     )

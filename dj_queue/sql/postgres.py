@@ -30,7 +30,6 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
   table = quote(Semaphore._meta.db_table)
   key_column = quote("key")
   value_column = quote("value")
-  active_count_column = quote("active_count")
   limit_column = quote("limit")
   expires_at_column = quote("expires_at")
   created_at_column = quote("created_at")
@@ -39,9 +38,7 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
     f"LEAST(EXCLUDED.{limit_column}, "
     f"GREATEST(0, {table}.{value_column} + EXCLUDED.{limit_column} - {table}.{limit_column}))"
   )
-  conflicted_active = f"EXCLUDED.{limit_column} - ({conflicted_available} - 1)"
   current_available = f"LEAST(%s, GREATEST(0, {value_column} + %s - {limit_column}))"
-  current_active = f"%s - ({current_available})"
 
   with connection.cursor() as cursor:
     cursor.execute(
@@ -50,17 +47,15 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
         INSERT INTO {table} (
           {key_column},
           {value_column},
-          {active_count_column},
           {limit_column},
           {expires_at_column},
           {created_at_column},
           {updated_at_column}
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s)
         ON CONFLICT ({key_column}) DO UPDATE
         SET
           {value_column} = {conflicted_available} - 1,
-          {active_count_column} = {conflicted_active},
           {limit_column} = EXCLUDED.{limit_column},
           {expires_at_column} = EXCLUDED.{expires_at_column},
           {updated_at_column} = EXCLUDED.{updated_at_column}
@@ -70,14 +65,12 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
         UPDATE {table}
         SET
           {value_column} = {current_available},
-          {active_count_column} = {current_active},
           {limit_column} = %s,
           {updated_at_column} = %s
         WHERE {key_column} = %s
           AND NOT EXISTS (SELECT 1 FROM acquired)
           AND (
             {value_column} <> {current_available}
-            OR {active_count_column} IS DISTINCT FROM {current_active}
             OR {limit_column} <> %s
           )
         RETURNING FALSE AS acquired
@@ -89,7 +82,6 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
       [
         key,
         limit - 1,
-        1,
         limit,
         expires_at,
         now,
@@ -97,14 +89,8 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
         limit,
         limit,
         limit,
-        limit,
-        limit,
-        limit,
         now,
         key,
-        limit,
-        limit,
-        limit,
         limit,
         limit,
         limit,
@@ -143,7 +129,6 @@ def consume_next_blocked_job_with_released_slot(
   semaphore_table = quote(Semaphore._meta.db_table)
   semaphore_key_column = quote(Semaphore._meta.get_field("key").column)
   semaphore_value_column = quote(Semaphore._meta.get_field("value").column)
-  semaphore_active_count_column = quote(Semaphore._meta.get_field("active_count").column)
   semaphore_limit_column = quote(Semaphore._meta.get_field("limit").column)
   semaphore_expires_at_column = quote(Semaphore._meta.get_field("expires_at").column)
   semaphore_updated_at_column = quote(Semaphore._meta.get_field("updated_at").column)
@@ -155,7 +140,6 @@ def consume_next_blocked_job_with_released_slot(
     f"{semaphore_table}.{semaphore_limit_column} + 1))"
   )
   released_value = f"{released_available} - 1"
-  released_active = f"%s - ({released_value})"
 
   with connection.cursor() as cursor:
     cursor.execute(
@@ -181,7 +165,6 @@ def consume_next_blocked_job_with_released_slot(
         UPDATE {semaphore_table}
         SET
           {semaphore_value_column} = {released_value},
-          {semaphore_active_count_column} = {released_active},
           {semaphore_limit_column} = %s,
           {semaphore_expires_at_column} = %s,
           {semaphore_updated_at_column} = %s
@@ -209,9 +192,6 @@ def consume_next_blocked_job_with_released_slot(
       [
         backend_alias,
         key,
-        limit,
-        limit,
-        limit,
         limit,
         limit,
         limit,

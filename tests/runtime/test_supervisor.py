@@ -154,7 +154,6 @@ def make_recovered_concurrency_group(
   Semaphore.objects.create(
     key=key,
     value=0,
-    active_count=claimed_count,
     limit=limit,
     expires_at=timezone.now() + timedelta(minutes=1),
   )
@@ -609,7 +608,7 @@ def test_prune_stale_process_rows_recovered_release_promotes_at_most_released_co
     claimed_count=1,
     blocked_count=3,
   )
-  Semaphore.objects.filter(key="account:positive-capacity").update(value=2, active_count=3)
+  Semaphore.objects.filter(key="account:positive-capacity").update(value=2)
   supervisor = make_supervisor()
   supervisor.start()
 
@@ -645,7 +644,6 @@ def test_prune_stale_process_rows_recovered_release_stays_backend_scoped(monkeyp
   Semaphore.objects.create(
     key="account:shared-key",
     value=0,
-    active_count=1,
     limit=1,
     expires_at=timezone.now() + timedelta(minutes=1),
   )
@@ -678,7 +676,6 @@ def test_prune_stale_process_rows_recovered_release_uses_semaphore_fallback():
   Semaphore.objects.create(
     key="account:missing-recovery-task",
     value=0,
-    active_count=1,
     limit=1,
     expires_at=timezone.now() + timedelta(minutes=1),
   )

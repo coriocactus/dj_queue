@@ -63,7 +63,6 @@ def test_semaphore_pages_share_projection_without_loading_unneeded_rows(
       Semaphore(
         key=f"key-{index:02}",
         value=index % 3,
-        active_count=None,
         limit=3,
         expires_at=timezone.now() + timedelta(minutes=1),
       )
@@ -100,12 +99,11 @@ def test_semaphore_pages_share_projection_without_loading_unneeded_rows(
   ("sort", "expected"),
   [("active", ["low", "middle", "high"]), ("-active", ["high", "middle", "low"])],
 )
-def test_semaphore_sort_uses_displayed_occupancy_not_bridge(sort, expected, monkeypatch):
-  for key, value, mirror in [("low", 2, 7), ("middle", 1, None), ("high", 0, 0)]:
+def test_semaphore_sort_uses_displayed_occupancy(sort, expected, monkeypatch):
+  for key, value in [("low", 2), ("middle", 1), ("high", 0)]:
     Semaphore.objects.create(
       key=key,
       value=value,
-      active_count=mirror,
       limit=3,
       expires_at=timezone.now() + timedelta(minutes=1),
     )

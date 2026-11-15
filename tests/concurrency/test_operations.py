@@ -102,81 +102,6 @@ def test_semaphore_acquire_release_cycle():
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize(
-  ("value", "active_count", "acquired"),
-  ((0, 0, False), (1, 1, True)),
-)
-def test_semaphore_acquire_uses_value_when_bridge_count_is_stale(
-  value,
-  active_count,
-  acquired,
-):
-  Semaphore.objects.create(
-    key="account:mixed-version",
-    value=value,
-    active_count=active_count,
-    limit=1,
-    expires_at=timezone.now() + timedelta(seconds=60),
-  )
-
-  assert (
-    semaphore_acquire(
-      "account:mixed-version", limit=1, duration_seconds=60, config=load_backend_config()
-    )
-    is acquired
-  )
-
-  semaphore = Semaphore.objects.get(key="account:mixed-version")
-  assert semaphore.active_count == semaphore.limit - semaphore.value
-
-
-@pytest.mark.django_db
-def test_semaphore_release_repairs_null_bridge_count_from_value():
-  Semaphore.objects.create(
-    key="account:mixed-version",
-    value=0,
-    active_count=None,
-    limit=1,
-    expires_at=timezone.now() + timedelta(seconds=60),
-  )
-
-  assert (
-    semaphore_release(
-      "account:mixed-version", limit=1, duration_seconds=60, config=load_backend_config()
-    )
-    is True
-  )
-
-  semaphore = Semaphore.objects.get(key="account:mixed-version")
-  assert semaphore.value == 1
-  assert semaphore.active_count == 0
-
-
-@pytest.mark.django_db
-def test_semaphore_acquire_many_uses_value_when_bridge_count_is_stale():
-  Semaphore.objects.create(
-    key="account:mixed-version",
-    value=2,
-    active_count=2,
-    limit=2,
-    expires_at=timezone.now() + timedelta(seconds=60),
-  )
-
-  acquired = semaphore_acquire_many(
-    "account:mixed-version",
-    count=2,
-    limit=2,
-    duration_seconds=60,
-    config=load_backend_config(),
-  )
-
-  assert acquired == 2
-  semaphore = Semaphore.objects.get(key="account:mixed-version")
-  assert semaphore.value == 0
-  assert semaphore.active_count == 2
-
-
-@pytest.mark.django_db
 def test_semaphore_acquire_reconciles_increased_limit():
   assert (
     semaphore_acquire("account:resize", limit=1, duration_seconds=60, config=load_backend_config())
@@ -190,7 +115,6 @@ def test_semaphore_acquire_reconciles_increased_limit():
 
   semaphore = Semaphore.objects.get(key="account:resize")
   assert semaphore.limit == 2
-  assert semaphore.active_count == 2
   assert semaphore.value == 0
 
 
@@ -212,7 +136,6 @@ def test_semaphore_acquire_reconciles_reduced_limit_when_saturated():
 
   semaphore = Semaphore.objects.get(key="account:resize")
   assert semaphore.limit == 1
-  assert semaphore.active_count == 1
   assert semaphore.value == 0
 
 
@@ -241,7 +164,7 @@ def test_reduced_semaphore_limit_uses_compatibility_available_count():
   )
 
   semaphore = Semaphore.objects.get(key="account:resize")
-  assert semaphore.active_count == semaphore.limit == 1
+  assert (semaphore.value, semaphore.limit) == (0, 1)
 
 
 @pytest.mark.django_db
@@ -306,7 +229,6 @@ def test_semaphore_release_reconciles_supplied_limit():
 
   semaphore = Semaphore.objects.get(key="account:resize")
   assert semaphore.limit == 1
-  assert semaphore.active_count == 1
   assert semaphore.value == 0
 
 
@@ -1047,7 +969,6 @@ def test_missing_concurrency_task_path_releases_slot_and_unblocks_next_waiter():
   Semaphore.objects.create(
     key="account:missing-task",
     value=0,
-    active_count=1,
     limit=1,
     expires_at=timezone.now() + timedelta(seconds=60),
   )
@@ -1317,7 +1238,6 @@ def test_promote_expired_blocked_jobs_uses_backend_default_concurrency_duration(
   Semaphore.objects.create(
     key="account:1",
     value=0,
-    active_count=1,
     limit=1,
     expires_at=timezone.now() + timedelta(seconds=240),
   )
@@ -1469,7 +1389,6 @@ def test_unblock_next_blocked_job_returns_blocked_job_reference():
   Semaphore.objects.create(
     key="account:1",
     value=1,
-    active_count=0,
     limit=1,
     expires_at=timezone.now() + timedelta(minutes=1),
   )
@@ -1509,7 +1428,6 @@ def test_unblock_next_blocked_job_rejects_conflicting_execution_state():
   Semaphore.objects.create(
     key="account:1",
     value=1,
-    active_count=0,
     limit=1,
     expires_at=timezone.now() + timedelta(minutes=1),
   )
@@ -2055,7 +1973,6 @@ def test_promote_scheduled_discard_job_rejects_conflicting_execution_state():
   Semaphore.objects.create(
     key="account:1",
     value=0,
-    active_count=1,
     limit=1,
     expires_at=timezone.now() + timedelta(seconds=60),
   )
@@ -2074,14 +1991,12 @@ def test_cleanup_expired_semaphores():
   Semaphore.objects.create(
     key="expired",
     value=0,
-    active_count=1,
     limit=1,
     expires_at=timezone.now() - timedelta(seconds=1),
   )
   Semaphore.objects.create(
     key="fresh",
     value=0,
-    active_count=1,
     limit=1,
     expires_at=timezone.now() + timedelta(minutes=1),
   )
@@ -2098,7 +2013,6 @@ def test_cleanup_expired_semaphores_deletes_without_execution_state_subqueries()
   Semaphore.objects.create(
     key="expired",
     value=0,
-    active_count=1,
     limit=1,
     expires_at=timezone.now() - timedelta(seconds=1),
   )
@@ -2123,7 +2037,6 @@ def test_cleanup_expired_semaphores_respects_batch_size():
     Semaphore.objects.create(
       key=f"expired:{index}",
       value=0,
-      active_count=1,
       limit=1,
       expires_at=now - timedelta(seconds=3 - index),
     )
@@ -2139,7 +2052,6 @@ def test_cleanup_expired_semaphores_retries_transient_database_deadlock(monkeypa
   Semaphore.objects.create(
     key="expired",
     value=0,
-    active_count=1,
     limit=1,
     expires_at=timezone.now() - timedelta(seconds=1),
   )

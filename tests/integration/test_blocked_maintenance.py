@@ -95,7 +95,7 @@ def test_competing_maintenance_batches_share_one_slot(monkeypatch):
   assert {promoted[0].id, waiter.job_id} == {first_job.id, second_job.id}
   assert waiter.expires_at > timezone.now()
   semaphore = Semaphore.objects.get(key="account:1")
-  assert (semaphore.value, semaphore.active_count) == (0, 1)
+  assert semaphore.value == 0
   notify.assert_called_once()
 
   for _ in range(2):
@@ -106,4 +106,4 @@ def test_competing_maintenance_batches_share_one_slot(monkeypatch):
   assert not ReadyExecution.objects.exists()
   assert not ClaimedExecution.objects.exists()
   semaphore.refresh_from_db()
-  assert (semaphore.value, semaphore.active_count) == (1, 0)
+  assert semaphore.value == 1

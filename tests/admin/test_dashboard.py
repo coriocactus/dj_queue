@@ -120,7 +120,6 @@ def test_dashboard_admin_renders(admin_client):
   Semaphore.objects.create(
     key="account:1",
     value=1,
-    active_count=1,
     limit=2,
     expires_at=now + timedelta(minutes=5),
   )
@@ -569,7 +568,6 @@ def test_dashboard_semaphore_key_links_to_raw_jobs(admin_client):
   Semaphore.objects.create(
     key="acct:1",
     value=1,
-    active_count=1,
     limit=2,
     expires_at=timezone.now() + timedelta(minutes=5),
   )
@@ -650,12 +648,8 @@ def test_dashboard_pages_control_sections_without_full_snapshot_rows(monkeypatch
     priority=0,
     static=False,
   )
-  Semaphore.objects.create(
-    key="acct:1", value=1, active_count=1, limit=2, expires_at=now + timedelta(minutes=5)
-  )
-  Semaphore.objects.create(
-    key="acct:2", value=1, active_count=1, limit=2, expires_at=now + timedelta(minutes=5)
-  )
+  Semaphore.objects.create(key="acct:1", value=1, limit=2, expires_at=now + timedelta(minutes=5))
+  Semaphore.objects.create(key="acct:2", value=1, limit=2, expires_at=now + timedelta(minutes=5))
 
   def fail_full_recurring_rows(**kwargs):
     raise AssertionError("dashboard should page recurring rows directly")
@@ -680,14 +674,12 @@ def test_dashboard_semaphore_blocked_waiter_sort_uses_grouped_rows(monkeypatch):
   high = Semaphore.objects.create(
     key="acct:high",
     value=1,
-    active_count=1,
     limit=2,
     expires_at=now + timedelta(minutes=5),
   )
   low = Semaphore.objects.create(
     key="acct:low",
     value=1,
-    active_count=1,
     limit=2,
     expires_at=now + timedelta(minutes=5),
   )
@@ -1623,7 +1615,6 @@ def test_dashboard_sort_all_sections(admin_client):
   Semaphore.objects.create(
     key="acct:1",
     value=1,
-    active_count=1,
     limit=2,
     expires_at=now + timedelta(minutes=5),
   )

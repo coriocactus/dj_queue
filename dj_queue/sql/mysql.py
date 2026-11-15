@@ -81,7 +81,6 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
   pk_column = connection.ops.quote_name(Semaphore._meta.pk.column)
   key_column = connection.ops.quote_name("key")
   value_column = connection.ops.quote_name("value")
-  active_count_column = connection.ops.quote_name("active_count")
   limit_column = connection.ops.quote_name("limit")
   expires_at_column = connection.ops.quote_name("expires_at")
   created_at_column = connection.ops.quote_name("created_at")
@@ -90,8 +89,6 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
   should_touch = (
     f"{reconciled_available} > 0 "
     f"OR {value_column} <> {reconciled_available} "
-    f"OR {active_count_column} IS NULL "
-    f"OR {active_count_column} <> %s - {reconciled_available} "
     f"OR {limit_column} <> %s"
   )
   reconciled_available_params = (limit, limit)
@@ -103,13 +100,12 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
       INSERT INTO {table} (
         {key_column},
         {value_column},
-        {active_count_column},
         {limit_column},
         {expires_at_column},
         {created_at_column},
         {updated_at_column}
       )
-      VALUES (%s, %s, %s, %s, %s, %s, %s)
+      VALUES (%s, %s, %s, %s, %s, %s)
       ON DUPLICATE KEY UPDATE
         {expires_at_column} = IF(
           {reconciled_available} > 0,
@@ -126,11 +122,6 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
           LAST_INSERT_ID({pk_column}),
           LAST_INSERT_ID(0) + {pk_column}
         ),
-        {active_count_column} = %s - IF(
-          {reconciled_available} > 0,
-          {reconciled_available} - 1,
-          {reconciled_available}
-        ),
         {value_column} = IF(
           {reconciled_available} > 0,
           {reconciled_available} - 1,
@@ -141,7 +132,6 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
       [
         key,
         limit - 1,
-        1,
         limit,
         expires_at,
         now,
@@ -151,13 +141,7 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
         *reconciled_available_params,
         *reconciled_available_params,
         limit,
-        *reconciled_available_params,
-        limit,
         now,
-        *reconciled_available_params,
-        limit,
-        *reconciled_available_params,
-        *reconciled_available_params,
         *reconciled_available_params,
         *reconciled_available_params,
         *reconciled_available_params,

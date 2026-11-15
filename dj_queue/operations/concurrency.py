@@ -83,7 +83,6 @@ def semaphore_acquire(key, *, limit, duration_seconds, config):
       using=alias,
       key=key,
       value=limit - 1,
-      active_count=1,
       limit=limit,
       expires_at=expires_at,
     ):
@@ -96,7 +95,6 @@ def semaphore_acquire(key, *, limit, duration_seconds, config):
       .filter(key=key, value__gt=F("limit") - Value(limit))
       .update(
         value=available - Value(1),
-        active_count=Value(limit) - available + Value(1),
         limit=limit,
         expires_at=expires_at,
         updated_at=now,
@@ -106,14 +104,9 @@ def semaphore_acquire(key, *, limit, duration_seconds, config):
       return True
 
     Semaphore.objects.using(alias).filter(key=key).filter(
-      Q(value__lt=available)
-      | Q(value__gt=available)
-      | Q(active_count__isnull=True)
-      | ~Q(active_count=Value(limit) - available)
-      | ~Q(limit=limit)
+      Q(value__lt=available) | Q(value__gt=available) | ~Q(limit=limit)
     ).update(
       value=available,
-      active_count=Value(limit) - available,
       limit=limit,
       updated_at=now,
     )
@@ -143,7 +136,6 @@ def semaphore_acquire_many(
         key=key,
         defaults={
           "value": limit - acquired,
-          "active_count": acquired,
           "limit": limit,
           "expires_at": expires_at,
           "updated_at": now,
@@ -156,29 +148,22 @@ def semaphore_acquire_many(
     available = min(limit, max(0, semaphore.value + limit - semaphore.limit))
     acquired = min(count, available)
     value = available - acquired
-    active_count = limit - value
     if acquired:
       semaphore.value = value
-      semaphore.active_count = active_count
       semaphore.limit = limit
       semaphore.expires_at = expires_at
       semaphore.updated_at = now
       semaphore.save(
         using=alias,
-        update_fields=["value", "active_count", "limit", "expires_at", "updated_at"],
+        update_fields=["value", "limit", "expires_at", "updated_at"],
       )
-    elif (
-      semaphore.value != value
-      or semaphore.active_count != active_count
-      or semaphore.limit != limit
-    ):
+    elif semaphore.value != value or semaphore.limit != limit:
       semaphore.value = value
-      semaphore.active_count = active_count
       semaphore.limit = limit
       semaphore.updated_at = now
       semaphore.save(
         using=alias,
-        update_fields=["value", "active_count", "limit", "updated_at"],
+        update_fields=["value", "limit", "updated_at"],
       )
     return acquired
 
@@ -192,7 +177,6 @@ def semaphore_release(key, *, limit, duration_seconds, config):
     .filter(key=key)
     .update(
       value=available,
-      active_count=Value(limit) - available,
       limit=limit,
       expires_at=now + timedelta(seconds=duration_seconds),
       updated_at=now,
@@ -286,13 +270,12 @@ def _release_recovered_concurrency_group(
 
     promoted_jobs = [blocked.job for blocked in promoted_rows]
     semaphore.value = available - len(promoted_jobs)
-    semaphore.active_count = limit - semaphore.value
     semaphore.limit = limit
     semaphore.expires_at = expires_at
     semaphore.updated_at = now
     semaphore.save(
       using=alias,
-      update_fields=["value", "active_count", "limit", "expires_at", "updated_at"],
+      update_fields=["value", "limit", "expires_at", "updated_at"],
     )
 
     _bulk_create_ready_executions(
@@ -331,7 +314,6 @@ def _consume_released_semaphore_slot(alias, key, *, limit, duration_seconds, now
     .filter(key=key, value__gt=0)
     .update(
       value=F("value") - 1,
-      active_count=Value(limit) - F("value") + 1,
       limit=limit,
       expires_at=expires_at,
       updated_at=now,
@@ -348,7 +330,6 @@ def _handoff_released_claimed_slot(alias, key, *, limit, duration_seconds, now):
     .filter(key=key, value__gt=F("limit") - Value(limit) - Value(1))
     .update(
       value=available - Value(1),
-      active_count=Value(limit) - available + Value(1),
       limit=limit,
       expires_at=expires_at,
       updated_at=now,

@@ -41,7 +41,7 @@ result(f"ready_executions={ReadyExecution.objects.count()}")
 result(f"blocked_executions={BlockedExecution.objects.count()}")
 for semaphore in Semaphore.objects.order_by("key"):
   result(
-    f"semaphore key={semaphore.key} active={semaphore.active_count} "
+    f"semaphore key={semaphore.key} active={semaphore.occupied_count} "
     f"available={semaphore.available_count} limit={semaphore.limit}"
   )
 

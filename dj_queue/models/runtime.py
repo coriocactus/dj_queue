@@ -1,11 +1,9 @@
 from django.db import models
-from django.db.models.functions import Coalesce
 
 
 class Semaphore(models.Model):
   key = models.CharField(max_length=255, unique=True)
   value = models.IntegerField()
-  active_count = models.IntegerField(null=True)
   limit = models.IntegerField()
   expires_at = models.DateTimeField()
   created_at = models.DateTimeField(auto_now_add=True)
@@ -40,16 +38,6 @@ class Process(models.Model):
     blank=True,
     on_delete=models.SET_NULL,
     related_name="children",
-  )
-  supervisor_identity = models.GeneratedField(
-    expression=Coalesce(
-      "supervisor_id",
-      models.Value(0, output_field=models.BigIntegerField()),
-      output_field=models.BigIntegerField(),
-    ),
-    output_field=models.BigIntegerField(),
-    db_persist=True,
-    editable=False,
   )
   last_heartbeat_at = models.DateTimeField()
   created_at = models.DateTimeField(auto_now_add=True)

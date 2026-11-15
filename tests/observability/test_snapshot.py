@@ -336,7 +336,6 @@ def test_backend_snapshot_scopes_pause_and_recurring_rows_to_backend(settings):
   Semaphore.objects.create(
     key="account:1",
     value=1,
-    active_count=1,
     limit=2,
     expires_at=now + timedelta(minutes=5),
   )
@@ -351,20 +350,6 @@ def test_backend_snapshot_scopes_pause_and_recurring_rows_to_backend(settings):
   assert snapshot.semaphore_rows[0]["queue_database_alias"] == "default"
   assert snapshot.semaphore_rows[0]["active_count"] == 1
   assert snapshot.semaphore_rows[0]["available_slots"] == 1
-
-
-def test_deep_health_allows_semaphore_occupancy_above_a_reduced_limit():
-  Semaphore.objects.create(
-    key="account:1",
-    value=0,
-    active_count=2,
-    limit=1,
-    expires_at=timezone.now() + timedelta(minutes=5),
-  )
-
-  problems = health.deep_health_problems(backend_alias="default")
-
-  assert not any("semaphores have impossible slot counts" in problem for problem in problems)
 
 
 def test_deep_health_reports_invalid_job_concurrency_policy():
@@ -400,7 +385,6 @@ def test_backend_snapshot_derives_active_count_from_authoritative_value():
   Semaphore.objects.create(
     key="account:mixed-version",
     value=0,
-    active_count=0,
     limit=1,
     expires_at=timezone.now() + timedelta(minutes=5),
   )

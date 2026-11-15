@@ -188,7 +188,7 @@ def _semaphore_health_problems(*, alias):
   problems = []
   bad_semaphores = (
     Semaphore.objects.using(alias)
-    .filter(Q(limit__lt=1) | Q(active_count__lt=0) | Q(value__lt=0) | Q(value__gt=F("limit")))
+    .filter(Q(limit__lt=1) | Q(value__lt=0) | Q(value__gt=F("limit")))
     .count()
   )
   if bad_semaphores:

@@ -791,8 +791,7 @@ def test_bulk_retry_groups_jobs_with_the_same_concurrency_policy():
   assert ReadyExecution.objects.filter(job__in=jobs).count() == 2
   assert BlockedExecution.objects.filter(job__in=jobs).count() == 1
   semaphore = Semaphore.objects.get(key="account:1")
-  assert semaphore.active_count == 2
-  assert semaphore.limit == 2
+  assert (semaphore.value, semaphore.limit) == (0, 2)
 
 
 @pytest.mark.django_db
@@ -1015,7 +1014,6 @@ def test_discard_scheduled_job_does_not_release_semaphore_slot():
   Semaphore.objects.create(
     key="account:1",
     value=0,
-    active_count=1,
     limit=1,
     expires_at=timezone.now() + timedelta(minutes=1),
   )

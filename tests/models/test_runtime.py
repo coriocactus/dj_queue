@@ -24,7 +24,6 @@ def test_runtime_control_models_support_crud():
   semaphore = Semaphore.objects.create(
     key="account:1",
     value=1,
-    active_count=1,
     limit=2,
     expires_at=timezone.now(),
   )
@@ -32,13 +31,11 @@ def test_runtime_control_models_support_crud():
   process = make_process(metadata={"queues": ["default"], "threads": 3})
 
   semaphore.value = 0
-  semaphore.active_count = 2
-  semaphore.save(update_fields=["value", "active_count", "updated_at"])
+  semaphore.save(update_fields=["value", "updated_at"])
   process.metadata = {"queues": ["emails"], "threads": 5}
   process.save(update_fields=["metadata"])
 
   semaphore.refresh_from_db()
-  assert semaphore.active_count == 2
   assert semaphore.occupied_count == 2
   assert semaphore.available_count == semaphore.value == 0
   assert Pause.objects.get(pk=pause.pk).queue_name == "emails"
@@ -85,24 +82,9 @@ def test_semaphore_key_unique():
     Semaphore.objects.create(
       key="account:1",
       value=0,
-      active_count=1,
       limit=1,
       expires_at=timezone.now(),
     )
-
-
-@pytest.mark.django_db
-def test_semaphore_active_count_allows_null_from_legacy_writer():
-  semaphore = Semaphore.objects.create(
-    key="account:1",
-    value=1,
-    active_count=None,
-    limit=1,
-    expires_at=timezone.now(),
-  )
-
-  assert semaphore.active_count is None
-  assert semaphore.occupied_count == 0
 
 
 @pytest.mark.django_db

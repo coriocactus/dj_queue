@@ -362,11 +362,7 @@ class RuntimeSimulation:
     for semaphore in Semaphore.objects.all():
       assert 0 <= semaphore.value <= semaphore.limit, (
         f"seed {self.seed} inconsistent semaphore {semaphore.key}: "
-        f"active={semaphore.active_count} available={semaphore.value} limit={semaphore.limit}"
-      )
-      assert semaphore.active_count == semaphore.occupied_count, (
-        f"seed {self.seed} stale semaphore bridge {semaphore.key}: "
-        f"active={semaphore.active_count} available={semaphore.value} limit={semaphore.limit}"
+        f"available={semaphore.value} limit={semaphore.limit}"
       )
 
     for job in Job.objects.order_by("id"):
