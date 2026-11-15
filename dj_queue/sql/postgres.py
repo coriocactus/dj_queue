@@ -129,7 +129,6 @@ def consume_next_blocked_job_with_released_slot(
   blocked_concurrency_key_column = quote(
     BlockedExecution._meta.get_field("concurrency_key").column
   )
-  blocked_expires_at_column = quote(BlockedExecution._meta.get_field("expires_at").column)
   jobs_table = quote(Job._meta.db_table)
   jobs_id_column = quote(Job._meta.get_field("id").column)
   jobs_backend_alias_column = quote(Job._meta.get_field("backend_alias").column)
@@ -153,7 +152,6 @@ def consume_next_blocked_job_with_released_slot(
           {blocked_table}.{blocked_queue_name_column},
           {blocked_table}.{blocked_priority_column},
           {blocked_table}.{blocked_concurrency_key_column},
-          {blocked_table}.{blocked_expires_at_column},
           {jobs_table}.{jobs_backend_alias_column} AS job_backend_alias
         FROM {blocked_table}
         JOIN {jobs_table}
@@ -185,7 +183,6 @@ def consume_next_blocked_job_with_released_slot(
         selected.{blocked_queue_name_column},
         selected.{blocked_priority_column},
         selected.{blocked_concurrency_key_column},
-        selected.{blocked_expires_at_column},
         selected.job_backend_alias,
         EXISTS (SELECT 1 FROM slot) AS slot_acquired,
         EXISTS (SELECT 1 FROM deleted) AS deleted
@@ -207,77 +204,15 @@ def consume_next_blocked_job_with_released_slot(
 
   if row is None:
     return None
-  if row[6] and not row[7]:
+  if row[5] and not row[6]:
     raise EnqueueError("could not consume selected blocked job")
   return {
     "job_id": row[0],
     "queue_name": row[1],
     "priority": row[2],
     "concurrency_key": row[3],
-    "expires_at": row[4],
-    "job_backend_alias": row[5],
-    "slot_acquired": row[6],
-  }
-
-
-def consume_next_blocked_job(alias, *, backend_alias, key, use_skip_locked):
-  connection = connections[alias]
-  quote = connection.ops.quote_name
-  table = quote(BlockedExecution._meta.db_table)
-  pk_column = quote(BlockedExecution._meta.pk.column)
-  job_id_column = quote(BlockedExecution._meta.get_field("job").column)
-  backend_alias_column = quote(BlockedExecution._meta.get_field("backend_alias").column)
-  queue_name_column = quote(BlockedExecution._meta.get_field("queue_name").column)
-  priority_column = quote(BlockedExecution._meta.get_field("priority").column)
-  concurrency_key_column = quote(BlockedExecution._meta.get_field("concurrency_key").column)
-  expires_at_column = quote(BlockedExecution._meta.get_field("expires_at").column)
-  jobs_table = quote(Job._meta.db_table)
-  jobs_id_column = quote(Job._meta.get_field("id").column)
-  jobs_backend_alias_column = quote(Job._meta.get_field("backend_alias").column)
-  skip_locked_sql = " SKIP LOCKED" if use_skip_locked else ""
-
-  with connection.cursor() as cursor:
-    cursor.execute(
-      f"""
-      WITH selected AS (
-        SELECT
-          {table}.{pk_column},
-          {jobs_table}.{jobs_backend_alias_column} AS job_backend_alias
-        FROM {table}
-        JOIN {jobs_table}
-          ON {jobs_table}.{jobs_id_column} = {table}.{job_id_column}
-        WHERE {table}.{backend_alias_column} = %s
-          AND {table}.{concurrency_key_column} = %s
-        ORDER BY {table}.{priority_column} DESC, {table}.{pk_column} ASC
-        LIMIT 1
-        FOR UPDATE OF {table}{skip_locked_sql}
-      ), deleted AS (
-        DELETE FROM {table}
-        USING selected
-        WHERE {table}.{pk_column} = selected.{pk_column}
-        RETURNING
-          {table}.{job_id_column},
-          {table}.{queue_name_column},
-          {table}.{priority_column},
-          {table}.{concurrency_key_column},
-          {table}.{expires_at_column},
-          selected.job_backend_alias
-      )
-      SELECT * FROM deleted
-      """,
-      [backend_alias, key],
-    )
-    row = cursor.fetchone()
-
-  if row is None:
-    return None
-  return {
-    "job_id": row[0],
-    "queue_name": row[1],
-    "priority": row[2],
-    "concurrency_key": row[3],
-    "expires_at": row[4],
-    "job_backend_alias": row[5],
+    "job_backend_alias": row[4],
+    "slot_acquired": row[5],
   }
 
 

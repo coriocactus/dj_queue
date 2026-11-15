@@ -1374,7 +1374,7 @@ def test_discarding_ready_job_releases_waiter():
 
 
 @pytest.mark.django_db(transaction=True)
-def test_unblock_next_blocked_job_restores_waiter_when_slot_is_not_acquired():
+def test_unblock_next_blocked_job_leaves_waiter_when_slot_is_not_acquired():
   job = make_job(task=limited, args=[1], kwargs={"value": "blocked"}, concurrency_key="account:1")
   expires_at = timezone.now() + timedelta(minutes=1)
   BlockedExecution.objects.create(
@@ -1401,6 +1401,36 @@ def test_unblock_next_blocked_job_restores_waiter_when_slot_is_not_acquired():
   assert blocked.concurrency_key == "account:1"
   assert blocked.expires_at == expires_at
   assert ReadyExecution.objects.filter(job=job).exists() is False
+
+
+@pytest.mark.django_db(transaction=True)
+def test_failed_slot_handoff_under_limit_decrease_debt_keeps_the_head_waiter():
+  policy = {"concurrency_duration": 60, "concurrency_on_conflict": "block"}
+  finishing = make_job(task=limited, concurrency_key="account:1", concurrency_limit=1, **policy)
+  waiters = [
+    BlockedExecution.objects.create(
+      job=make_job(task=limited, concurrency_key="account:1", concurrency_limit=1, **policy),
+      backend_alias="default",
+      queue_name="default",
+      priority=0,
+      concurrency_key="account:1",
+      expires_at=timezone.now() + timedelta(minutes=1),
+    )
+    for _ in range(2)
+  ]
+  # both slots granted at limit 2 are still held, so one release at limit 1 frees nothing
+  Semaphore.objects.create(
+    key="account:1", value=0, limit=2, expires_at=timezone.now() + timedelta(minutes=1)
+  )
+
+  concurrency_operations.release_concurrency_slot(finishing, config=load_backend_config())
+
+  semaphore = Semaphore.objects.get(key="account:1")
+  assert (semaphore.value, semaphore.limit) == (0, 1)
+  assert not ReadyExecution.objects.exists()
+  assert list(BlockedExecution.objects.order_by("id").values_list("id", "created_at")) == [
+    (waiter.id, waiter.created_at) for waiter in waiters
+  ]
 
 
 @pytest.mark.django_db(transaction=True)

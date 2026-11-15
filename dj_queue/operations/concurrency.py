@@ -56,12 +56,6 @@ class BlockedJobRef:
     return self.id
 
 
-@dataclass(frozen=True, slots=True)
-class BlockedSlot:
-  job: BlockedJobRef
-  slot_acquired: bool
-
-
 def semaphore_acquire(key, *, limit, duration_seconds, config):
   alias = config.database_alias
   if database_capabilities(alias).backend_family == "sqlite":
@@ -366,7 +360,7 @@ def unblock_next_blocked_job(
   now = timezone.now()
 
   with transaction.atomic(using=alias, savepoint=False):
-    blocked_slot = _consume_blocked_job_for_slot(
+    job_ref = _consume_blocked_job_for_slot(
       alias,
       backend_alias=backend_alias,
       key=key,
@@ -376,9 +370,8 @@ def unblock_next_blocked_job(
       use_skip_locked=config.use_skip_locked,
       slot_handoff=slot_handoff,
     )
-    if blocked_slot is None or not blocked_slot.slot_acquired:
+    if job_ref is None:
       return None
-    job_ref = blocked_slot.job
 
     _create_ready_execution_after_blocked_consume(
       alias,
@@ -411,10 +404,9 @@ def _consume_blocked_job_for_slot(
   slot_handoff,
 ):
   capabilities = database_capabilities(alias)
-  postgres_released_slot = (
+  if (
     slot_handoff is SlotHandoffMode.RELEASE_CLAIMED and capabilities.backend_family == "postgresql"
-  )
-  if postgres_released_slot:
+  ):
     blocked = backend_sql(alias).consume_next_blocked_job_with_released_slot(
       alias,
       backend_alias=backend_alias,
@@ -424,76 +416,20 @@ def _consume_blocked_job_for_slot(
       now=now,
       use_skip_locked=use_skip_locked and capabilities.supports_skip_locked,
     )
-    slot_acquired = bool(blocked and blocked.pop("slot_acquired"))
-  else:
-    blocked = _consume_next_blocked_job(
-      alias,
+    if blocked is None:
+      return None
+    if blocked["job_backend_alias"] != backend_alias:
+      raise EnqueueError(
+        f"job {blocked['job_id']} belongs to backend {blocked['job_backend_alias']!r}"
+      )
+    if not blocked["slot_acquired"]:
+      return None
+    return BlockedJobRef(
+      id=blocked["job_id"],
       backend_alias=backend_alias,
-      key=key,
-      use_skip_locked=use_skip_locked,
-    )
-    slot_acquired = False
-  if blocked is None:
-    return None
-  if blocked["job_backend_alias"] != backend_alias:
-    raise EnqueueError(
-      f"job {blocked['job_id']} belongs to backend {blocked['job_backend_alias']!r}"
-    )
-
-  if slot_handoff is SlotHandoffMode.RELEASE_CLAIMED and not postgres_released_slot:
-    slot_acquired = _handoff_released_claimed_slot(
-      alias,
-      key,
-      limit=limit,
-      duration_seconds=duration_seconds,
-      now=now,
-    )
-  elif slot_handoff is SlotHandoffMode.CONSUME_RELEASED:
-    slot_acquired = _consume_released_semaphore_slot(
-      alias,
-      key,
-      limit=limit,
-      duration_seconds=duration_seconds,
-      now=now,
-    )
-
-  job_ref = _blocked_job_ref(blocked, backend_alias=backend_alias)
-  if not slot_acquired and not postgres_released_slot:
-    _restore_blocked_execution(alias, blocked, job_ref, backend_alias=backend_alias)
-  return BlockedSlot(job=job_ref, slot_acquired=slot_acquired)
-
-
-def _blocked_job_ref(blocked, *, backend_alias):
-  return BlockedJobRef(
-    id=blocked["job_id"],
-    queue_name=blocked["queue_name"],
-    priority=blocked["priority"],
-    concurrency_key=blocked["concurrency_key"],
-    backend_alias=backend_alias,
-  )
-
-
-def _restore_blocked_execution(alias, blocked, job_ref, *, backend_alias):
-  _create_blocked_execution(
-    alias,
-    job_ref,
-    backend_alias=backend_alias,
-    queue_name=job_ref.queue_name,
-    priority=job_ref.priority,
-    concurrency_key=job_ref.concurrency_key,
-    expires_at=blocked["expires_at"],
-    check_conflicts=True,
-  )
-
-
-def _consume_next_blocked_job(alias, *, backend_alias, key, use_skip_locked):
-  capabilities = database_capabilities(alias)
-  if capabilities.backend_family == "postgresql":
-    return backend_sql(alias).consume_next_blocked_job(
-      alias,
-      backend_alias=backend_alias,
-      key=key,
-      use_skip_locked=use_skip_locked and capabilities.supports_skip_locked,
+      queue_name=blocked["queue_name"],
+      priority=blocked["priority"],
+      concurrency_key=blocked["concurrency_key"],
     )
 
   queryset = (
@@ -507,21 +443,22 @@ def _consume_next_blocked_job(alias, *, backend_alias, key, use_skip_locked):
     return None
   _ensure_state_rows_belong_to_backend([blocked], backend_alias)
 
-  consumed = _consume_selected_rows(alias, BlockedExecution, [blocked])
-  if not consumed:
+  take_slot = (
+    _handoff_released_claimed_slot
+    if slot_handoff is SlotHandoffMode.RELEASE_CLAIMED
+    else _consume_released_semaphore_slot
+  )
+  if not take_slot(alias, key, limit=limit, duration_seconds=duration_seconds, now=now):
     return None
-  return _blocked_execution_values(blocked)
-
-
-def _blocked_execution_values(blocked):
-  return {
-    "job_id": blocked.job_id,
-    "job_backend_alias": blocked.job.backend_alias,
-    "queue_name": blocked.queue_name,
-    "priority": blocked.priority,
-    "concurrency_key": blocked.concurrency_key,
-    "expires_at": blocked.expires_at,
-  }
+  if not _consume_selected_rows(alias, BlockedExecution, [blocked]):
+    raise EnqueueError("could not consume selected blocked job")
+  return BlockedJobRef(
+    id=blocked.job_id,
+    backend_alias=backend_alias,
+    queue_name=blocked.queue_name,
+    priority=blocked.priority,
+    concurrency_key=blocked.concurrency_key,
+  )
 
 
 def _create_ready_execution_after_blocked_consume(

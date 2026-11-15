@@ -275,7 +275,7 @@ def test_keyed_completion_keeps_the_transaction_around_the_statement_and_slot_re
   with CaptureQueriesContext(connection) as ctx:
     complete(job)
 
-  assert first_words(ctx) == ["BEGIN", "WITH", "WITH", "UPDATE", "WITH", "COMMIT"]
+  assert first_words(ctx) == ["BEGIN", "WITH", "WITH", "UPDATE", "SELECT", "COMMIT"]
   assert claimed_row(job) is None
   assert Job.objects.get(pk=job.pk).return_value == "done"
   assert Semaphore.objects.get(key=job.concurrency_key).value == 1
