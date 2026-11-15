@@ -671,3 +671,15 @@ def test_health_command_deep_reports_runtime_integrity_problems(capsys):
   assert "claimed execution rows have missing or stale processes" in stderr
   assert "recurring execution reservations have no job" in stderr
   assert "semaphores have impossible slot counts" in stderr
+
+
+def test_dj_queue_command_exits_nonzero_when_supervisor_stops_unrequested(monkeypatch):
+  monkeypatch.setattr(
+    "dj_queue.management.commands.dj_queue.build_supervisor",
+    lambda config: SimpleNamespace(run=lambda: False),
+  )
+
+  with pytest.raises(SystemExit) as exit_info:
+    call_command("dj_queue")
+
+  assert exit_info.value.code == 1

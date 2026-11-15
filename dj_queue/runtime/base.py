@@ -104,6 +104,7 @@ class BaseRunner:
     self._process_alive_threshold = process_alive_threshold
     self._started = False
     self._stopped = False
+    self._aborted = False
     self._last_liveness_check_at = None
 
   @property
@@ -116,27 +117,19 @@ class BaseRunner:
   def run(self):
     try:
       self.start()
-      self.run_poll_loop()
+      return self.run_poll_loop()
     finally:
       self.stop()
       close_old_connections()
 
   def run_poll_loop(self):
-    while True:
-      should_continue = self._should_continue_handled()
-      if should_continue is None:
-        return False
-      if not should_continue:
-        return True
+    while self._should_continue_handled():
       if not self._poll_once_handled():
         return False
-      should_continue = self._should_continue_handled()
-      if should_continue is None:
-        return False
-      if not should_continue:
+      if self.stop_requested():
         break
       self.sleeper.sleep(self.polling_interval)
-    return True
+    return not self._aborted
 
   def run_managed_poll_loop(self, *, host_stop_requested):
     while not self.stop_requested() and not host_stop_requested():
@@ -163,6 +156,10 @@ class BaseRunner:
   def stop_requested(self):
     return self._stop_event.is_set()
 
+  def _abort(self):
+    self._aborted = True
+    self.request_stop()
+
   def should_continue(self):
     if self._stop_event.is_set():
       return False
@@ -172,23 +169,22 @@ class BaseRunner:
       return True
 
     alias = self.backend_config.database_alias
+    self._last_liveness_check_at = time.monotonic()
     with app_executor():
       exists = sqlite_retry(
         lambda: Process.objects.using(alias).filter(pk=self.process.pk).exists(), alias=alias
       )
-    self._last_liveness_check_at = time.monotonic()
     if exists:
       return True
 
-    self.request_stop()
+    self._abort()
     return False
 
   def poll_once(self):
     raise NotImplementedError
 
   def poll_once_if_running(self):
-    should_continue = self._should_continue_handled()
-    if should_continue is None or not should_continue:
+    if not self._should_continue_handled():
       return False
     return self._poll_once_handled()
 
@@ -213,7 +209,7 @@ class BaseRunner:
         context=f"{self.hook_prefix}.liveness",
         config=self.backend_config,
       )
-      return None
+      return True
 
   def process_metadata(self):
     return {}
@@ -333,11 +329,10 @@ class BaseRunner:
           context=f"{self.hook_prefix}.heartbeat",
           config=self.backend_config,
         )
-        self.request_stop()
-        return
+        continue
 
       if updated == 0:
-        self.request_stop()
+        self._abort()
         return
 
   def _touch_process_row(self):

@@ -307,6 +307,7 @@ In standalone mode, both `fork` and `async` `python manage.py dj_queue` supervis
 
 - `SIGTERM` and `SIGINT` request graceful shutdown
 - `SIGQUIT` requests immediate process exit through normal Python cleanup
+- a supervisor that stops without a requested shutdown exits with status `1`
 - `shutdown_timeout` controls how long the runtime waits for in-flight work to drain
 - `supervisor_pidfile` can prevent duplicate standalone supervisors on one host
 

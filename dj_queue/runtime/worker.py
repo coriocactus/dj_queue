@@ -146,7 +146,7 @@ class Worker(BaseRunner):
           context="worker.execute",
           config=self.backend_config,
         )
-      self.request_stop()
+      self._abort()
 
   def _handle_submit_error(self, claimed_job, error):
     with app_executor():
@@ -159,7 +159,7 @@ class Worker(BaseRunner):
         context="worker.submit",
         config=self.backend_config,
       )
-    self.request_stop()
+    self._abort()
 
   def _fail_claimed_job_after_worker_error(self, claimed_job, error):
     try:

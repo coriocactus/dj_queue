@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 from django.db import connection, connections, transaction
+from django.db.utils import OperationalError
 
 from dj_queue.config import load_backend_config
 from dj_queue.hooks import clear_hooks, register_hook
@@ -197,26 +198,74 @@ def test_runner_liveness_check_keeps_minimum_cadence(monkeypatch):
   assert entered.count(test_thread) == 1
 
 
-def test_runner_poll_loop_routes_liveness_errors(monkeypatch):
+def test_runner_poll_loop_reports_a_liveness_error_and_keeps_polling(monkeypatch):
   handled = []
   runner = DummyRunner(heartbeat_interval=60)
   runner.start()
+  should_continue = runner.should_continue
+  failures = [RuntimeError("liveness failed")]
 
-  def fail_liveness():
-    raise RuntimeError("liveness failed")
+  def flaky_liveness():
+    if failures:
+      raise failures.pop()
+    return should_continue()
 
-  monkeypatch.setattr(runner, "should_continue", fail_liveness)
+  monkeypatch.setattr(runner, "should_continue", flaky_liveness)
+  monkeypatch.setattr(runner, "poll_once", runner.request_stop)
   monkeypatch.setattr(
     "dj_queue.runtime.base.handle_thread_error",
     lambda error, **kwargs: handled.append((str(error), kwargs["context"])),
   )
 
   try:
-    assert runner.run_poll_loop() is False
+    assert runner.run_poll_loop() is True
   finally:
     runner.stop()
 
   assert handled == [("liveness failed", "worker.liveness")]
+
+
+def test_runner_heartbeat_error_is_reported_and_retried(monkeypatch):
+  handled = []
+  runner = DummyRunner(heartbeat_interval=0.01)
+  touch_process_row = runner._touch_process_row
+  failures = [OperationalError("database unavailable")]
+
+  def flaky_touch():
+    if failures:
+      raise failures.pop()
+    return touch_process_row()
+
+  runner._touch_process_row = flaky_touch
+  monkeypatch.setattr(
+    "dj_queue.runtime.base.handle_thread_error",
+    lambda error, **kwargs: handled.append((str(error), kwargs["context"])),
+  )
+  process = runner.start()
+
+  try:
+    wait_until(lambda: handled)
+    assert runner.stop_requested() is False
+    reported_at = Process.objects.get(pk=process.pk).last_heartbeat_at
+    wait_until(lambda: Process.objects.get(pk=process.pk).last_heartbeat_at > reported_at)
+  finally:
+    runner.stop()
+
+  assert handled == [("database unavailable", "worker.heartbeat")]
+
+
+def test_runner_run_reports_whether_it_stopped_on_request():
+  requested = DummyRunner()
+  requested.poll_once = requested.request_stop
+  crashed = DummyRunner()
+  crashed.poll_once = lambda: crashed.missing_attribute
+  pruned = DummyRunner()
+  pruned.poll_once = lambda: Process.objects.filter(pk=pruned.process.pk).delete()
+
+  assert requested.run() is True
+  assert crashed.run() is False
+  assert pruned.run() is False
+  assert Process.objects.exists() is False
 
 
 def test_runner_stop_joins_heartbeat_thread():

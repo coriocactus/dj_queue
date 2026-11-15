@@ -2085,3 +2085,30 @@ def test_supervisor_stop_does_not_delete_replaced_pidfile(tmp_path):
 
   assert pidfile.exists() is True
   assert pidfile.read_text() == "999999"
+
+
+def test_supervisor_poll_loop_survives_a_liveness_probe_error(monkeypatch):
+  handled = []
+  monkeypatch.setattr(
+    "dj_queue.runtime.base.handle_thread_error",
+    lambda error, **kwargs: handled.append((str(error), kwargs["context"])),
+  )
+  supervisor = make_supervisor()
+  supervisor.start()
+  should_continue = supervisor.should_continue
+  failures = [OperationalError("database unavailable")]
+
+  def flaky_liveness():
+    if failures:
+      raise failures.pop()
+    return should_continue()
+
+  monkeypatch.setattr(supervisor, "should_continue", flaky_liveness)
+  monkeypatch.setattr(supervisor, "poll_once", supervisor.request_stop)
+
+  try:
+    assert supervisor.run_poll_loop() is True
+  finally:
+    supervisor.stop()
+
+  assert handled == [("database unavailable", "supervisor.liveness")]

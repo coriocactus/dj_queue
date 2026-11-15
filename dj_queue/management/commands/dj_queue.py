@@ -1,4 +1,5 @@
 import math
+import sys
 import time
 
 from django.core.exceptions import ImproperlyConfigured
@@ -121,4 +122,5 @@ class Command(BaseCommand):
       )
     except ImproperlyConfigured as exc:
       raise CommandError(str(exc)) from exc
-    build_supervisor(config).run()
+    if not build_supervisor(config).run():
+      sys.exit(1)
