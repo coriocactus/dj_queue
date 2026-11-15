@@ -349,7 +349,6 @@ def consume_ready_and_create_claimed_executions(alias, ready_rows, *, process, c
   claimed_job_id_column = quote(ClaimedExecution._meta.get_field("job").column)
   process_id_column = quote(ClaimedExecution._meta.get_field("process").column)
   created_at_column = quote(ClaimedExecution._meta.get_field("created_at").column)
-  values_sql = ", ".join(["(%s::bigint)"] * len(ready_rows))
   state_checks = state_absence_checks_sql(
     state_models_except(ReadyExecution),
     quote=quote,
@@ -360,12 +359,9 @@ def consume_ready_and_create_claimed_executions(alias, ready_rows, *, process, c
   with connection.cursor() as cursor:
     cursor.execute(
       f"""
-      WITH selected_ready(id) AS (
-        VALUES {values_sql}
-      ), deleted_ready AS (
+      WITH deleted_ready AS (
         DELETE FROM {ready_table}
-        USING selected_ready
-        WHERE {ready_table}.{ready_pk_column} = selected_ready.id
+        WHERE {ready_table}.{ready_pk_column} = ANY(%s::bigint[])
         RETURNING {ready_table}.{ready_job_id_column}
       ), claimed_input AS (
         SELECT
@@ -387,7 +383,7 @@ def consume_ready_and_create_claimed_executions(alias, ready_rows, *, process, c
       WHERE {state_checks}
       RETURNING {claimed_job_id_column}
       """,
-      [*[row.pk for row in ready_rows], process_id, claimed_at],
+      [[row.pk for row in ready_rows], process_id, claimed_at],
     )
     return [row[0] for row in cursor.fetchall()]
 

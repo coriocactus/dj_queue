@@ -122,14 +122,14 @@ def test_completion_cost_does_not_follow_the_jobs_table(state, maintenance):
 
 CONSUME_SCANS_READY_TABLE = pytest.mark.xfail(
   strict=True,
-  reason="the consume reads the whole ready table when statistics undercount it",
+  reason="statistics of a drained table price every index probe above a scan of the ready table",
 )
 
 
 @pytest.mark.parametrize(
   "state",
   [
-    pytest.param(state, marks=() if state == "fresh statistics" else CONSUME_SCANS_READY_TABLE)
+    pytest.param(state, marks=CONSUME_SCANS_READY_TABLE if state == "post-backlog" else ())
     for state in STATES
   ],
 )
