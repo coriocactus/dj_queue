@@ -118,6 +118,14 @@ def test_cron_timezone_fires_twice_on_the_fall_back_day():
   assert previous_cron_run(schedule, dt(2026, 11, 1, 6, 30)) == dt(2026, 11, 1, 5, 30)
 
 
+def test_cron_timezone_orders_runs_on_the_timeline_through_the_repeated_hour():
+  schedule = "*/15 * * * * America/New_York"
+
+  assert next_cron_run(schedule, dt(2026, 11, 1, 5, 0)) == dt(2026, 11, 1, 5, 15)
+  assert previous_cron_run(schedule, dt(2026, 11, 1, 6, 15)) == dt(2026, 11, 1, 6, 0)
+  assert latest_cron_run(schedule, dt(2026, 11, 1, 6, 15)) == dt(2026, 11, 1, 6, 15)
+
+
 def test_cron_timezone_skips_the_spring_forward_day():
   schedule = "30 2 * * * America/New_York"
 

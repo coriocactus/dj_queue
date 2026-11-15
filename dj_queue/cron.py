@@ -1193,13 +1193,10 @@ def _find_run_for_schedule(schedule: _Schedule, base: datetime, *, direction: in
 
   for _ in range(_MAX_SEARCH_DAYS):
     if _matches_date(schedule, local_date, local_timezone):
-      for candidate in _candidate_times(
-        schedule,
-        local_date,
-        local_base,
-        local_timezone,
-        direction,
-      ):
+      candidates = _candidate_times(schedule, local_date, local_base, local_timezone, direction)
+      if _changes_offset(local_date, local_timezone):
+        candidates = sorted(candidates, reverse=direction < 0)
+      for candidate in candidates:
         if (direction > 0 and candidate > timeline_base) or (
           direction < 0 and candidate < timeline_base
         ):
@@ -1243,6 +1240,11 @@ def _restore_timeline(
 def _matches_date(schedule: _Schedule, local_date: date, local_timezone: tzinfo | None) -> bool:
   moment = datetime(local_date.year, local_date.month, local_date.day, tzinfo=local_timezone)
   return schedule.months.matches(moment.month) and schedule._matches_day(moment)
+
+
+def _changes_offset(local_date: date, local_timezone: tzinfo | None) -> bool:
+  midnight = datetime(local_date.year, local_date.month, local_date.day, tzinfo=local_timezone)
+  return midnight.utcoffset() != (midnight + _ONE_DAY).utcoffset()
 
 
 def _candidate_times(
