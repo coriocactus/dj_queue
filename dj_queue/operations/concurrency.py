@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from enum import StrEnum
 
-from django.db import connections, transaction
+from django.db import transaction
 from django.db.models import F, Q, Value
 from django.db.models.functions import Greatest, Least
 from django.utils import timezone
@@ -64,53 +64,21 @@ class BlockedSlot:
 
 def semaphore_acquire(key, *, limit, duration_seconds, config):
   alias = config.database_alias
-  now = timezone.now()
-  expires_at = now + timedelta(seconds=duration_seconds)
-  backend_family = database_capabilities(alias).backend_family
-
-  if backend_family in {"postgresql", "mysql", "mariadb"}:
-    return backend_sql(alias).semaphore_acquire(
-      alias,
-      key,
-      limit=limit,
-      expires_at=expires_at,
-      now=now,
-    )
-
-  with _operation_atomic(alias):
-    if create_ignore_conflicts(
-      Semaphore,
-      using=alias,
-      key=key,
-      value=limit - 1,
-      limit=limit,
-      expires_at=expires_at,
-    ):
-      return True
-
-  available = _reconciled_available_expression(limit)
-  with _operation_atomic(alias):
-    updated = (
-      Semaphore.objects.using(alias)
-      .filter(key=key, value__gt=F("limit") - Value(limit))
-      .update(
-        value=available - Value(1),
-        limit=limit,
-        expires_at=expires_at,
-        updated_at=now,
+  if database_capabilities(alias).backend_family == "sqlite":
+    return bool(
+      semaphore_acquire_many(
+        key, count=1, limit=limit, duration_seconds=duration_seconds, config=config
       )
     )
-    if updated:
-      return True
 
-    Semaphore.objects.using(alias).filter(key=key).filter(
-      Q(value__lt=available) | Q(value__gt=available) | ~Q(limit=limit)
-    ).update(
-      value=available,
-      limit=limit,
-      updated_at=now,
-    )
-  return False
+  now = timezone.now()
+  return backend_sql(alias).semaphore_acquire(
+    alias,
+    key,
+    limit=limit,
+    expires_at=now + timedelta(seconds=duration_seconds),
+    now=now,
+  )
 
 
 def semaphore_acquire_many(
@@ -124,47 +92,32 @@ def semaphore_acquire_many(
   if count <= 0:
     return 0
   alias = config.database_alias
-  now = timezone.now()
-  expires_at = now + timedelta(seconds=duration_seconds)
+  expires_at = timezone.now() + timedelta(seconds=duration_seconds)
 
-  with _operation_atomic(alias):
+  with transaction.atomic(using=alias, savepoint=False):
     acquired = min(count, limit)
-    semaphore, created = (
-      Semaphore.objects.using(alias)
-      .select_for_update()
-      .get_or_create(
+    semaphore = None
+    # cleanup can delete the conflicting row before it is locked
+    while semaphore is None:
+      if create_ignore_conflicts(
+        Semaphore,
+        using=alias,
         key=key,
-        defaults={
-          "value": limit - acquired,
-          "limit": limit,
-          "expires_at": expires_at,
-          "updated_at": now,
-        },
-      )
-    )
-    if created:
-      return acquired
+        value=limit - acquired,
+        limit=limit,
+        expires_at=expires_at,
+      ):
+        return acquired
+      semaphore = Semaphore.objects.using(alias).select_for_update().filter(key=key).first()
 
-    available = min(limit, max(0, semaphore.value + limit - semaphore.limit))
+    available = _available_slots(semaphore, limit)
     acquired = min(count, available)
-    value = available - acquired
-    if acquired:
-      semaphore.value = value
+    if acquired or semaphore.value != available or semaphore.limit != limit:
+      semaphore.value = available - acquired
       semaphore.limit = limit
-      semaphore.expires_at = expires_at
-      semaphore.updated_at = now
-      semaphore.save(
-        using=alias,
-        update_fields=["value", "limit", "expires_at", "updated_at"],
-      )
-    elif semaphore.value != value or semaphore.limit != limit:
-      semaphore.value = value
-      semaphore.limit = limit
-      semaphore.updated_at = now
-      semaphore.save(
-        using=alias,
-        update_fields=["value", "limit", "updated_at"],
-      )
+      if acquired:
+        semaphore.expires_at = expires_at
+      semaphore.save(using=alias, update_fields=["value", "limit", "expires_at", "updated_at"])
     return acquired
 
 
@@ -243,7 +196,7 @@ def _release_recovered_concurrency_group(
   now = timezone.now()
   expires_at = now + timedelta(seconds=duration_seconds)
 
-  with _operation_atomic(alias):
+  with transaction.atomic(using=alias, savepoint=False):
     blocked_rows = []
     if release_count > 0:
       queryset = (
@@ -262,7 +215,7 @@ def _release_recovered_concurrency_group(
     if semaphore is None:
       return []
 
-    available = min(limit, max(0, semaphore.value + limit - semaphore.limit + release_count))
+    available = _available_slots(semaphore, limit, released=release_count)
     promote_count = min(release_count, available, len(blocked_rows))
     promoted_rows = blocked_rows[:promote_count]
     if promoted_rows:
@@ -345,8 +298,8 @@ def _released_available_expression(limit):
   )
 
 
-def _reconciled_available_expression(limit):
-  return Least(Value(limit), Greatest(Value(0), F("value") + Value(limit) - F("limit")))
+def _available_slots(semaphore, limit, *, released=0):
+  return min(limit, max(0, semaphore.value + limit - semaphore.limit + released))
 
 
 def concurrency_settings(task, *, config):
@@ -412,7 +365,7 @@ def unblock_next_blocked_job(
   backend_alias = config.backend_alias
   now = timezone.now()
 
-  with _operation_atomic(alias):
+  with transaction.atomic(using=alias, savepoint=False):
     blocked_slot = _consume_blocked_job_for_slot(
       alias,
       backend_alias=backend_alias,
@@ -783,10 +736,6 @@ def _positive_int_option(value, name):
   if number <= 0:
     raise EnqueueError(f"{name} must be a positive integer")
   return number
-
-
-def _operation_atomic(alias):
-  return transaction.atomic(using=alias, savepoint=not connections[alias].in_atomic_block)
 
 
 def release_concurrency_slot(job, *, config, task=None):

@@ -34,11 +34,7 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
   expires_at_column = quote("expires_at")
   created_at_column = quote("created_at")
   updated_at_column = quote("updated_at")
-  conflicted_available = (
-    f"LEAST(EXCLUDED.{limit_column}, "
-    f"GREATEST(0, {table}.{value_column} + EXCLUDED.{limit_column} - {table}.{limit_column}))"
-  )
-  current_available = f"LEAST(%s, GREATEST(0, {value_column} + %s - {limit_column}))"
+  available = _available_slots_sql(quote, released=0)
 
   with connection.cursor() as cursor:
     cursor.execute(
@@ -55,7 +51,7 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
         VALUES (%s, %s, %s, %s, %s, %s)
         ON CONFLICT ({key_column}) DO UPDATE
         SET
-          {value_column} = {conflicted_available} - 1,
+          {value_column} = {available} - 1,
           {limit_column} = EXCLUDED.{limit_column},
           {expires_at_column} = EXCLUDED.{expires_at_column},
           {updated_at_column} = EXCLUDED.{updated_at_column}
@@ -64,13 +60,13 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
       ), reconciled AS (
         UPDATE {table}
         SET
-          {value_column} = {current_available},
+          {value_column} = {available},
           {limit_column} = %s,
           {updated_at_column} = %s
         WHERE {key_column} = %s
           AND NOT EXISTS (SELECT 1 FROM acquired)
           AND (
-            {value_column} <> {current_available}
+            {value_column} <> {available}
             OR {limit_column} <> %s
           )
         RETURNING FALSE AS acquired
@@ -89,6 +85,8 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
         limit,
         limit,
         limit,
+        limit,
+        limit,
         now,
         key,
         limit,
@@ -99,6 +97,15 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
     row = cursor.fetchone()
 
   return bool(row and row[0])
+
+
+def _available_slots_sql(quote, *, released):
+  table = quote(Semaphore._meta.db_table)
+  value_column = quote(Semaphore._meta.get_field("value").column)
+  limit_column = quote(Semaphore._meta.get_field("limit").column)
+  return (
+    f"LEAST(%s, GREATEST(0, {table}.{value_column} + %s - {table}.{limit_column} + {released}))"
+  )
 
 
 def consume_next_blocked_job_with_released_slot(
@@ -134,12 +141,7 @@ def consume_next_blocked_job_with_released_slot(
   semaphore_updated_at_column = quote(Semaphore._meta.get_field("updated_at").column)
   skip_locked_sql = " SKIP LOCKED" if use_skip_locked else ""
   expires_at = now + timedelta(seconds=duration_seconds)
-  released_available = (
-    f"LEAST(%s, GREATEST(0, "
-    f"{semaphore_table}.{semaphore_value_column} + %s - "
-    f"{semaphore_table}.{semaphore_limit_column} + 1))"
-  )
-  released_value = f"{released_available} - 1"
+  released_value = f"{_available_slots_sql(quote, released=1)} - 1"
 
   with connection.cursor() as cursor:
     cursor.execute(

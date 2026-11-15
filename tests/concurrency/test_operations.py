@@ -771,6 +771,34 @@ def test_semaphore_acquire_many_reserves_available_slots():
 
 
 @pytest.mark.django_db
+def test_semaphore_acquire_many_first_acquire_uses_no_savepoint():
+  with CaptureQueriesContext(connection) as ctx:
+    semaphore_acquire_many(
+      "account:bulk", count=1, limit=1, duration_seconds=60, config=load_backend_config()
+    )
+
+  assert not [query["sql"] for query in ctx.captured_queries if "SAVEPOINT" in query["sql"]]
+
+
+@pytest.mark.django_db
+def test_semaphore_acquire_many_recreates_a_row_deleted_after_the_insert_conflict(monkeypatch):
+  create = concurrency_operations.create_ignore_conflicts
+  conflicts = iter([False])
+  monkeypatch.setattr(
+    concurrency_operations,
+    "create_ignore_conflicts",
+    lambda *args, **kwargs: next(conflicts, None) is None and create(*args, **kwargs),
+  )
+
+  acquired = semaphore_acquire_many(
+    "account:bulk", count=3, limit=2, duration_seconds=60, config=load_backend_config()
+  )
+
+  assert acquired == 2
+  assert Semaphore.objects.get(key="account:bulk").value == 0
+
+
+@pytest.mark.django_db
 def test_enqueue_with_concurrency_limit_reached_goes_blocked():
   limited.enqueue(1, value="first")
   second = limited.enqueue(1, value="second")

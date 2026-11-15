@@ -19,7 +19,7 @@ pytestmark = pytest.mark.django_db(transaction=True)
 EXPECTED_STATEMENTS = {
   "enqueue": {"postgres": 2, "mysql": 2, "mariadb": 2, "sqlite": 2},
   "enqueue keyed": {"postgres": 3, "mysql": 3, "mariadb": 3, "sqlite": 3},
-  "enqueue blocked": {"postgres": 3, "mysql": 3, "mariadb": 3, "sqlite": 5},
+  "enqueue blocked": {"postgres": 3, "mysql": 3, "mariadb": 3, "sqlite": 4},
   "claim": {"postgres": 5, "mysql": 6, "mariadb": 6, "sqlite": 5},
   "claim keyed": {"postgres": 5, "mysql": 6, "mariadb": 6, "sqlite": 5},
   # postgres is pinned by tests/postgres/test_completion_statement.py
