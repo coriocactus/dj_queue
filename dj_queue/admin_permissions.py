@@ -1,6 +1,7 @@
 from django.core.exceptions import PermissionDenied
 
 ACTION_PERMISSIONS = {
+  "view": "dj_queue.view_job",
   "enqueue": "dj_queue.add_job",
   "enqueue_copy_now": "dj_queue.add_job",
   "run_now": "dj_queue.change_job",

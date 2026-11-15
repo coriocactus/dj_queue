@@ -154,6 +154,7 @@ class DashboardAdmin(admin.ModelAdmin):
     ] + super().get_urls()
 
   def queue_view(self, request, queue_name):
+    require_action_permission(request.user, "view")
     backend_alias = dashboard.resolve_backend_alias(request.GET.get("backend"))
     state = request.GET.get("state", "ready")
     page_number = request.GET.get("page", 1)

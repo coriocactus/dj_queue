@@ -131,8 +131,23 @@ def test_control_object_actions_require_delete_permission(staff_client, model, a
   assert model.objects.filter(pk=obj.pk).exists() is not allowed
 
 
+@pytest.mark.parametrize("allowed", [False, True])
+def test_queue_drill_down_requires_view_job(staff_client, allowed):
+  client = staff_client(*(("view_job",) if allowed else ()))
+  make_failed_job(message="secret payload detail")
+
+  overview = client.get(reverse("admin:dj_queue_dashboard_changelist"))
+  response = client.get(
+    reverse("admin:dj_queue_dashboard_queue", args=["default"]), {"state": "failed"}
+  )
+
+  assert overview.status_code == 200
+  assert response.status_code == (200 if allowed else 403)
+  assert (b"secret payload detail" in response.content) is allowed
+
+
 def test_dashboard_remains_visible_without_mutation_controls(staff_client):
-  client = staff_client()
+  client = staff_client("view_job")
   make_ready_job(args=["visible"])
 
   response = client.get(reverse("admin:dj_queue_dashboard_queue", args=["default"]))
