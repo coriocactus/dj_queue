@@ -79,7 +79,7 @@ def test_claim_cost_is_bounded_by_the_claim_limit(state, maintenance):
   jit = {}
   rows = {}
   for form, queues in SELECTOR_FORMS.items():
-    plans = _explain(_claim_statements(queues))
+    plans = _explain(_claim_statements(queues)[:-1])
     node_types = re.findall(r'"Node Type": "([^"]+)"', json.dumps(plans))
     buffers[form] = sum(
       plan["Plan"]["Shared Hit Blocks"] + plan["Plan"]["Shared Read Blocks"] for plan in plans
@@ -117,6 +117,42 @@ def test_completion_cost_does_not_follow_the_jobs_table(state, maintenance):
   # the ready-state check may still scan the ready table after a drained backlog, which stays
   # under the bound at this backlog; a plan that walks the jobs table or its index does not
   assert buffers < BUFFER_BOUND, buffers
+  assert "JIT" not in plan
+
+
+CONSUME_SCANS_READY_TABLE = pytest.mark.xfail(
+  strict=True,
+  reason="the consume reads the whole ready table when statistics undercount it",
+)
+
+
+@pytest.mark.parametrize(
+  "state",
+  [
+    pytest.param(state, marks=() if state == "fresh statistics" else CONSUME_SCANS_READY_TABLE)
+    for state in STATES
+  ],
+)
+def test_consume_cost_is_bounded_by_the_claim_limit(state, maintenance):
+  _build_state(state, maintenance)
+  *reads, consume = _claim_statements("*")
+  settings = [sql for sql in reads if sql.startswith("SET LOCAL")]
+
+  (plan,) = _explain([*settings, consume])
+  buffers = plan["Plan"]["Shared Hit Blocks"] + plan["Plan"]["Shared Read Blocks"]
+  ready_rows = _scanned_rows(plan["Plan"], "dj_queue_ready_executions")
+  logger.info(
+    "consume plan bounds server=%s state=%r buffers=%s ready_rows=%s",
+    connection.pg_version,
+    state,
+    buffers,
+    ready_rows,
+  )
+
+  # a ready-table scan stays under the buffer bound at this backlog, so the rows it reads
+  # are bounded as well
+  assert buffers < BUFFER_BOUND, buffers
+  assert ready_rows <= LIMIT, ready_rows
   assert "JIT" not in plan
 
 
@@ -175,11 +211,11 @@ def _vacuum_analyze(maintenance, *tables):
 def _claim_statements(queues):
   statements = []
 
-  # aborting before the consume leaves every selector form the same state to claim from
+  # aborting at the consume leaves every selector form the same state to claim from
   def capture(execute, sql, params, many, context):
+    statements.append(connection.ops.compose_sql(sql, params))
     if "dj_queue_claimed_executions" in sql:
       raise Captured
-    statements.append(connection.ops.compose_sql(sql, params))
     return execute(sql, params, many, context)
 
   with connection.execute_wrapper(capture), pytest.raises(Captured):
@@ -213,3 +249,10 @@ def _explain(statements):
       plans.append(cursor.fetchone()[0][0])
     transaction.set_rollback(True)
   return plans
+
+
+def _scanned_rows(node, relation):
+  rows = 0
+  if node.get("Relation Name") == relation and "Scan" in node["Node Type"]:
+    rows = (node["Actual Rows"] + node.get("Rows Removed by Filter", 0)) * node["Actual Loops"]
+  return rows + sum(_scanned_rows(child, relation) for child in node.get("Plans", ()))
