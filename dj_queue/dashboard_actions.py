@@ -1,3 +1,5 @@
+from itertools import batched
+
 from dj_queue.api import QueueInfo
 from dj_queue.operations.jobs import (
   discard_blocked_jobs,
@@ -9,6 +11,7 @@ from dj_queue.operations.jobs import (
 )
 from dj_queue.queue_state import queue_state_queryset
 
+JOB_ACTION_BATCH_SIZE = 500
 QUEUE_JOB_ACTIONS = {
   "ready": ({"name": "discard", "label": "discard selected"},),
   "claimed": (),
@@ -62,9 +65,16 @@ def apply_job_action(*, backend_alias, queue_name, state, action, job_ids):
     return f"enqueued {len(job_ids)} finished jobs again from {queue_name}"
 
   operation = retry_failed_jobs if action == "retry" else DISCARD_OPERATIONS[state]
-  count = operation(job_ids=job_ids, batch_size=max(len(job_ids), 1), backend_alias=backend_alias)
+  count = run_in_batches(operation, job_ids, backend_alias=backend_alias)
   verb = "retried" if action == "retry" else "discarded"
   return f"{verb} {count} {state} jobs from {queue_name}"
+
+
+def run_in_batches(operation, job_ids, *, backend_alias):
+  return sum(
+    operation(job_ids=batch, batch_size=len(batch), backend_alias=backend_alias)
+    for batch in batched(job_ids, JOB_ACTION_BATCH_SIZE)
+  )
 
 
 def job_actions_for_state(state):

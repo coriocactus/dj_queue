@@ -639,31 +639,8 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
       self.message_user(request, "This job is not failed", level=messages.ERROR)
       return HttpResponseRedirect(object_url)
 
-    if action == "retry":
-      return self._run_change_operation(
-        request,
-        operation=lambda: retry_failed_job(
-          obj.failed_execution.job_id, backend_alias=backend_alias
-        ),
-        success_message="Retried failed job",
-        error_message="Could not retry failed job",
-        success_url=object_url,
-        error_url=object_url,
-      )
-
-    if action == "discard":
-      return self._run_change_operation(
-        request,
-        operation=lambda: discard_failed_job(
-          obj.failed_execution.job_id, backend_alias=backend_alias
-        ),
-        success_message="Discarded failed job",
-        error_message="Could not discard failed job",
-        success_url=self._changelist_url(backend_alias=backend_alias),
-        error_url=object_url,
-      )
-
-    return HttpResponseRedirect(object_url)
+    failed_admin = self.admin_site.get_model_admin(FailedExecution)
+    return failed_admin.handle_change_action(request, obj.failed_execution, action)
 
 
 @admin.register(FailedExecution)
@@ -691,10 +668,9 @@ class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   def retry_jobs(self, request, queryset):
     require_action_permission(request.user, "retry")
     try:
-      job_ids = list(queryset.values_list("job_id", flat=True))
-      retried = retry_failed_jobs(
-        job_ids=job_ids,
-        batch_size=max(len(job_ids), 1),
+      retried = dashboard_actions.run_in_batches(
+        retry_failed_jobs,
+        queryset.values_list("job_id", flat=True),
         backend_alias=self._backend_alias(request),
       )
     except ADMIN_ACTION_ERRORS as exc:
@@ -706,10 +682,9 @@ class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   def discard_jobs(self, request, queryset):
     require_action_permission(request.user, "discard")
     try:
-      job_ids = list(queryset.values_list("job_id", flat=True))
-      discarded = discard_failed_jobs(
-        job_ids=job_ids,
-        batch_size=max(len(job_ids), 1),
+      discarded = dashboard_actions.run_in_batches(
+        discard_failed_jobs,
+        queryset.values_list("job_id", flat=True),
         backend_alias=self._backend_alias(request),
       )
     except ADMIN_ACTION_ERRORS as exc:

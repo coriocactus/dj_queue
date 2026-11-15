@@ -6,6 +6,8 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
+from dj_queue import admin as admin_module
+from dj_queue import dashboard_actions
 from dj_queue.admin import _install_dj_queue_admin_site
 from dj_queue.models import (
   BlockedExecution,
@@ -408,6 +410,67 @@ def test_failed_execution_admin_backend_param_controls_shared_database_scope(
   content = response.content.decode()
   assert str(secondary_job.id) in content
   assert str(default_job.id) not in content
+
+
+@pytest.mark.parametrize(
+  ("action", "operation"),
+  [("retry_jobs", "retry_failed_jobs"), ("discard_jobs", "discard_failed_jobs")],
+)
+def test_failed_execution_admin_select_all_runs_in_batches(
+  admin_client, monkeypatch, action, operation
+):
+  jobs = Job.objects.bulk_create(make_job_rows(1001))
+  FailedExecution.objects.bulk_create(
+    FailedExecution(job=job, exception_class="builtins.ValueError") for job in jobs
+  )
+  batches = spy_batches(monkeypatch, admin_module, operation)
+
+  response = admin_client.post(
+    reverse("admin:dj_queue_failedexecution_changelist"),
+    {"action": action, "select_across": "1", "_selected_action": ["0"]},
+  )
+
+  assert response.status_code == 302
+  assert batches == [500, 500, 1]
+  assert FailedExecution.objects.exists() is False
+  assert Job.objects.filter(ready_execution__isnull=False).count() == (
+    1001 if action == "retry_jobs" else 0
+  )
+
+
+def test_dashboard_failed_job_action_runs_in_batches(monkeypatch):
+  jobs = Job.objects.bulk_create(make_job_rows(501))
+  FailedExecution.objects.bulk_create(
+    FailedExecution(job=job, exception_class="builtins.ValueError") for job in jobs
+  )
+  batches = spy_batches(monkeypatch, dashboard_actions, "retry_failed_jobs")
+
+  message = dashboard_actions.apply_job_action(
+    backend_alias="default",
+    queue_name="default",
+    state="failed",
+    action="retry",
+    job_ids=[str(job.pk) for job in jobs],
+  )
+
+  assert message == "retried 501 failed jobs from default"
+  assert batches == [500, 1]
+
+
+def make_job_rows(count):
+  return [Job(task_path="tests.tasks.echo", backend_alias="default") for _ in range(count)]
+
+
+def spy_batches(monkeypatch, module, name):
+  batches = []
+  operation = getattr(module, name)
+
+  def spy(*, job_ids, **kwargs):
+    batches.append(len(job_ids))
+    return operation(job_ids=job_ids, **kwargs)
+
+  monkeypatch.setattr(module, name, spy)
+  return batches
 
 
 def test_failed_execution_admin_discard_action(admin_client):
