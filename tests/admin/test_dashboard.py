@@ -1,7 +1,6 @@
 from datetime import timedelta
 
 import pytest
-from django.contrib.auth import get_user_model
 from django.db import connection
 from django.http import Http404
 from django.test.utils import CaptureQueriesContext
@@ -94,17 +93,6 @@ def make_blocked_job(**overrides):
     expires_at=timezone.now() + timedelta(minutes=5),
   )
   return job
-
-
-@pytest.fixture
-def admin_client(client):
-  user = get_user_model().objects.create_superuser(
-    username="admin",
-    email="admin@example.com",
-    password="password",
-  )
-  client.force_login(user)
-  return client
 
 
 def test_dashboard_admin_renders(admin_client):

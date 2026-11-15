@@ -6,6 +6,7 @@ SECRET_KEY = "tests"
 USE_TZ = True
 ROOT_URLCONF = "tests.urls"
 STATIC_URL = "/static/"
+PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 
 DB_BACKEND = os.environ.get("DB_BACKEND", "sqlite")
 MYSQL_FAMILY = {"mysql", "mariadb"}

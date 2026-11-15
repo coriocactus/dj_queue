@@ -2,7 +2,6 @@ from datetime import timedelta
 
 import pytest
 from django.contrib import admin as django_admin
-from django.contrib.auth import get_user_model
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.html import format_html
@@ -88,17 +87,6 @@ def make_process(**overrides):
     last_heartbeat_at=overrides.pop("last_heartbeat_at"),
     **overrides,
   )
-
-
-@pytest.fixture
-def admin_client(client):
-  user = get_user_model().objects.create_superuser(
-    username="admin",
-    email="admin@example.com",
-    password="password",
-  )
-  client.force_login(user)
-  return client
 
 
 def test_job_admin_changelist_renders(admin_client):
