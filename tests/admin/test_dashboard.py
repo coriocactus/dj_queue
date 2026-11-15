@@ -1,9 +1,7 @@
 from datetime import timedelta
 
 import pytest
-from django.db import connection
 from django.http import Http404
-from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
@@ -21,6 +19,7 @@ from dj_queue.models import (
   ScheduledExecution,
   Semaphore,
 )
+from tests.factories import read_query_counts
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -136,35 +135,21 @@ def test_dashboard_admin_renders(admin_client):
   assert "account:1" in content
 
 
-def test_dashboard_overview_query_budget_stays_section_sized(admin_client):
-  now = timezone.now()
-  for index in range(10):
-    make_ready_job(queue_name=f"queue-{index}")
-  Process.objects.create(
-    backend_alias="default",
-    kind="Worker",
-    pid=101,
-    hostname="localhost",
-    name="worker-1",
-    metadata={"queues": ["*"]},
-    last_heartbeat_at=now,
-  )
-  RecurringTask.objects.create(
-    backend_alias="default",
-    key="nightly",
-    task_path="tests.tasks.echo",
-    payload={"args": ["nightly"], "kwargs": {}},
-    schedule="0 0 * * *",
-    queue_name="queue-0",
-    priority=0,
-    static=False,
-  )
+def test_dashboard_overview_query_count_is_pinned_across_data_sizes(admin_client):
+  def overview():
+    assert admin_client.get(reverse("admin:dj_queue_dashboard_changelist")).status_code == 200
 
-  with CaptureQueriesContext(connection) as ctx:
-    response = admin_client.get(reverse("admin:dj_queue_dashboard_changelist"))
+  assert read_query_counts(overview) == [16, 16]
 
-  assert response.status_code == 200
-  assert len(ctx.captured_queries) <= 55
+
+def test_dashboard_queue_page_query_count_is_pinned_across_data_sizes(admin_client):
+  def queue_page():
+    response = admin_client.get(
+      reverse("admin:dj_queue_dashboard_queue", args=["queue-0"]), {"state": "ready"}
+    )
+    assert response.status_code == 200
+
+  assert read_query_counts(queue_page) == [12, 12]
 
 
 def test_dashboard_backend_facts_show_effective_database_capabilities(settings):

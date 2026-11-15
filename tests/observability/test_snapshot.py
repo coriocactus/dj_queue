@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from django.db import connection
 from django.utils import timezone
 
 from dj_queue import health, observability, postgres_diagnostics
@@ -15,7 +16,7 @@ from dj_queue.models import (
   RecurringTask,
   Semaphore,
 )
-from tests.factories import enqueue_ready_job, make_failed_job
+from tests.factories import enqueue_ready_job, make_failed_job, read_query_counts
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -162,6 +163,13 @@ def test_stats_payload_can_include_postgres_diagnostics(monkeypatch):
   assert diagnostics["long_transaction_threshold_seconds"] == 300.0
 
 
+def test_stats_payload_query_count_is_pinned_across_data_sizes():
+  # postgresql adds four diagnostics queries
+  expected = 19 if connection.vendor == "postgresql" else 15
+
+  assert read_query_counts(observability.stats_payload) == [expected, expected]
+
+
 def test_backend_snapshot_exposes_failed_retention_metrics(settings):
   settings.TASKS = {
     "default": {
@@ -205,6 +213,18 @@ def test_deep_health_reports_failed_jobs_past_configured_retention(settings):
   problems = observability.deep_health_problems(backend_alias="default", now=now)
 
   assert "1 failed execution rows exceed configured retention of 60 seconds" in problems
+
+
+def test_deep_health_query_count_is_pinned_across_data_sizes():
+  # postgresql adds four diagnostics queries
+  expected = 16 if connection.vendor == "postgresql" else 12
+
+  assert read_query_counts(
+    lambda: observability.deep_health_problems(backend_alias="default")
+  ) == [
+    expected,
+    expected,
+  ]
 
 
 def test_postgres_health_problems_report_bloat_and_xmin_blockers(monkeypatch):

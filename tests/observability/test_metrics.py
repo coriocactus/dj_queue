@@ -1,8 +1,11 @@
 from dataclasses import replace
 from unittest.mock import Mock
 
+import pytest
+
 from dj_queue.metrics import MetricSample, metric_families
 from dj_queue.observability import BackendSnapshot
+from tests.factories import read_query_counts
 
 
 def test_metric_families_project_snapshot_without_prometheus_dependency():
@@ -218,3 +221,8 @@ def test_metric_samples_preserve_iterator_order_zeroes_and_database_scope(monkey
     assert by_name[f"dj_queue_{name}"] == tuple(
       MetricSample((backend,), count) for backend in ("z", "a", "m")
     )
+
+
+@pytest.mark.django_db
+def test_metric_families_query_count_is_pinned_across_data_sizes():
+  assert read_query_counts(metric_families) == [15, 15]

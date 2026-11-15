@@ -1,16 +1,23 @@
 import time
+from datetime import timedelta
 
 import pytest
-from django.db import OperationalError
+from django.db import OperationalError, connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from dj_queue.models import (
   BlockedExecution,
+  ClaimedExecution,
   FailedExecution,
   Job,
+  Pause,
   Process,
   ReadyExecution,
+  RecurringExecution,
+  RecurringTask,
   ScheduledExecution,
+  Semaphore,
 )
 from dj_queue.operations.enqueue import enqueue_job
 from tests.tasks import echo
@@ -135,6 +142,41 @@ def make_failed_job(task=None, **overrides):
     traceback=traceback,
   )
   return job
+
+
+def read_query_counts(read):
+  counts = []
+  now = timezone.now()
+  for prefix, queues, jobs_per_state in (("small", 1, 1), ("large", 4, 3)):
+    supervisor = make_process(kind="Supervisor", name=f"{prefix}-supervisor")
+    for index in range(queues):
+      queue_name = f"queue-{index}"
+      key = f"{prefix}:{index}"
+      worker = make_process(
+        name=f"{prefix}-worker-{index}", supervisor=supervisor, metadata={"queues": [queue_name]}
+      )
+      Pause.objects.get_or_create(queue_name=queue_name)
+      Semaphore.objects.create(key=key, value=0, limit=1, expires_at=now + timedelta(minutes=5))
+      RecurringTask.objects.create(
+        key=key, task_path="tests.tasks.echo", schedule="0 0 * * *", queue_name=queue_name
+      )
+      for job_index in range(jobs_per_state):
+        make_raw_ready_job(queue_name=queue_name)
+        make_scheduled_job(queue_name=queue_name, scheduled_at=now + timedelta(minutes=5))
+        make_blocked_job(
+          queue_name=queue_name, concurrency_key=key, expires_at=now + timedelta(minutes=5)
+        )
+        make_failed_job(queue_name=queue_name)
+        ClaimedExecution.objects.create(job=make_job(queue_name=queue_name), process=worker)
+        finished = make_job(queue_name=queue_name, finished_at=now)
+        RecurringExecution.objects.create(
+          job=finished, task_key=key, run_at=now - timedelta(minutes=job_index)
+        )
+
+    with CaptureQueriesContext(connection) as ctx:
+      read()
+    counts.append(len(ctx.captured_queries))
+  return counts
 
 
 def wait_until(predicate, timeout=5):

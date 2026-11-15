@@ -19,6 +19,7 @@ from dj_queue.models import (
   ScheduledExecution,
   Semaphore,
 )
+from tests.factories import read_query_counts
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -99,6 +100,13 @@ def test_job_admin_changelist_renders(admin_client):
 
   assert response.status_code == 200
   assert "By backend" in response.content.decode()
+
+
+def test_job_admin_changelist_query_count_is_pinned_across_data_sizes(admin_client):
+  def changelist():
+    assert admin_client.get(reverse("admin:dj_queue_job_changelist")).status_code == 200
+
+  assert read_query_counts(changelist) == [8, 8]
 
 
 def test_job_admin_default_changelist_does_not_build_status_rank(admin_client, monkeypatch):
