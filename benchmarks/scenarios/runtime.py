@@ -1,7 +1,7 @@
 import time
 from contextlib import contextmanager
 
-from django.db import connection
+from django.db import OperationalError, connection
 from django.utils import timezone
 
 from benchmarks.harness import Timer, throughput
@@ -274,15 +274,20 @@ def ordered_selector_claim(size):
 def _wait_for_drain(size, *, preserve_finished_jobs, timeout):
   deadline = time.monotonic() + timeout
   while time.monotonic() < deadline:
-    finished = Job.objects.filter(finished_at__isnull=False).count()
-    job_count = Job.objects.count()
-    completed = finished if preserve_finished_jobs else size - job_count
-    if (
-      completed == size
-      and ReadyExecution.objects.count() == 0
-      and ClaimedExecution.objects.count() == 0
-    ):
-      return
+    try:
+      finished = Job.objects.filter(finished_at__isnull=False).count()
+      job_count = Job.objects.count()
+      completed = finished if preserve_finished_jobs else size - job_count
+      if (
+        completed == size
+        and ReadyExecution.objects.count() == 0
+        and ClaimedExecution.objects.count() == 0
+      ):
+        return
+    except OperationalError as error:
+      # the sqlite worker can hold the write lock past the busy timeout of this poll
+      if "locked" not in str(error).lower():
+        raise
     time.sleep(0.02)
   raise AssertionError("timed out waiting for worker drain")
 
