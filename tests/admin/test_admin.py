@@ -308,6 +308,23 @@ def test_failed_execution_change_view_retry_action(admin_client):
   assert Job.objects.filter(pk=job.pk, ready_execution__isnull=False).exists() is True
 
 
+@pytest.mark.parametrize(
+  ("url_name", "object_id"),
+  [
+    ("admin:dj_queue_job_change", "not-a-uuid"),
+    ("admin:dj_queue_failedexecution_change", "abc"),
+  ],
+)
+@pytest.mark.parametrize("method", ["get", "post"])
+def test_admin_malformed_object_id_is_reported_missing(admin_client, url_name, object_id, method):
+  url = f"{reverse(url_name, args=[object_id])}?backend=default"
+
+  response = getattr(admin_client, method)(url, {"_djq_object_action": "retry"})
+
+  assert response.status_code == 302
+  assert response.url == reverse("admin:index")
+
+
 def test_failed_execution_admin_changelist_filtered_by_backend(admin_client):
   make_failed_job()
 

@@ -289,16 +289,6 @@ class HiddenSidebarAdminMixin:
       queryset = queryset.filter(**{self.backend_filter_field: self._backend_alias(request)})
     return queryset
 
-  def get_object(self, request, object_id, from_field=None):
-    queryset = self.get_queryset(request)
-    model = queryset.model
-    field = model._meta.pk if from_field is None else model._meta.get_field(from_field)
-    try:
-      object_id = field.to_python(object_id)
-      return queryset.get(**{field.name: object_id})
-    except (model.DoesNotExist, ValueError):
-      return None
-
   def get_changelist(self, request, **kwargs):
     parent = super().get_changelist(request, **kwargs)
     ignored_params = self.ignored_filter_params
