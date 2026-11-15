@@ -14,9 +14,10 @@ from django.conf import settings
 from django.core.management import call_command
 from django.db import connection, connections
 
+from dj_queue.config import load_backend_config
 from dj_queue.db import psycopg_implementation
 from dj_queue.runtime.connection_budget import (
-  estimate_persistent_worker_connections,
+  estimate_persistent_connections,
   persistent_connections_enabled,
   postgres_connection_capacity,
 )
@@ -162,14 +163,7 @@ def preflight_persistent_connection_budget(*, backend):
   if not persistent_connections_enabled(conn_max_age):
     return None
 
-  options = settings.TASKS["default"]["OPTIONS"]
-  workers = options["workers"]
-  worker_processes = sum(worker.get("processes", 1) for worker in workers)
-  worker_threads = sum(worker.get("processes", 1) * worker["threads"] for worker in workers)
-  estimated_connections = estimate_persistent_worker_connections(
-    worker_processes=worker_processes,
-    worker_threads=worker_threads,
-  )
+  estimated_connections = estimate_persistent_connections(load_backend_config())
   capacity = postgres_connection_capacity("default")
   if capacity is None:
     return None

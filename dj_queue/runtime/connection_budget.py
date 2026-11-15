@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 from django.db import connections
 
-from dj_queue.db import database_capabilities
+from dj_queue.db import database_capabilities, supports_listen_notify
 from dj_queue.log import log_event
 from dj_queue.sql import backend_sql
 
@@ -24,17 +24,15 @@ def persistent_connections_enabled(value):
   return int(value) > 0
 
 
-def estimate_persistent_worker_connections(*, worker_processes, worker_threads):
-  return worker_processes + worker_threads + 2
-
-
-def estimate_config_worker_connections(config):
-  worker_processes = sum(worker.processes for worker in config.workers)
+def estimate_persistent_connections(config):
+  workers = sum(worker.processes for worker in config.workers)
+  runners = workers + len(config.dispatchers) + (config.scheduler is not None)
   worker_threads = sum(worker.processes * worker.threads for worker in config.workers)
-  return estimate_persistent_worker_connections(
-    worker_processes=worker_processes,
-    worker_threads=worker_threads,
-  )
+  listeners = 0
+  if config.listen_notify and supports_listen_notify(config.database_alias):
+    listeners = workers
+  # each runner and the supervisor hold one connection per poll and heartbeat thread
+  return 2 * runners + worker_threads + listeners + 2
 
 
 def postgres_connection_capacity(alias):
@@ -46,12 +44,6 @@ def postgres_connection_capacity(alias):
     max_connections=max_connections,
     reserved_connections=reserved_connections,
   )
-
-
-def connection_budget_ratio(*, estimated_connections, capacity):
-  if capacity.available_connections <= 0:
-    return 1
-  return estimated_connections / capacity.available_connections
 
 
 def warn_if_persistent_connection_budget_is_tight(
@@ -71,11 +63,8 @@ def warn_if_persistent_connection_budget_is_tight(
   if capacity is None:
     return None
 
-  estimated_connections = estimate_config_worker_connections(config)
-  usage_ratio = connection_budget_ratio(
-    estimated_connections=estimated_connections,
-    capacity=capacity,
-  )
+  estimated_connections = estimate_persistent_connections(config)
+  usage_ratio = estimated_connections / max(capacity.available_connections, 1)
   if usage_ratio < threshold:
     return None
 
