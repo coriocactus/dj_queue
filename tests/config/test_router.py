@@ -89,3 +89,33 @@ def test_router_allows_queue_migrations_only_on_queue_db(
     assert router.allow_migrate("default", "dj_queue") is False
     assert "dj_queue_jobs" in _dj_queue_tables("queue")
     assert _dj_queue_tables("default") == set()
+
+
+def test_router_uses_a_non_default_dj_queue_alias(settings):
+  settings.TASKS = {
+    "default": {"BACKEND": "django.tasks.backends.immediate.ImmediateBackend"},
+    "q": {"BACKEND": "dj_queue.backend.DjQueueBackend", "OPTIONS": {"database_alias": "queue"}},
+  }
+  router = DjQueueRouter()
+
+  assert router.allow_migrate("queue", "dj_queue") is True
+  assert router.allow_migrate("default", "dj_queue") is False
+  assert router.db_for_read(Job) == "queue"
+  assert router.db_for_write(Job) == "queue"
+
+
+def test_router_allows_every_dj_queue_database(settings):
+  settings.TASKS = {
+    "default": {"BACKEND": "dj_queue.backend.DjQueueBackend"},
+    "other": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {"database_alias": "queue"},
+    },
+  }
+  router = DjQueueRouter()
+
+  assert router.allow_migrate("default", "dj_queue") is True
+  assert router.allow_migrate("queue", "dj_queue") is True
+  assert router.allow_migrate("replica", "dj_queue") is False
+  assert router.db_for_read(Job) is None
+  assert router.db_for_write(Job) is None
