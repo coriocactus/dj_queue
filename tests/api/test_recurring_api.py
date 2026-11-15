@@ -155,6 +155,20 @@ def test_invalid_cron_is_rejected():
     )
 
 
+@pytest.mark.parametrize(
+  ("schedule", "reason"),
+  (
+    ("0 0 31 * 1#1&", "no matching datetime in the search window"),
+    ("every 90 minutes", "natural minute intervals cannot exceed 59"),
+  ),
+)
+def test_invalid_cron_rejection_carries_the_reason(schedule, reason):
+  with pytest.raises(EnqueueError, match=reason):
+    schedule_recurring_task(key="invalid-task", task_path="tests.tasks.echo", schedule=schedule)
+
+  assert RecurringTask.objects.filter(key="invalid-task").exists() is False
+
+
 def test_schedule_recurring_task_rejects_invalid_priority():
   with pytest.raises(EnqueueError, match="priority must be an integer from -100 to 100"):
     schedule_recurring_task(

@@ -8,7 +8,7 @@ from django.db.models import Exists, OuterRef, Q
 from django.utils.module_loading import import_string
 
 from dj_queue.config import resolve_backend_config
-from dj_queue.cron import is_valid_cron, latest_cron_run, next_cron_run
+from dj_queue.cron import latest_cron_run, next_cron_run, validate_cron
 from dj_queue.db import locked_queryset, retry_transient_database_errors
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import Job, RecurringExecution, RecurringTask
@@ -29,8 +29,10 @@ def validate_recurring_task_definition(
   queue_name = _recurring_string(queue_name, "queue_name")
   if schedule is not None:
     schedule = _recurring_string(schedule, "schedule")
-  if schedule is not None and not is_valid_cron(schedule):
-    raise EnqueueError("schedule must be a valid cron expression")
+    try:
+      validate_cron(schedule)
+    except ValueError as exc:
+      raise EnqueueError(f"schedule must be a valid cron expression: {exc}") from exc
   try:
     task = import_string(task_path)
   except ImportError as exc:

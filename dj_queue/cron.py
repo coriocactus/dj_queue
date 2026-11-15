@@ -17,6 +17,7 @@ _NATURAL_SEGMENT_BOUNDARY_RE = re.compile(
   re.IGNORECASE,
 )
 _REFERENCE_MONDAY = date(2018, 12, 31)
+_VALIDATION_BASE = datetime(2000, 1, 1, tzinfo=UTC)
 
 _SPECIALS = {
   "@yearly": "0 0 1 1 *",
@@ -307,12 +308,8 @@ class _NaturalSlot:
     return int(match.group(1)), int(match.group(2))
 
 
-def is_valid_cron(schedule: str) -> bool:
-  try:
-    _parse_schedule(schedule)
-  except (TypeError, ValueError, ZoneInfoNotFoundError):
-    return False
-  return True
+def validate_cron(schedule: str) -> None:
+  next_cron_run(schedule, _VALIDATION_BASE)
 
 
 def next_cron_run(schedule: str, base: datetime) -> datetime:
@@ -338,8 +335,13 @@ def _parse_schedule(schedule: str) -> tuple[_Schedule, ...]:
 
   try:
     return (_parse_cron_schedule(_expand_special(schedule)),)
-  except (ValueError, ZoneInfoNotFoundError):
-    return tuple(_parse_cron_schedule(cron) for cron in _expand_natural_schedule(schedule))
+  except (ValueError, ZoneInfoNotFoundError) as cron_error:
+    try:
+      return tuple(_parse_cron_schedule(cron) for cron in _expand_natural_schedule(schedule))
+    except ValueError as natural_error:
+      raise ValueError(
+        f"as cron: {cron_error}; as natural language: {natural_error}"
+      ) from natural_error
 
 
 def _parse_cron_schedule(schedule: str) -> _Schedule:
@@ -475,8 +477,8 @@ def _parse_bare_natural_segment(segment: str) -> list[_NaturalSlot]:
 def _parse_every_segment(segment: str) -> list[_NaturalSlot]:
   try:
     return _parse_every_subject(segment)
-  except ValueError:
-    pass
+  except ValueError as exc:
+    error = exc
 
   tokens = segment.split()
   for index in range(1, len(tokens)):
@@ -486,7 +488,7 @@ def _parse_every_segment(segment: str) -> list[_NaturalSlot]:
       return [*_parse_every_subject(subject), *_parse_at_segment(time_text)]
     except ValueError:
       continue
-  raise ValueError(f"invalid natural every expression {segment!r}")
+  raise ValueError(f"invalid natural every expression {segment!r}: {error}")
 
 
 def _parse_every_subject(subject: str) -> list[_NaturalSlot]:

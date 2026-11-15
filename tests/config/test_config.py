@@ -186,6 +186,30 @@ def test_static_recurring_priority_must_be_in_range(settings):
     load_backend_config()
 
 
+@pytest.mark.parametrize(
+  ("schedule", "reason"),
+  (
+    ("0 0 31 * 1#1&", "no matching datetime in the search window"),
+    ("every 90 minutes", "natural minute intervals cannot exceed 59"),
+  ),
+)
+def test_static_recurring_schedule_rejection_carries_the_reason(settings, schedule, reason):
+  settings.TASKS = {
+    "default": {
+      "BACKEND": "dj_queue.backend.DjQueueBackend",
+      "OPTIONS": {
+        "recurring": {"nightly": {"task_path": "tests.tasks.echo", "schedule": schedule}}
+      },
+    }
+  }
+
+  with pytest.raises(ImproperlyConfigured) as exc_info:
+    load_backend_config()
+
+  assert str(exc_info.value).startswith(f"recurring task 'nightly' schedule {schedule!r}: ")
+  assert reason in str(exc_info.value)
+
+
 def test_static_recurring_task_path_must_reference_a_django_task(settings):
   settings.TASKS = {
     "default": {

@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from dj_queue.cron import is_valid_cron, latest_cron_run, next_cron_run, previous_cron_run
+from dj_queue.cron import latest_cron_run, next_cron_run, previous_cron_run, validate_cron
 
 
 def dt(year, month, day, hour, minute, second=0):
@@ -21,7 +21,8 @@ def test_latest_cron_run_includes_the_base_minute():
 
 
 def test_cron_schedules_must_be_strings():
-  assert is_valid_cron(1) is False
+  with pytest.raises(TypeError, match="cron schedule must be a string"):
+    validate_cron(1)
   with pytest.raises(TypeError, match="cron schedule must be a string"):
     next_cron_run(1, dt(2026, 4, 8, 12, 0))
 
@@ -43,7 +44,7 @@ def test_cron_day_of_month_and_weekday_use_or_semantics():
 def test_cron_day_of_month_impossibility_does_not_reject_or_weekday():
   schedule = "0 0 31 2 MON"
 
-  assert is_valid_cron(schedule) is True
+  validate_cron(schedule)
   assert next_cron_run(schedule, dt(2026, 2, 1, 0, 0)) == dt(2026, 2, 2, 0, 0)
 
 
@@ -109,7 +110,7 @@ def test_cron_supports_explicit_timezones():
 
 
 def test_cron_supports_natural_daily_schedule():
-  assert is_valid_cron("every day at noon") is True
+  validate_cron("every day at noon")
   assert next_cron_run("every day", dt(2026, 4, 8, 0, 0)) == dt(2026, 4, 9, 0, 0)
   assert next_cron_run("every day at noon", dt(2026, 4, 8, 11, 59)) == dt(2026, 4, 8, 12, 0)
   assert latest_cron_run("every day at noon", dt(2026, 4, 8, 12, 0)) == dt(2026, 4, 8, 12, 0)
@@ -186,25 +187,29 @@ def test_cron_supports_natural_point_schedules():
 
 
 @pytest.mark.parametrize(
-  "schedule",
+  ("schedule", "reason"),
   (
-    "not a cron",
-    "* * * *",
-    "60 * * * *",
-    "*/0 * * * *",
-    "0 0 31 2 *",
-    "@reboot",
-    "* * * * * Missing/Zone",
-    "0 0 * * mon#6",
-    "0 0 * * sun%0",
-    "every 2 weeks",
-    "every 60 seconds",
-    "every 90 minutes",
-    "every 24 hours",
-    "every 32 days",
-    "every 13 months",
-    "every day at 25:00",
+    ("not a cron", "invalid natural schedule segment 'not a cron'"),
+    ("* * * *", "cron schedules must have five or six fields"),
+    ("60 * * * *", "cron value 60 is outside 0-59"),
+    ("*/0 * * * *", "cron steps must be positive"),
+    ("0 0 31 2 *", "cron day of month is impossible for the selected months"),
+    ("@reboot", "unsupported cron special '@reboot'"),
+    ("* * * * * Missing/Zone", "cron steps must be integers"),
+    ("0 0 * * mon#6", "weekday hash index must be between 1 and 5 or -1 and -5"),
+    ("0 0 * * sun%0", "weekday modulo must be positive"),
+    ("0 0 31 * 1#1&", "no matching datetime in the search window"),
+    ("every 2 weeks", "invalid natural weekday '2 weeks'"),
+    ("every 60 seconds", "natural second intervals cannot exceed 59"),
+    ("every 90 minutes", "natural minute intervals cannot exceed 59"),
+    ("every 24 hours", "natural hour intervals cannot exceed 23"),
+    ("every 32 days", "natural day intervals cannot exceed 31"),
+    ("every 13 months", "natural month intervals cannot exceed 12"),
+    ("every day at 25:00", "natural number 25 is outside 0-24"),
   ),
 )
-def test_invalid_cron_schedules_are_rejected(schedule):
-  assert is_valid_cron(schedule) is False
+def test_invalid_cron_schedules_are_rejected_with_the_reason(schedule, reason):
+  with pytest.raises(ValueError) as exc_info:
+    validate_cron(schedule)
+
+  assert reason in str(exc_info.value)

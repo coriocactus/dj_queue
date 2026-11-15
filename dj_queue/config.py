@@ -12,7 +12,7 @@ from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.utils.module_loading import import_string
 
-from dj_queue.cron import is_valid_cron
+from dj_queue.cron import validate_cron
 
 DEFAULT_WORKER = {
   "queues": "*",
@@ -655,8 +655,10 @@ def _build_recurring_config(
       raise ImproperlyConfigured(f"recurring task {key!r} requires task_path and schedule")
     task_path = _nonempty_string_option(raw_task_path, f"recurring task {key!r} task_path")
     schedule = _nonempty_string_option(raw_schedule, f"recurring task {key!r} schedule")
-    if not is_valid_cron(schedule):
-      raise ImproperlyConfigured(f"recurring task {key!r} has an invalid cron schedule")
+    try:
+      validate_cron(schedule)
+    except ValueError as exc:
+      raise ImproperlyConfigured(f"recurring task {key!r} schedule {schedule!r}: {exc}") from exc
 
     queue_name = _nonempty_string_option(
       raw_entry.get("queue_name", "default"), f"recurring task {key!r} queue_name"
