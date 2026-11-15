@@ -287,7 +287,7 @@ def _backend_facts(*, config, queue_database_alias, recurring_count, semaphore_c
   return (
     {"label": "mode", "value": config.mode},
     {"label": "queue db", "value": queue_database_alias},
-    {"label": "scheduler", "value": "enabled" if config.has_scheduler_work else "disabled"},
+    {"label": "scheduler", "value": "enabled" if config.scheduler is not None else "disabled"},
     {
       "label": "notify",
       "value": _capability_fact_value(

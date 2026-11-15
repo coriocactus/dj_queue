@@ -147,10 +147,6 @@ class BackendConfig(ConfigValue):
   only_dispatch: bool = False
 
   @property
-  def has_scheduler_work(self) -> bool:
-    return self.scheduler is not None
-
-  @property
   def cleanup_enabled(self) -> bool:
     return (
       (self.preserve_finished_jobs and self.clear_finished_jobs_after is not None)
@@ -197,12 +193,7 @@ def load_backend_config(
     return cached
 
   env_values = {key: value for key, value in zip(CONFIG_ENV_KEYS, env_key) if value is not None}
-  config = _load_backend_config_uncached(
-    backend_alias,
-    cli_overrides,
-    env_values,
-    tasks_settings,
-  )
+  config = _load_backend_config_uncached(backend_alias, cli_overrides, env_values, backend_block)
   _BACKEND_CONFIG_CACHE[cache_key] = config
   return config
 
@@ -223,10 +214,8 @@ def _load_backend_config_uncached(
   backend_alias: str,
   cli_overrides: Mapping[str, Any],
   env: Mapping[str, str],
-  tasks_settings: Mapping[str, Any],
+  backend_block: Mapping[str, Any],
 ) -> BackendConfig:
-  ensure_dj_queue_backend_alias(tasks_settings, backend_alias)
-  backend_block = _backend_block(tasks_settings, backend_alias)
   resolved_options = _resolved_options(backend_alias, backend_block, cli_overrides, env)
   config = _build_backend_config(
     backend_alias, backend_block, resolved_options, cli_overrides, env
@@ -331,23 +320,16 @@ def _select_runtime_topology(config: BackendConfig) -> BackendConfig:
   return config
 
 
-def _backend_block(
-  tasks_settings: Mapping[str, Any] | None,
-  backend_alias: str,
-) -> Mapping[str, Any]:
-  resolved_tasks_settings = tasks_settings
-  if resolved_tasks_settings is None:
-    resolved_tasks_settings = getattr(settings, "TASKS", {})
-
-  if not resolved_tasks_settings:
+def _backend_block(tasks_settings: Mapping[str, Any], backend_alias: str) -> Mapping[str, Any]:
+  if not tasks_settings:
     if backend_alias == "default":
       return {}
     raise ImproperlyConfigured(f"dj_queue backend alias {backend_alias!r} is not configured")
 
-  if backend_alias not in resolved_tasks_settings:
+  if backend_alias not in tasks_settings:
     raise ImproperlyConfigured(f"dj_queue backend alias {backend_alias!r} is not configured")
 
-  backend_block = resolved_tasks_settings[backend_alias]
+  backend_block = tasks_settings[backend_alias]
   if not isinstance(backend_block, Mapping):
     raise ImproperlyConfigured(f"TASKS[{backend_alias!r}] must be a mapping")
   return backend_block

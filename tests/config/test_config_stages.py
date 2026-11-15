@@ -4,7 +4,7 @@ from copy import deepcopy
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 
-from dj_queue.config import DEFAULT_OPTIONS, WorkerConfig, load_backend_config
+from dj_queue.config import DEFAULT_OPTIONS, BackendConfig, load_backend_config
 
 
 def backend_settings(options):
@@ -72,7 +72,7 @@ def test_async_warning_survives_disabled_workers_without_mutating_inputs():
   assert config.workers == ()
   assert tasks == original
   assert DEFAULT_OPTIONS == defaults
-  assert load_backend_config(tasks_settings={}, env={}).workers == (WorkerConfig(),)
+  assert load_backend_config(tasks_settings={}, env={}) == BackendConfig()
 
 
 def test_failed_validation_is_not_cached(tmp_path):
