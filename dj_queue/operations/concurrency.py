@@ -5,7 +5,7 @@ from enum import StrEnum
 
 from django.db import transaction
 from django.db.models import F, Q, Value
-from django.db.models.functions import Greatest, Least
+from django.db.models.functions import Least
 from django.utils import timezone
 from django.utils.module_loading import import_string
 
@@ -102,27 +102,29 @@ def semaphore_acquire_many(
         return acquired
       semaphore = Semaphore.objects.using(alias).select_for_update().filter(key=key).first()
 
-    available = _available_slots(semaphore, limit)
-    acquired = min(count, available)
-    if acquired or semaphore.value != available or semaphore.limit != limit:
-      semaphore.value = available - acquired
-      semaphore.limit = limit
-      if acquired:
-        semaphore.expires_at = expires_at
+    acquired = _take_slots(semaphore, limit, count)
+    if acquired:
+      semaphore.expires_at = expires_at
       semaphore.save(using=alias, update_fields=["value", "limit", "expires_at", "updated_at"])
     return acquired
 
 
-def semaphore_release(key, *, limit, duration_seconds, config):
+def _take_slots(semaphore, limit, count):
+  acquired = max(0, min(count, semaphore.value + limit - semaphore.limit))
+  if acquired:
+    semaphore.value += limit - semaphore.limit - acquired
+    semaphore.limit = limit
+  return acquired
+
+
+def semaphore_release(key, *, duration_seconds, config):
   alias = config.database_alias
   now = timezone.now()
-  available = _released_available_expression(limit)
   updated = (
     Semaphore.objects.using(alias)
     .filter(key=key)
     .update(
-      value=available,
-      limit=limit,
+      value=Least(F("value") + Value(1), F("limit")),
       expires_at=now + timedelta(seconds=duration_seconds),
       updated_at=now,
     )
@@ -140,49 +142,28 @@ def release_recovered_concurrency_slots(jobs, *, config):
 
   fallback_jobs = []
   for key, group_jobs in grouped_jobs.items():
-    settings = _recovered_release_settings(group_jobs, config=config)
-    if settings is None:
+    durations = {_release_duration(job, config=config) for job in group_jobs}
+    if len(durations) > 1:
       fallback_jobs.extend(group_jobs)
       continue
-    limit, duration_seconds = settings
     _release_recovered_concurrency_group(
       key,
       release_count=len(group_jobs),
-      limit=limit,
-      duration_seconds=duration_seconds,
+      duration_seconds=durations.pop(),
       config=config,
     )
   return fallback_jobs
 
 
-def _recovered_release_settings(jobs, *, config):
-  settings = {_release_settings(job, config=config) for job in jobs}
-  if len(settings) > 1:
-    return None
-  return next(iter(settings))
-
-
-def _release_settings(job, *, config, task=None):
+def _release_duration(job, *, config, task=None):
   try:
-    limit, duration_seconds, _ = concurrency_settings_for_job(job, task=task, config=config)
+    _, duration_seconds, _ = concurrency_settings_for_job(job, task=task, config=config)
   except DispatchPolicyError:
-    limit = _semaphore_limit(config.database_alias, job.concurrency_key) or 1
     duration_seconds = config.default_concurrency_duration
-  return limit, duration_seconds
+  return duration_seconds
 
 
-def _semaphore_limit(alias, key):
-  return Semaphore.objects.using(alias).filter(key=key).values_list("limit", flat=True).first()
-
-
-def _release_recovered_concurrency_group(
-  key,
-  *,
-  release_count,
-  limit,
-  duration_seconds,
-  config,
-):
+def _release_recovered_concurrency_group(key, *, release_count, duration_seconds, config):
   alias = config.database_alias
   backend_alias = config.backend_alias
   now = timezone.now()
@@ -207,15 +188,16 @@ def _release_recovered_concurrency_group(
     if semaphore is None:
       return []
 
-    available = _available_slots(semaphore, limit, released=release_count)
-    promote_count = min(release_count, available, len(blocked_rows))
-    promoted_rows = blocked_rows[:promote_count]
+    semaphore.value = min(semaphore.value + release_count, semaphore.limit)
+    promoted_rows = []
+    for blocked in blocked_rows:
+      if not _take_slots(semaphore, blocked.job.concurrency_limit or semaphore.limit, 1):
+        break
+      promoted_rows.append(blocked)
     if promoted_rows:
-      promoted_rows = _consume_selected_rows(alias, BlockedExecution, promoted_rows)
+      _consume_selected_rows(alias, BlockedExecution, promoted_rows)
 
     promoted_jobs = [blocked.job for blocked in promoted_rows]
-    semaphore.value = available - len(promoted_jobs)
-    semaphore.limit = limit
     semaphore.expires_at = expires_at
     semaphore.updated_at = now
     semaphore.save(
@@ -252,46 +234,20 @@ def _release_recovered_concurrency_group(
   return promoted_jobs
 
 
-def _consume_released_semaphore_slot(alias, key, *, limit, duration_seconds, now):
-  expires_at = now + timedelta(seconds=duration_seconds)
+def _take_slot_for_waiter(alias, key, *, waiter_limit, released, duration_seconds, now):
+  limit = Value(waiter_limit) if waiter_limit else F("limit")
+  # mysql-family updates assign left to right, so value reads the old limit before limit changes
   updated = (
     Semaphore.objects.using(alias)
-    .filter(key=key, value__gt=0)
+    .filter(key=key, value__gt=F("limit") - limit - Value(released))
     .update(
-      value=F("value") - 1,
+      value=Least(F("value") + limit - F("limit") + Value(released - 1), limit - Value(1)),
       limit=limit,
-      expires_at=expires_at,
+      expires_at=now + timedelta(seconds=duration_seconds),
       updated_at=now,
     )
   )
   return updated > 0
-
-
-def _handoff_released_claimed_slot(alias, key, *, limit, duration_seconds, now):
-  expires_at = now + timedelta(seconds=duration_seconds)
-  available = _released_available_expression(limit)
-  updated = (
-    Semaphore.objects.using(alias)
-    .filter(key=key, value__gt=F("limit") - Value(limit) - Value(1))
-    .update(
-      value=available - Value(1),
-      limit=limit,
-      expires_at=expires_at,
-      updated_at=now,
-    )
-  )
-  return updated > 0
-
-
-def _released_available_expression(limit):
-  return Least(
-    Value(limit),
-    Greatest(Value(0), F("value") + Value(limit) - F("limit") + Value(1)),
-  )
-
-
-def _available_slots(semaphore, limit, *, released=0):
-  return min(limit, max(0, semaphore.value + limit - semaphore.limit + released))
 
 
 def _task_option(task, name, default=None):
@@ -351,14 +307,7 @@ def concurrency_settings_for_job(job, *, config, task=None):
   return limit, duration_seconds, on_conflict
 
 
-def unblock_next_blocked_job(
-  key,
-  *,
-  limit,
-  duration_seconds,
-  slot_handoff,
-  config,
-):
+def unblock_next_blocked_job(key, *, duration_seconds, slot_handoff, config):
   alias = config.database_alias
   backend_alias = config.backend_alias
   now = timezone.now()
@@ -368,7 +317,6 @@ def unblock_next_blocked_job(
       alias,
       backend_alias=backend_alias,
       key=key,
-      limit=limit,
       duration_seconds=duration_seconds,
       now=now,
       use_skip_locked=config.use_skip_locked,
@@ -401,7 +349,6 @@ def _consume_blocked_job_for_slot(
   *,
   backend_alias,
   key,
-  limit,
   duration_seconds,
   now,
   use_skip_locked,
@@ -415,7 +362,6 @@ def _consume_blocked_job_for_slot(
       alias,
       backend_alias=backend_alias,
       key=key,
-      limit=limit,
       duration_seconds=duration_seconds,
       now=now,
       use_skip_locked=use_skip_locked and capabilities.supports_skip_locked,
@@ -447,12 +393,14 @@ def _consume_blocked_job_for_slot(
     return None
   _ensure_state_rows_belong_to_backend([blocked], backend_alias)
 
-  take_slot = (
-    _handoff_released_claimed_slot
-    if slot_handoff is SlotHandoffMode.RELEASE_CLAIMED
-    else _consume_released_semaphore_slot
-  )
-  if not take_slot(alias, key, limit=limit, duration_seconds=duration_seconds, now=now):
+  if not _take_slot_for_waiter(
+    alias,
+    key,
+    waiter_limit=blocked.job.concurrency_limit,
+    released=int(slot_handoff is SlotHandoffMode.RELEASE_CLAIMED),
+    duration_seconds=duration_seconds,
+    now=now,
+  ):
     return None
   if not _consume_selected_rows(alias, BlockedExecution, [blocked]):
     raise EnqueueError("could not consume selected blocked job")
@@ -678,11 +626,10 @@ def release_concurrency_slot(job, *, config, task=None):
   if not job.concurrency_key:
     return
 
-  limit, duration_seconds = _release_settings(job, task=task, config=config)
+  duration_seconds = _release_duration(job, task=task, config=config)
   if (
     unblock_next_blocked_job(
       job.concurrency_key,
-      limit=limit,
       duration_seconds=duration_seconds,
       slot_handoff=SlotHandoffMode.RELEASE_CLAIMED,
       config=config,
@@ -691,15 +638,9 @@ def release_concurrency_slot(job, *, config, task=None):
   ):
     return
 
-  semaphore_release(
-    job.concurrency_key,
-    limit=limit,
-    duration_seconds=duration_seconds,
-    config=config,
-  )
+  semaphore_release(job.concurrency_key, duration_seconds=duration_seconds, config=config)
   unblock_next_blocked_job(
     job.concurrency_key,
-    limit=limit,
     duration_seconds=duration_seconds,
     slot_handoff=SlotHandoffMode.CONSUME_RELEASED,
     config=config,

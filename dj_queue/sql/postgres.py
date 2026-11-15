@@ -24,78 +24,31 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
   expires_at_column = quote("expires_at")
   created_at_column = quote("created_at")
   updated_at_column = quote("updated_at")
-  available = _available_slots_sql(quote, released=0)
 
   with connection.cursor() as cursor:
     cursor.execute(
       f"""
-      WITH acquired AS (
-        INSERT INTO {table} (
-          {key_column},
-          {value_column},
-          {limit_column},
-          {expires_at_column},
-          {created_at_column},
-          {updated_at_column}
-        )
-        VALUES (%s, %s, %s, %s, %s, %s)
-        ON CONFLICT ({key_column}) DO UPDATE
-        SET
-          {value_column} = {available} - 1,
-          {limit_column} = EXCLUDED.{limit_column},
-          {expires_at_column} = EXCLUDED.{expires_at_column},
-          {updated_at_column} = EXCLUDED.{updated_at_column}
-        WHERE {table}.{value_column} > {table}.{limit_column} - EXCLUDED.{limit_column}
-        RETURNING TRUE AS acquired
-      ), reconciled AS (
-        UPDATE {table}
-        SET
-          {value_column} = {available},
-          {limit_column} = %s,
-          {updated_at_column} = %s
-        WHERE {key_column} = %s
-          AND NOT EXISTS (SELECT 1 FROM acquired)
-          AND (
-            {value_column} <> {available}
-            OR {limit_column} <> %s
-          )
-        RETURNING FALSE AS acquired
+      INSERT INTO {table} (
+        {key_column},
+        {value_column},
+        {limit_column},
+        {expires_at_column},
+        {created_at_column},
+        {updated_at_column}
       )
-      SELECT acquired FROM acquired
-      UNION ALL
-      SELECT acquired FROM reconciled
+      VALUES (%s, %s, %s, %s, %s, %s)
+      ON CONFLICT ({key_column}) DO UPDATE
+      SET
+        {value_column} = {table}.{value_column} + EXCLUDED.{limit_column} - {table}.{limit_column} - 1,
+        {limit_column} = EXCLUDED.{limit_column},
+        {expires_at_column} = EXCLUDED.{expires_at_column},
+        {updated_at_column} = EXCLUDED.{updated_at_column}
+      WHERE {table}.{value_column} > {table}.{limit_column} - EXCLUDED.{limit_column}
+      RETURNING TRUE
       """,
-      [
-        key,
-        limit - 1,
-        limit,
-        expires_at,
-        now,
-        now,
-        limit,
-        limit,
-        limit,
-        limit,
-        limit,
-        now,
-        key,
-        limit,
-        limit,
-        limit,
-      ],
+      [key, limit - 1, limit, expires_at, now, now],
     )
-    row = cursor.fetchone()
-
-  return bool(row and row[0])
-
-
-def _available_slots_sql(quote, *, released):
-  table = quote(Semaphore._meta.db_table)
-  value_column = quote(Semaphore._meta.get_field("value").column)
-  limit_column = quote(Semaphore._meta.get_field("limit").column)
-  return (
-    f"LEAST(%s, GREATEST(0, {table}.{value_column} + %s - {table}.{limit_column} + {released}))"
-  )
+    return cursor.fetchone() is not None
 
 
 def consume_next_blocked_job_with_released_slot(
@@ -103,7 +56,6 @@ def consume_next_blocked_job_with_released_slot(
   *,
   backend_alias,
   key,
-  limit,
   duration_seconds,
   now,
   use_skip_locked,
@@ -122,6 +74,7 @@ def consume_next_blocked_job_with_released_slot(
   jobs_table = quote(Job._meta.db_table)
   jobs_id_column = quote(Job._meta.get_field("id").column)
   jobs_backend_alias_column = quote(Job._meta.get_field("backend_alias").column)
+  jobs_concurrency_limit_column = quote(Job._meta.get_field("concurrency_limit").column)
   semaphore_table = quote(Semaphore._meta.db_table)
   semaphore_key_column = quote(Semaphore._meta.get_field("key").column)
   semaphore_value_column = quote(Semaphore._meta.get_field("value").column)
@@ -130,7 +83,9 @@ def consume_next_blocked_job_with_released_slot(
   semaphore_updated_at_column = quote(Semaphore._meta.get_field("updated_at").column)
   skip_locked_sql = " SKIP LOCKED" if use_skip_locked else ""
   expires_at = now + timedelta(seconds=duration_seconds)
-  released_value = f"{_available_slots_sql(quote, released=1)} - 1"
+  semaphore_value = f"{semaphore_table}.{semaphore_value_column}"
+  semaphore_limit = f"{semaphore_table}.{semaphore_limit_column}"
+  waiter_limit = f"COALESCE(selected.{jobs_concurrency_limit_column}, {semaphore_limit})"
 
   with connection.cursor() as cursor:
     cursor.execute(
@@ -142,7 +97,8 @@ def consume_next_blocked_job_with_released_slot(
           {blocked_table}.{blocked_queue_name_column},
           {blocked_table}.{blocked_priority_column},
           {blocked_table}.{blocked_concurrency_key_column},
-          {jobs_table}.{jobs_backend_alias_column} AS job_backend_alias
+          {jobs_table}.{jobs_backend_alias_column} AS job_backend_alias,
+          {jobs_table}.{jobs_concurrency_limit_column}
         FROM {blocked_table}
         JOIN {jobs_table}
           ON {jobs_table}.{jobs_id_column} = {blocked_table}.{blocked_job_id_column}
@@ -154,13 +110,16 @@ def consume_next_blocked_job_with_released_slot(
       ), slot AS (
         UPDATE {semaphore_table}
         SET
-          {semaphore_value_column} = {released_value},
-          {semaphore_limit_column} = %s,
+          {semaphore_value_column} = LEAST(
+            {semaphore_value} + {waiter_limit} - {semaphore_limit},
+            {waiter_limit} - 1
+          ),
+          {semaphore_limit_column} = {waiter_limit},
           {semaphore_expires_at_column} = %s,
           {semaphore_updated_at_column} = %s
+        FROM selected
         WHERE {semaphore_table}.{semaphore_key_column} = %s
-          AND EXISTS (SELECT 1 FROM selected)
-          AND {semaphore_table}.{semaphore_value_column} > {semaphore_table}.{semaphore_limit_column} - %s - 1
+          AND {semaphore_value} > {semaphore_limit} - {waiter_limit} - 1
         RETURNING TRUE AS acquired
       ), deleted AS (
         DELETE FROM {blocked_table}
@@ -178,17 +137,7 @@ def consume_next_blocked_job_with_released_slot(
         EXISTS (SELECT 1 FROM deleted) AS deleted
       FROM selected
       """,
-      [
-        backend_alias,
-        key,
-        limit,
-        limit,
-        limit,
-        expires_at,
-        now,
-        key,
-        limit,
-      ],
+      [backend_alias, key, expires_at, now, key],
     )
     row = cursor.fetchone()
 

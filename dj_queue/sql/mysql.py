@@ -72,15 +72,10 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
   expires_at_column = connection.ops.quote_name("expires_at")
   created_at_column = connection.ops.quote_name("created_at")
   updated_at_column = connection.ops.quote_name("updated_at")
-  reconciled_available = f"LEAST(%s, GREATEST(0, {value_column} + %s - {limit_column}))"
-  should_touch = (
-    f"{reconciled_available} > 0 "
-    f"OR {value_column} <> {reconciled_available} "
-    f"OR {limit_column} <> %s"
-  )
-  reconciled_available_params = (limit, limit)
+  acquired = f"{value_column} > -%s"
 
-  # one upsert avoids mysql-family deadlocks from mixing ignored inserts and follow-up updates
+  # one upsert avoids mysql-family deadlocks from mixing ignored inserts and follow-up updates;
+  # assignments run left to right, so value holds minus occupancy while the limit is decided
   with connection.cursor() as cursor:
     cursor.execute(
       f"""
@@ -94,27 +89,12 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
       )
       VALUES (%s, %s, %s, %s, %s, %s)
       ON DUPLICATE KEY UPDATE
-        {expires_at_column} = IF(
-          {reconciled_available} > 0,
-          %s,
-          {expires_at_column}
-        ),
-        {updated_at_column} = IF(
-          {should_touch},
-          %s,
-          {updated_at_column}
-        ),
-        {pk_column} = IF(
-          {reconciled_available} > 0,
-          LAST_INSERT_ID({pk_column}),
-          LAST_INSERT_ID(0) + {pk_column}
-        ),
-        {value_column} = IF(
-          {reconciled_available} > 0,
-          {reconciled_available} - 1,
-          {reconciled_available}
-        ),
-        {limit_column} = %s
+        {value_column} = {value_column} - {limit_column},
+        {expires_at_column} = IF({acquired}, %s, {expires_at_column}),
+        {updated_at_column} = IF({acquired}, %s, {updated_at_column}),
+        {pk_column} = IF({acquired}, LAST_INSERT_ID({pk_column}), LAST_INSERT_ID(0) + {pk_column}),
+        {limit_column} = IF({acquired}, %s, {limit_column}),
+        {value_column} = {value_column} + {limit_column} - IF({acquired}, 1, 0)
       """,
       [
         key,
@@ -123,16 +103,13 @@ def semaphore_acquire(alias, key, *, limit, expires_at, now):
         expires_at,
         now,
         now,
-        *reconciled_available_params,
+        limit,
         expires_at,
-        *reconciled_available_params,
-        *reconciled_available_params,
         limit,
         now,
-        *reconciled_available_params,
-        *reconciled_available_params,
-        *reconciled_available_params,
-        *reconciled_available_params,
+        limit,
+        limit,
+        limit,
         limit,
       ],
     )

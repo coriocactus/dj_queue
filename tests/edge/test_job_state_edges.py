@@ -203,7 +203,6 @@ def test_unblock_next_blocked_job_rejects_mismatched_state_backend_alias():
   with pytest.raises(EnqueueError, match="belongs to backend 'secondary'"):
     unblock_next_blocked_job(
       "account:1",
-      limit=1,
       duration_seconds=60,
       slot_handoff=SlotHandoffMode.CONSUME_RELEASED,
       config=load_backend_config(),

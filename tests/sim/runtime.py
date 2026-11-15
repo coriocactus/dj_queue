@@ -5,7 +5,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
-from django.db.models import Count
+from django.db.models import Count, Q
 
 from dj_queue.api import QueueInfo, schedule_recurring_task, unschedule_recurring_task
 from dj_queue.exceptions import ProcessExitError, ProcessMissingError, ProcessPrunedError
@@ -374,6 +374,15 @@ class RuntimeSimulation:
       assert 0 <= semaphore.value <= semaphore.limit, (
         f"seed {self.seed} inconsistent semaphore {semaphore.key}: "
         f"available={semaphore.value} limit={semaphore.limit}"
+      )
+      holders = (
+        Job.objects.filter(concurrency_key=semaphore.key)
+        .filter(Q(ready_execution__isnull=False) | Q(claimed_execution__isnull=False))
+        .count()
+      )
+      assert semaphore.limit - semaphore.value == holders, (
+        f"seed {self.seed} semaphore {semaphore.key} counts "
+        f"{semaphore.limit - semaphore.value} occupied slots for {holders} holders"
       )
 
     for job in Job.objects.order_by("id"):

@@ -93,10 +93,7 @@ def test_semaphore_acquire_release_cycle():
     semaphore_acquire("account:1", limit=1, duration_seconds=60, config=load_backend_config())
     is False
   )
-  assert (
-    semaphore_release("account:1", limit=1, duration_seconds=60, config=load_backend_config())
-    is True
-  )
+  assert semaphore_release("account:1", duration_seconds=60, config=load_backend_config()) is True
   assert (
     semaphore_acquire("account:1", limit=1, duration_seconds=60, config=load_backend_config())
     is True
@@ -118,55 +115,6 @@ def test_semaphore_acquire_reconciles_increased_limit():
   semaphore = Semaphore.objects.get(key="account:resize")
   assert semaphore.limit == 2
   assert semaphore.value == 0
-
-
-@pytest.mark.django_db
-def test_semaphore_acquire_reconciles_reduced_limit_when_saturated():
-  assert (
-    semaphore_acquire("account:resize", limit=2, duration_seconds=60, config=load_backend_config())
-    is True
-  )
-  assert (
-    semaphore_acquire("account:resize", limit=2, duration_seconds=60, config=load_backend_config())
-    is True
-  )
-
-  assert (
-    semaphore_acquire("account:resize", limit=1, duration_seconds=60, config=load_backend_config())
-    is False
-  )
-
-  semaphore = Semaphore.objects.get(key="account:resize")
-  assert semaphore.limit == 1
-  assert semaphore.value == 0
-
-
-@pytest.mark.django_db
-def test_reduced_semaphore_limit_uses_compatibility_available_count():
-  assert (
-    semaphore_acquire("account:resize", limit=2, duration_seconds=60, config=load_backend_config())
-    is True
-  )
-  assert (
-    semaphore_acquire("account:resize", limit=2, duration_seconds=60, config=load_backend_config())
-    is True
-  )
-
-  assert (
-    semaphore_acquire("account:resize", limit=1, duration_seconds=60, config=load_backend_config())
-    is False
-  )
-  assert (
-    semaphore_release("account:resize", limit=1, duration_seconds=60, config=load_backend_config())
-    is True
-  )
-  assert (
-    semaphore_acquire("account:resize", limit=1, duration_seconds=60, config=load_backend_config())
-    is True
-  )
-
-  semaphore = Semaphore.objects.get(key="account:resize")
-  assert (semaphore.value, semaphore.limit) == (0, 1)
 
 
 @pytest.mark.django_db
@@ -211,27 +159,6 @@ def test_saturated_bulk_semaphore_acquire_without_reconcile_does_not_touch_row()
 
   semaphore = Semaphore.objects.get(key="account:bulk-saturated")
   assert semaphore.updated_at == untouched_at
-
-
-@pytest.mark.django_db
-def test_semaphore_release_reconciles_supplied_limit():
-  assert (
-    semaphore_acquire("account:resize", limit=2, duration_seconds=60, config=load_backend_config())
-    is True
-  )
-  assert (
-    semaphore_acquire("account:resize", limit=2, duration_seconds=60, config=load_backend_config())
-    is True
-  )
-
-  assert (
-    semaphore_release("account:resize", limit=1, duration_seconds=60, config=load_backend_config())
-    is True
-  )
-
-  semaphore = Semaphore.objects.get(key="account:resize")
-  assert semaphore.limit == 1
-  assert semaphore.value == 0
 
 
 @pytest.mark.django_db(transaction=True)
@@ -298,8 +225,8 @@ def test_non_transient_claim_error_classification_rejects_unknown_errors():
 @pytest.mark.django_db
 def test_semaphore_signal_caps_at_limit():
   semaphore_acquire("account:1", limit=2, duration_seconds=60, config=load_backend_config())
-  semaphore_release("account:1", limit=2, duration_seconds=60, config=load_backend_config())
-  semaphore_release("account:1", limit=2, duration_seconds=60, config=load_backend_config())
+  semaphore_release("account:1", duration_seconds=60, config=load_backend_config())
+  semaphore_release("account:1", duration_seconds=60, config=load_backend_config())
 
   semaphore = Semaphore.objects.get(key="account:1")
 
@@ -312,8 +239,7 @@ def test_semaphore_release_uses_one_semaphore_table_query():
 
   with CaptureQueriesContext(connection) as ctx:
     assert (
-      semaphore_release("account:1", limit=1, duration_seconds=60, config=load_backend_config())
-      is True
+      semaphore_release("account:1", duration_seconds=60, config=load_backend_config()) is True
     )
 
   assert len(queries_touching(ctx, "dj_queue_semaphores")) == 1
@@ -1109,7 +1035,7 @@ def test_completion_uses_persisted_concurrency_policy(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_reduced_concurrency_limit_after_claim_uses_compatibility_handoff(monkeypatch):
+def test_reduced_concurrency_limit_after_claim_hands_off_at_the_waiter_limit(monkeypatch):
   monkeypatch.setattr(limited.func, "concurrency_limit", 2)
   first = limited.enqueue(1, value="first")
   second = limited.enqueue(1, value="second")
@@ -1127,13 +1053,14 @@ def test_reduced_concurrency_limit_after_claim_uses_compatibility_handoff(monkey
   assert ClaimedExecution.objects.filter(job_id=second.id).exists() is True
   assert BlockedExecution.objects.filter(job_id=third.id).exists() is False
   assert ReadyExecution.objects.filter(job_id=third.id).exists() is True
-  assert Semaphore.objects.get(key="account:1").value == 1
+  semaphore = Semaphore.objects.get(key="account:1")
+  assert (semaphore.value, semaphore.limit) == (0, 2)
 
 
 @pytest.mark.django_db
 def test_recovered_concurrency_release_falls_back_for_conflicting_settings(monkeypatch):
-  monkeypatch.setattr(limited.func, "concurrency_limit", 1)
-  monkeypatch.setattr(limited_discard.func, "concurrency_limit", 2)
+  monkeypatch.setattr(limited.func, "concurrency_duration", 60)
+  monkeypatch.setattr(limited_discard.func, "concurrency_duration", 120)
   jobs = [
     make_job(
       task=limited,
@@ -1448,7 +1375,6 @@ def test_unblock_next_blocked_job_leaves_waiter_when_slot_is_not_acquired():
 
   unblocked = concurrency_operations.unblock_next_blocked_job(
     "account:1",
-    limit=1,
     duration_seconds=60,
     slot_handoff=concurrency_operations.SlotHandoffMode.CONSUME_RELEASED,
     config=load_backend_config(),
@@ -1478,7 +1404,7 @@ def test_failed_slot_handoff_under_limit_decrease_debt_keeps_the_head_waiter():
     )
     for _ in range(2)
   ]
-  # both slots granted at limit 2 are still held, so one release at limit 1 frees nothing
+  # both slots granted at limit 2 are still held, so one release leaves no room at limit 1
   Semaphore.objects.create(
     key="account:1", value=0, limit=2, expires_at=timezone.now() + timedelta(minutes=1)
   )
@@ -1486,7 +1412,7 @@ def test_failed_slot_handoff_under_limit_decrease_debt_keeps_the_head_waiter():
   concurrency_operations.release_concurrency_slot(finishing, config=load_backend_config())
 
   semaphore = Semaphore.objects.get(key="account:1")
-  assert (semaphore.value, semaphore.limit) == (0, 1)
+  assert (semaphore.value, semaphore.limit) == (1, 2)
   assert not ReadyExecution.objects.exists()
   assert list(BlockedExecution.objects.order_by("id").values_list("id", "created_at")) == [
     (waiter.id, waiter.created_at) for waiter in waiters
@@ -1513,7 +1439,6 @@ def test_unblock_next_blocked_job_returns_blocked_job_reference():
 
   unblocked = concurrency_operations.unblock_next_blocked_job(
     "account:1",
-    limit=1,
     duration_seconds=60,
     slot_handoff=concurrency_operations.SlotHandoffMode.CONSUME_RELEASED,
     config=load_backend_config(),
@@ -1553,7 +1478,6 @@ def test_unblock_next_blocked_job_rejects_conflicting_execution_state():
   with pytest.raises(EnqueueError, match="already has an execution-state row"):
     concurrency_operations.unblock_next_blocked_job(
       "account:1",
-      limit=1,
       duration_seconds=60,
       slot_handoff=concurrency_operations.SlotHandoffMode.CONSUME_RELEASED,
       config=load_backend_config(),
@@ -2228,7 +2152,7 @@ def test_postgres_semaphore_acquire_uses_value_and_valid_placeholders(monkeypatc
       captured["params"] = params
 
     def fetchone(self):
-      return (False,)
+      return None
 
   monkeypatch.setattr(connections["default"], "cursor", lambda: FakeCursor())
   now = timezone.now()
@@ -2275,7 +2199,6 @@ def test_postgres_released_slot_handoff_uses_value_and_valid_placeholders(monkey
       "default",
       backend_alias="default",
       key="account:postgres-syntax",
-      limit=3,
       duration_seconds=60,
       now=now,
       use_skip_locked=True,
