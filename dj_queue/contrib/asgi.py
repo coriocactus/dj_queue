@@ -1,13 +1,9 @@
 import asyncio
 import inspect
+import threading
 from contextlib import suppress
 
-from dj_queue.runtime.errors import handle_thread_error
 from dj_queue.runtime.supervisor import AsyncSupervisor
-
-
-def build_supervisor(backend_alias="default"):
-  return AsyncSupervisor.from_backend_config(backend_alias=backend_alias, standalone=False)
 
 
 class DjQueueLifespan:
@@ -16,29 +12,7 @@ class DjQueueLifespan:
     self.backend_alias = backend_alias
     self.forward_wrapped_lifespan = forward_wrapped_lifespan
     self.supervisor = None
-    self._poll_task = None
-    self._poll_stop = None
-
-  async def _poll_supervisor(self):
-    while (
-      self.supervisor is not None and self._poll_stop is not None and not self._poll_stop.is_set()
-    ):
-      try:
-        keep_polling = await asyncio.to_thread(self.supervisor.poll_once_if_running)
-      except Exception as error:
-        handle_thread_error(error, context="supervisor.run", config=self.supervisor.backend_config)
-        keep_polling = True
-
-      if keep_polling is False:
-        return
-
-      if self.supervisor is None or self._poll_stop is None or self._poll_stop.is_set():
-        return
-
-      try:
-        await asyncio.wait_for(self._poll_stop.wait(), timeout=self.supervisor.polling_interval)
-      except TimeoutError:
-        continue
+    self._supervisor_thread = None
 
   async def _start_wrapped_lifespan_app(self, scope, receive, send):
     result = self.app(scope, receive, send)
@@ -70,10 +44,13 @@ class DjQueueLifespan:
           await response_task
 
   async def _start_supervisor(self):
-    self.supervisor = build_supervisor(self.backend_alias)
-    await asyncio.to_thread(self.supervisor.start)
-    self._poll_stop = asyncio.Event()
-    self._poll_task = asyncio.create_task(self._poll_supervisor())
+    supervisor = AsyncSupervisor.from_backend_config(
+      backend_alias=self.backend_alias, standalone=False
+    )
+    await asyncio.to_thread(supervisor.start)
+    self.supervisor = supervisor
+    self._supervisor_thread = threading.Thread(target=supervisor.run, daemon=True)
+    self._supervisor_thread.start()
 
   @staticmethod
   def _is_unsupported_lifespan_error(error):
@@ -83,19 +60,10 @@ class DjQueueLifespan:
     )
 
   async def _stop_supervisor(self):
-    poll_stop = self._poll_stop
-    self._poll_stop = None
-    if poll_stop is not None:
-      poll_stop.set()
-
-    poll_task = self._poll_task
-    self._poll_task = None
-    if poll_task is not None:
-      await poll_task
-
-    if self.supervisor is not None:
-      await asyncio.to_thread(self.supervisor.stop)
-      self.supervisor = None
+    supervisor, self.supervisor = self.supervisor, None
+    if supervisor is not None:
+      supervisor.request_stop()
+      await asyncio.to_thread(self._supervisor_thread.join)
 
   async def __call__(self, scope, receive, send):
     if scope["type"] != "lifespan":

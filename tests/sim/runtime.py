@@ -2,6 +2,7 @@ import logging
 import random
 from concurrent.futures import Future
 from datetime import timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 from django.db.models import Count
@@ -47,8 +48,27 @@ class FakeWakeupBackend:
     return None
 
 
+class ManualThread:
+  def __init__(self, *, target, args):
+    self.target = target
+    self.args = args
+    self.alive = True
+
+  def start(self):
+    return None
+
+  def is_alive(self):
+    return self.alive
+
+  def join(self):
+    # the simulation steps the runner, so joining runs the rest of the thread: the exit path
+    if self.alive:
+      self.alive = False
+      self.target(*self.args)
+
+
 class ManualWorkerPool:
-  def __init__(self, max_workers):
+  def __init__(self, max_workers, *, wake_up):
     self.max_workers = max_workers
     self._running = []
     self._on_drained = None
@@ -117,21 +137,8 @@ class RuntimeSimulation:
     )
 
   def start(self):
-    self._patch_time()
-    self.supervisor._acquire_pidfile()
-    self.supervisor.process = self.supervisor._register_process()
-    self.supervisor._started = True
-    self.supervisor.fail_orphaned_jobs()
-    self.supervisor.runners = list(self.supervisor._build_runners())
-    self.supervisor.runner_threads = []
-    self.supervisor._stop_event.clear()
-
-    for runner in self.supervisor.runners:
-      runner.sleeper = FakeSleeper()
-      if runner.process_kind == "Worker":
-        runner.pool = ManualWorkerPool(runner.config.threads)
-        runner.wakeup_backend = FakeWakeupBackend()
-      runner.start()
+    self._patch_runtime()
+    self.supervisor.start()
 
     assert all(runner.process is not None for runner in self.supervisor.runners), [
       (runner.process_kind, runner.process) for runner in self.supervisor.runners
@@ -439,21 +446,16 @@ class RuntimeSimulation:
       expected_failures = ClaimedExecution.objects.filter(process=runner.process).count()
     if runner.process_kind == "Worker":
       runner.pool.clear()
-    self.supervisor._fail_crashed_runner_jobs(runner)
+    # the thread dies without running the runner's exit path, so its process row stays
+    self._thread(runner).alive = False
+    self.supervisor.check_children()
     if expected_failures:
       assert (
         FailedExecution.objects.filter(message__contains="runner thread crashed").count()
         >= expected_failures
       )
-    runner.stop(timeout=0) if runner.process_kind == "Worker" else runner.stop()
-    replacement = self.supervisor._rebuild_runner(runner)
-    replacement.sleeper = FakeSleeper()
-    if replacement.process_kind == "Worker":
-      replacement.pool = ManualWorkerPool(replacement.config.threads)
-      replacement.wakeup_backend = FakeWakeupBackend()
-    replacement.start()
-    self.supervisor._replace_runner(runner, replacement)
-    assert replacement.process is not None
+    runner.stop()
+    self._assert_replaced(runner)
 
   def _prune_runner(self, runner):
     if runner.process is None:
@@ -468,14 +470,18 @@ class RuntimeSimulation:
     self.supervisor.prune_stale_process_rows(now=self.now)
     assert Process.objects.filter(pk=stale_process.pk).exists() is False
 
-    replacement = self.supervisor._rebuild_runner(runner)
-    replacement.sleeper = FakeSleeper()
-    if replacement.process_kind == "Worker":
-      replacement.pool = ManualWorkerPool(replacement.config.threads)
-      replacement.wakeup_backend = FakeWakeupBackend()
-    replacement.start()
-    self.supervisor._replace_runner(runner, replacement)
-    assert replacement.process is not None
+    # the runner finds its row gone and stops itself
+    self._thread(runner).join()
+    self.supervisor.check_children()
+    self._assert_replaced(runner)
+
+  def _thread(self, runner):
+    return self.supervisor.runner_threads[self.supervisor.runners.index(runner)]
+
+  def _assert_replaced(self, runner):
+    assert runner.process is None
+    assert runner not in self.supervisor.runners
+    assert all(replacement.process is not None for replacement in self.supervisor.runners)
 
   def inject_startup_orphan(self):
     orphan_job = limited.enqueue(1, value=self._next_value("orphan"))
@@ -519,12 +525,20 @@ class RuntimeSimulation:
       self.crash_count,
     )
 
-  def _patch_time(self):
-    self.monkeypatch.setattr("dj_queue.runtime.dispatcher.timezone.now", lambda: self.now)
-    self.monkeypatch.setattr("dj_queue.runtime.scheduler.timezone.now", lambda: self.now)
-    self.monkeypatch.setattr("dj_queue.operations.jobs.timezone.now", lambda: self.now)
-    self.monkeypatch.setattr("dj_queue.operations.concurrency.timezone.now", lambda: self.now)
-    self.monkeypatch.setattr("dj_queue.observability.timezone.now", lambda: self.now)
+  def _patch_runtime(self):
+    self.monkeypatch.setattr("django.utils.timezone.now", lambda: self.now)
+    # the simulation steps every runner itself: no threads, sleeps, or restart delays
+    self.monkeypatch.setattr(
+      "dj_queue.runtime.supervisor.threading", SimpleNamespace(Thread=ManualThread)
+    )
+    self.monkeypatch.setattr(
+      "dj_queue.runtime.supervisor.SUPERVISOR_RESTART_BACKOFF_BASE_DELAY", 0
+    )
+    self.monkeypatch.setattr("dj_queue.runtime.base.InterruptibleSleeper", FakeSleeper)
+    self.monkeypatch.setattr("dj_queue.runtime.worker.WorkerPool", ManualWorkerPool)
+    self.monkeypatch.setattr(
+      "dj_queue.runtime.worker.build_wakeup_backend", lambda **_kwargs: FakeWakeupBackend()
+    )
 
   def _next_value(self, prefix):
     value = f"{prefix}-{self.seed}-{self.counter:04d}"

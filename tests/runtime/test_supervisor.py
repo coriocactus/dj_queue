@@ -31,6 +31,7 @@ from dj_queue.runtime.supervisor import (
   Supervisor,
   warn_if_psycopg_is_pure_python,
 )
+from dj_queue.runtime.worker import Worker
 from tests.factories import wait_until
 from tests.tasks import limited
 
@@ -212,7 +213,6 @@ def build_fork_supervisor(
   launcher=None,
   waitpid=None,
   killer=None,
-  exit_fn=None,
 ):
   return ForkSupervisor.from_backend_config(
     backend_alias="default",
@@ -224,7 +224,6 @@ def build_fork_supervisor(
     launcher=launcher,
     waitpid=waitpid,
     killer=killer,
-    exit_fn=exit_fn,
   )
 
 
@@ -966,7 +965,24 @@ def test_async_supervisor_start_stops_a_runner_whose_start_fails(monkeypatch):
   assert [thread.name for thread in threading.enumerate() if "heartbeat" in thread.name] == []
 
 
-def test_async_supervisor_restarts_crashed_runner_and_fails_its_claimed_jobs():
+def tick_until(supervisor, predicate):
+  def tick():
+    supervisor.check_children()
+    return predicate()
+
+  wait_until(tick)
+
+
+def crash_on_poll():
+  raise RuntimeError("simulated worker crash")
+
+
+def replaced_events(caplog):
+  return [record.dj_queue for record in caplog.records if record.event == "process.replaced"]
+
+
+def test_async_supervisor_restarts_crashed_runner_and_fails_its_claimed_jobs(caplog):
+  caplog.set_level(logging.INFO, logger="dj_queue")
   supervisor = build_async_supervisor(
     tasks_settings=async_tasks_settings(dispatchers=[]),
   )
@@ -995,7 +1011,8 @@ def test_async_supervisor_restarts_crashed_runner_and_fails_its_claimed_jobs():
 
     # wait for the crash to be detected and a replacement runner to register
     wait_until(lambda: crash_count >= 1)
-    wait_until(
+    tick_until(
+      supervisor,
       lambda: (
         supervisor.runners[0] is not worker
         and supervisor.runners[0].process is not None
@@ -1021,22 +1038,30 @@ def test_async_supervisor_restarts_crashed_runner_and_fails_its_claimed_jobs():
   finally:
     supervisor.stop()
 
-  # the claimed job was failed, not left orphaned
+  assert replaced_events(caplog) == [
+    {
+      "backend_alias": "default",
+      "process_name": "worker-1",
+      "kind": "worker",
+      "old_pid": 65432,
+      "new_pid": 65432,
+      "exit_status": None,
+    }
+  ]
+
+  # the crashed runner deregistered itself, so its claim was failed as an orphan
   assert ClaimedExecution.objects.filter(job=job).exists() is False
   failed = FailedExecution.objects.get(job=job)
   assert failed.exception_class == (
-    f"{ProcessExitError.__module__}.{ProcessExitError.__qualname__}"
+    f"{ProcessMissingError.__module__}.{ProcessMissingError.__qualname__}"
   )
 
   assert Process.objects.filter(supervisor=process, kind="Worker").exists() is False
 
 
 def test_async_supervisor_replaces_runner_whose_recovery_and_stop_fail(monkeypatch):
-  handled = []
-  monkeypatch.setattr(
-    "dj_queue.runtime.supervisor.handle_thread_error",
-    lambda error, **kwargs: handled.append((str(error), kwargs["context"])),
-  )
+  handled = _record_handled_errors(monkeypatch)
+  _fail_recovery_once(monkeypatch)
   supervisor = build_async_supervisor(
     tasks_settings=async_tasks_settings(dispatchers=[]),
   )
@@ -1053,14 +1078,11 @@ def test_async_supervisor_replaces_runner_whose_recovery_and_stop_fail(monkeypat
     def database_unavailable(*_args):
       raise OperationalError("database unavailable")
 
-    def crashing_poll():
-      raise RuntimeError("simulated worker crash")
-
-    supervisor._fail_crashed_runner_jobs = database_unavailable
     worker._deregister_process = database_unavailable
-    worker.poll_once = crashing_poll
+    worker.poll_once = crash_on_poll
 
-    wait_until(
+    tick_until(
+      supervisor,
       lambda: (
         supervisor.runners[0] is not worker
         and supervisor.runners[0].process is not None
@@ -1072,7 +1094,7 @@ def test_async_supervisor_replaces_runner_whose_recovery_and_stop_fail(monkeypat
     supervisor.stop()
 
   # the registration the failed stop left behind was removed with its claims failed
-  assert ("database unavailable", "supervisor.replace") in handled
+  assert handled == [("database unavailable", "supervisor.replace")]
   assert ClaimedExecution.objects.filter(job=job).exists() is False
   failed = FailedExecution.objects.get(job=job)
   assert failed.exception_class == (
@@ -1098,11 +1120,8 @@ def test_async_supervisor_replaces_draining_runner_whose_deregistration_fails():
     def database_unavailable():
       raise OperationalError("database unavailable")
 
-    def crashing_poll():
-      raise RuntimeError("simulated worker crash")
-
     worker._deregister_process = database_unavailable
-    worker.poll_once = crashing_poll
+    worker.poll_once = crash_on_poll
 
     # the crashed runner has work in flight, so it drains before it is replaced
     wait_until(
@@ -1111,7 +1130,8 @@ def test_async_supervisor_replaces_draining_runner_whose_deregistration_fails():
       ),
     )
     release.set()
-    wait_until(
+    tick_until(
+      supervisor,
       lambda: (
         supervisor.runners[0] is not worker
         and supervisor.runners[0].process is not None
@@ -1155,80 +1175,6 @@ def test_async_supervisor_stop_does_not_restart_runner_after_stop_request():
   assert Process.objects.filter(supervisor=process, kind="Worker").exists() is False
 
 
-def _record_crash_recovery(supervisor, events):
-  def rebuild(_runner):
-    events.append("rebuild")
-    supervisor.request_stop()
-    return type("Replacement", (), {"name": "worker-1", "start": lambda self: None})()
-
-  supervisor._fail_crashed_runner_jobs = lambda _runner: events.append("fail")
-  supervisor._rebuild_runner = rebuild
-
-
-def test_async_supervisor_drains_crashed_runner_without_failing_its_claims():
-  supervisor = build_async_supervisor(
-    tasks_settings=async_tasks_settings(dispatchers=[]),
-  )
-  events = []
-
-  class Runner:
-    process = object()
-    process_kind = "Worker"
-    name = "worker-1"
-    pool = type("Pool", (), {"idle_capacity": 0, "max_workers": 1})()
-
-    def run_managed_poll_loop(self, *, host_stop_requested):
-      assert host_stop_requested() is False
-      events.append("poll")
-      return False
-
-    def stop(self):
-      events.append("stop")
-      self.process = None
-      return True
-
-  _record_crash_recovery(supervisor, events)
-
-  supervisor._run_managed_runner(Runner())
-
-  assert events == ["poll", "stop", "rebuild"]
-
-
-def test_async_supervisor_preserves_active_claims_until_drain_finishes():
-  supervisor = build_async_supervisor(
-    tasks_settings=async_tasks_settings(dispatchers=[]),
-  )
-  events = []
-
-  class Runner:
-    process = object()
-    process_kind = "Worker"
-    name = "worker-1"
-    pool = type("Pool", (), {"idle_capacity": 0, "max_workers": 1})()
-
-    def run_managed_poll_loop(self, *, host_stop_requested):
-      assert host_stop_requested() is False
-      events.append("poll")
-      return False
-
-    def stop(self):
-      events.append("stop")
-      return False
-
-  runner = Runner()
-  _record_crash_recovery(supervisor, events)
-  thread = threading.Thread(target=supervisor._run_managed_runner, args=(runner,))
-
-  thread.start()
-  wait_until(lambda: events == ["poll", "stop"])
-
-  runner.process = None
-  thread.join(timeout=1)
-
-  assert thread.is_alive() is False
-  assert events == ["poll", "stop", "rebuild"]
-
-
 def _record_handled_errors(monkeypatch):
   handled = []
   monkeypatch.setattr(
@@ -1238,120 +1184,106 @@ def _record_handled_errors(monkeypatch):
   return handled
 
 
-def test_async_supervisor_replaces_crashed_runner_when_recovery_and_stop_raise(monkeypatch):
-  supervisor = build_async_supervisor(
-    tasks_settings=async_tasks_settings(dispatchers=[]),
-  )
-  events = []
+def test_async_supervisor_keeps_a_draining_crashed_runner_and_its_claims():
+  release = threading.Event()
+  tasks_settings = async_tasks_settings(dispatchers=[])
+  tasks_settings["default"]["OPTIONS"]["shutdown_timeout"] = 0.01
+  supervisor = build_async_supervisor(tasks_settings=tasks_settings)
+  process = supervisor.start()
+
+  try:
+    wait_until(lambda: Process.objects.filter(supervisor=process, kind="Worker").count() == 1)
+
+    worker = supervisor.runners[0]
+    job = make_job(task_path="tests.tasks.echo", queue_name="default")
+    make_claimed_execution(job=job, process=worker.process)
+    worker._execute_job = lambda _job: release.wait(timeout=5)
+    worker.pool.submit(worker._execute_job, "slow-job")
+    worker.poll_once = crash_on_poll
+
+    wait_until(lambda: supervisor.runner_threads[0].is_alive() is False)
+    for _tick in range(3):
+      assert supervisor.check_children() is None
+    assert supervisor.runners[0] is worker
+    assert ClaimedExecution.objects.filter(job=job, process=worker.process).exists() is True
+
+    release.set()
+    tick_until(supervisor, lambda: supervisor.runners[0] is not worker)
+  finally:
+    release.set()
+    supervisor.stop()
+
+
+def test_async_supervisor_waits_for_in_flight_work_when_a_crashed_runner_stop_raises(monkeypatch):
   handled = _record_handled_errors(monkeypatch)
+  release = threading.Event()
+  supervisor = build_async_supervisor(tasks_settings=async_tasks_settings(dispatchers=[]))
+  process = supervisor.start()
 
-  class Runner:
-    process = object()
-    process_kind = "Worker"
-    name = "worker-1"
+  try:
+    wait_until(lambda: Process.objects.filter(supervisor=process, kind="Worker").count() == 1)
 
-    def run_managed_poll_loop(self, *, host_stop_requested):
-      events.append("poll")
-      return False
+    worker = supervisor.runners[0]
+    original_process_pk = worker.process.pk
+    stop_worker = worker.stop
+    worker._execute_job = lambda _job: release.wait(timeout=5)
+    worker.pool.submit(worker._execute_job, "slow-job")
 
-    def stop(self):
-      events.append("stop")
+    def broken_stop(**_kwargs):
       raise RuntimeError("stop failed")
 
-  def fail_recovery(_runner):
-    events.append("fail")
-    raise RuntimeError("recovery failed")
+    worker.stop = broken_stop
+    worker.poll_once = crash_on_poll
 
-  _record_crash_recovery(supervisor, events)
-  supervisor._fail_crashed_runner_jobs = fail_recovery
+    wait_until(lambda: handled == [("stop failed", "supervisor.child")])
+    assert supervisor.check_children() is None
+    assert supervisor.runners[0] is worker
 
-  supervisor._run_managed_runner(Runner())
+    release.set()
+    tick_until(
+      supervisor,
+      lambda: (
+        supervisor.runners[0] is not worker
+        and not Process.objects.filter(pk=original_process_pk).exists()
+      ),
+    )
+  finally:
+    release.set()
+    stop_worker()
+    supervisor.stop()
 
-  assert events == ["poll", "fail", "stop", "rebuild"]
-  assert handled == [
-    ("recovery failed", "supervisor.replace"),
-    ("stop failed", "supervisor.replace"),
-  ]
 
-
-def test_async_supervisor_waits_for_drain_when_stopping_an_active_runner_raises(monkeypatch):
-  supervisor = build_async_supervisor(
-    tasks_settings=async_tasks_settings(dispatchers=[]),
-  )
-  events = []
+def test_async_supervisor_retries_a_replacement_whose_start_fails(monkeypatch):
   handled = _record_handled_errors(monkeypatch)
+  supervisor = build_async_supervisor(tasks_settings=async_tasks_settings(dispatchers=[]))
+  process = supervisor.start()
+  start = Worker.start
+  failures = [RuntimeError("start failed")]
 
-  class Runner:
-    process = object()
-    process_kind = "Worker"
-    name = "worker-1"
-    pool = type("Pool", (), {"idle_capacity": 0, "max_workers": 1})()
+  def flaky_start(worker):
+    if failures:
+      raise failures.pop()
+    return start(worker)
 
-    def run_managed_poll_loop(self, *, host_stop_requested):
-      events.append("poll")
-      return False
+  try:
+    wait_until(lambda: Process.objects.filter(supervisor=process, kind="Worker").count() == 1)
 
-    def stop(self):
-      events.append("stop")
-      raise RuntimeError("stop failed")
+    worker = supervisor.runners[0]
+    monkeypatch.setattr(Worker, "start", flaky_start)
+    worker.poll_once = crash_on_poll
 
-  _record_crash_recovery(supervisor, events)
-  supervisor._wait_for_runner_stop = lambda _runner: events.append("wait") or True
+    tick_until(
+      supervisor,
+      lambda: supervisor.runners[0] is not worker and supervisor.runners[0].process is not None,
+    )
+  finally:
+    supervisor.stop()
 
-  supervisor._run_managed_runner(Runner())
-
-  assert events == ["poll", "stop", "wait", "rebuild"]
-  assert handled == [("stop failed", "supervisor.replace")]
-
-
-def test_async_supervisor_keeps_replacing_when_stopping_a_failed_replacement_raises(monkeypatch):
-  supervisor = build_async_supervisor(
-    tasks_settings=async_tasks_settings(dispatchers=[]),
-  )
-  events = []
-  handled = _record_handled_errors(monkeypatch)
-
-  class Runner:
-    process = None
-    process_kind = "Worker"
-    name = "worker-1"
-
-    def run_managed_poll_loop(self, *, host_stop_requested):
-      events.append("poll")
-      return False
-
-    def stop(self):
-      events.append("stop")
-
-  class FailedReplacement:
-    def start(self):
-      raise RuntimeError("start failed")
-
-    def stop(self):
-      raise RuntimeError("stop failed")
-
-  class Replacement:
-    def start(self):
-      supervisor.request_stop()
-
-  replacements = [FailedReplacement(), Replacement()]
-
-  def rebuild(_runner):
-    events.append("rebuild")
-    return replacements.pop(0)
-
-  supervisor._rebuild_runner = rebuild
-
-  supervisor._run_managed_runner(Runner())
-
-  assert events == ["poll", "stop", "rebuild", "rebuild"]
-  assert handled == [
-    ("start failed", "supervisor.replace"),
-    ("stop failed", "supervisor.replace"),
-  ]
+  assert handled == [("start failed", "supervisor.replace")]
+  assert Process.objects.exists() is False
 
 
-def test_async_supervisor_starts_managed_runners_inside_app_executor(monkeypatch):
+def test_async_supervisor_starts_runners_inside_app_executor(monkeypatch):
   supervisor = build_async_supervisor(
     tasks_settings=async_tasks_settings(dispatchers=[]),
   )
@@ -1366,27 +1298,25 @@ def test_async_supervisor_starts_managed_runners_inside_app_executor(monkeypatch
       events.append("exit")
 
   class Runner:
-    process_kind = "Worker"
     name = "worker-1"
+    pid = 65432
+
+    def __init__(self, **_kwargs):
+      return
 
     def start(self):
       events.append("start")
 
-    def run_managed_poll_loop(self, *, host_stop_requested):
+    def run(self):
       events.append("run")
-      return True
-
-    def stop(self):
-      events.append("stop")
 
   monkeypatch.setattr("dj_queue.runtime.supervisor.app_executor", executor)
-  monkeypatch.setattr(supervisor, "_build_runners", lambda: [Runner()])
 
-  supervisor.start_runners()
+  supervisor._launch({"kind": "worker", "runner_class": Runner, "kwargs": {"name": "worker-1"}})
   supervisor.runner_threads[0].join(timeout=1)
 
   assert supervisor.runner_threads[0].is_alive() is False
-  assert events[:3] == ["enter", "start", "exit"]
+  assert events == ["enter", "start", "exit", "run"]
 
 
 def test_async_supervisor_waits_for_undrained_crashed_runner_before_replacement():
@@ -1421,7 +1351,8 @@ def test_async_supervisor_waits_for_undrained_crashed_runner_before_replacement(
     assert Process.objects.filter(pk=original_process_pk).exists() is True
 
     allow_runner_stop.set()
-    wait_until(
+    tick_until(
+      supervisor,
       lambda: (
         supervisor.runners[0] is not worker
         and supervisor.runners[0].process is not None
@@ -1502,16 +1433,6 @@ def test_async_supervisor_sigterm_is_idempotent():
   assert first is True
   assert second is False
   assert Process.objects.filter(supervisor=process).exists() is False
-
-
-def test_async_supervisor_sigquit_takes_immediate_exit_path():
-  exited = []
-  supervisor = build_async_supervisor(tasks_settings=async_tasks_settings(), standalone=True)
-  supervisor._exit_fn = lambda code: exited.append(code)
-
-  supervisor.handle_sigquit()
-
-  assert exited == [1]
 
 
 def test_async_supervisor_stop_preserves_undrained_worker_until_work_finishes(monkeypatch):
@@ -1850,7 +1771,8 @@ def test_fork_child_sigterm_requests_runner_stop(monkeypatch):
   assert stopped == [True]
 
 
-def test_dead_child_fails_claimed_jobs_and_replaces_runner():
+def test_dead_child_fails_claimed_jobs_and_replaces_runner(caplog):
+  caplog.set_level(logging.INFO, logger="dj_queue")
   launched = []
   waitpid_results = [(90001, 0)]
 
@@ -1883,6 +1805,16 @@ def test_dead_child_fails_claimed_jobs_and_replaces_runner():
     )
     assert supervisor.children[90002]["kind"] == "worker"
     assert Process.objects.filter(pk=child_process.pk).exists() is False
+    assert replaced_events(caplog) == [
+      {
+        "backend_alias": "default",
+        "process_name": "worker-1",
+        "kind": "worker",
+        "old_pid": 90001,
+        "new_pid": 90002,
+        "exit_status": 0,
+      }
+    ]
   finally:
     supervisor.stop()
 
@@ -1992,13 +1924,16 @@ def test_fork_supervisor_poll_once_checks_children_without_pruning_every_tick(mo
     tasks_settings=async_tasks_settings(recurring={}),
     launcher=lambda spec: 91000,
   )
+  supervisor._last_housekeeping_at = time.monotonic()
   calls = []
 
-  monkeypatch.setattr(Supervisor, "poll_once", lambda self: calls.append("prune") or [])
-  monkeypatch.setattr(supervisor, "check_children", lambda: calls.append("children") or 91001)
+  monkeypatch.setattr(
+    supervisor, "prune_stale_process_rows", lambda **_kwargs: calls.append("prune") or []
+  )
+  monkeypatch.setattr(supervisor, "check_children", lambda: calls.append("children"))
 
-  assert supervisor.poll_once() == 91001
-  assert calls == ["prune", "children"]
+  assert supervisor.poll_once() == []
+  assert calls == ["children"]
 
 
 def test_repeated_sigterm_is_idempotent():
@@ -2024,23 +1959,6 @@ def test_repeated_sigterm_is_idempotent():
   assert first is True
   assert second is False
   assert supervisor._graceful_shutdown_requested is True
-
-
-def test_sigquit_takes_immediate_exit_path():
-  exited = []
-  supervisor = build_fork_supervisor(
-    tasks_settings=async_tasks_settings(recurring={}),
-    launcher=lambda spec: 92000,
-    exit_fn=lambda code: exited.append(code),
-  )
-  supervisor.start()
-
-  try:
-    supervisor.handle_sigquit()
-  finally:
-    supervisor.stop()
-
-  assert exited == [1]
 
 
 def test_pidfile_created_and_deleted_for_standalone_supervisor(tmp_path):
@@ -2112,3 +2030,213 @@ def test_supervisor_poll_loop_survives_a_liveness_probe_error(monkeypatch):
     supervisor.stop()
 
   assert handled == [("database unavailable", "supervisor.liveness")]
+
+
+def _fail_recovery_once(monkeypatch):
+  failures = [OperationalError("database unavailable")]
+
+  def flaky_recovery(**kwargs):
+    if failures:
+      raise failures.pop()
+    return recovery_operations.fail_claimed_jobs_for_child(**kwargs)
+
+  monkeypatch.setattr("dj_queue.runtime.supervisor.fail_claimed_jobs_for_child", flaky_recovery)
+
+
+def test_fork_supervisor_keeps_siblings_when_child_recovery_fails_once(monkeypatch):
+  handled = _record_handled_errors(monkeypatch)
+  _fail_recovery_once(monkeypatch)
+  launched = []
+  killed = []
+  waitpid_results = [(90001, 0)]
+
+  def launcher(spec):
+    launched.append(spec["kind"])
+    return 90000 + len(launched)
+
+  tasks_settings = async_tasks_settings(recurring={})
+  tasks_settings["default"]["OPTIONS"]["shutdown_timeout"] = 0
+  supervisor = build_fork_supervisor(
+    tasks_settings=tasks_settings,
+    launcher=launcher,
+    waitpid=lambda _pid, _flags: waitpid_results.pop(0) if waitpid_results else (0, 0),
+    killer=lambda pid, sig: killed.append((pid, sig)),
+  )
+  supervisor_process = supervisor.start()
+
+  try:
+    child_process = make_process(pid=90001, name="worker-1", supervisor=supervisor_process)
+    job = make_job(task_path="tests.tasks.echo")
+    make_claimed_execution(job=job, process=child_process)
+
+    supervisor.poll_once()
+
+    assert handled == [("database unavailable", "supervisor.replace")]
+    assert killed == []
+    assert sorted(supervisor.children) == [90002]
+    assert ClaimedExecution.objects.filter(job=job).exists() is True
+
+    wait_until(lambda: supervisor.poll_once() == [] and 90003 in supervisor.children)
+
+    assert launched == ["worker", "dispatcher", "worker"]
+    assert FailedExecution.objects.get(job=job).exception_class == (
+      f"{ProcessExitError.__module__}.{ProcessExitError.__qualname__}"
+    )
+    assert Process.objects.filter(pk=child_process.pk).exists() is False
+  finally:
+    supervisor.stop()
+
+
+def test_fork_supervisor_stop_kills_every_child_when_recovery_raises(monkeypatch, tmp_path):
+  handled = _record_handled_errors(monkeypatch)
+  killed = []
+  launched = []
+  pidfile = tmp_path / "run" / "dj_queue.pid"
+  tasks_settings = async_tasks_settings(recurring={})
+  tasks_settings["default"]["OPTIONS"]["shutdown_timeout"] = 0
+  tasks_settings["default"]["OPTIONS"]["supervisor_pidfile"] = str(pidfile)
+
+  def launcher(spec):
+    launched.append(spec["kind"])
+    return 80000 + len(launched)
+
+  def database_unavailable(**_kwargs):
+    raise OperationalError("database unavailable")
+
+  monkeypatch.setattr(
+    "dj_queue.runtime.supervisor.fail_claimed_jobs_for_child", database_unavailable
+  )
+  supervisor = build_fork_supervisor(
+    tasks_settings=tasks_settings,
+    launcher=launcher,
+    waitpid=lambda _pid, _flags: (0, 0),
+    killer=lambda pid, sig: killed.append((pid, sig)),
+  )
+  process = supervisor.start()
+
+  supervisor.stop()
+
+  assert killed == [
+    (80001, signal.SIGTERM),
+    (80002, signal.SIGTERM),
+    (80001, signal.SIGKILL),
+    (80002, signal.SIGKILL),
+  ]
+  assert handled == [("database unavailable", "supervisor.stop")] * 2
+  assert Process.objects.filter(pk=process.pk).exists() is False
+  assert pidfile.exists() is False
+
+
+def test_async_supervisor_stop_continues_when_a_runner_stop_raises(monkeypatch, tmp_path):
+  handled = _record_handled_errors(monkeypatch)
+  pidfile = tmp_path / "run" / "dj_queue.pid"
+  tasks_settings = async_tasks_settings()
+  tasks_settings["default"]["OPTIONS"]["supervisor_pidfile"] = str(pidfile)
+  supervisor = build_async_supervisor(tasks_settings=tasks_settings)
+  monkeypatch.setattr(supervisor, "register_signal_handlers", lambda: None)
+  process = supervisor.start()
+  worker, dispatcher = supervisor.runners
+  stop_worker = worker.stop
+
+  def broken_stop(**_kwargs):
+    raise RuntimeError("stop failed")
+
+  worker.stop = broken_stop
+
+  try:
+    supervisor.stop()
+
+    assert handled == [("stop failed", "supervisor.child")]
+    assert dispatcher.process is None
+    assert Process.objects.filter(pk=process.pk).exists() is False
+    assert pidfile.exists() is False
+  finally:
+    stop_worker()
+    supervisor.stop()
+
+
+def test_async_supervisor_stop_shares_one_shutdown_timeout_across_workers(monkeypatch):
+  release = threading.Event()
+  tasks_settings = async_tasks_settings(
+    workers=[{"queues": "*", "threads": 1, "processes": 1, "polling_interval": 0.1}] * 5,
+    dispatchers=[],
+  )
+  tasks_settings["default"]["OPTIONS"]["shutdown_timeout"] = 0.4
+  supervisor = build_async_supervisor(tasks_settings=tasks_settings, standalone=False)
+  supervisor.start()
+
+  try:
+    for worker in supervisor.runners:
+      monkeypatch.setattr(worker, "_execute_job", lambda job_id: release.wait())
+      worker.pool.submit(worker._execute_job, "slow-job")
+
+    started_at = time.monotonic()
+    supervisor.stop()
+    elapsed = time.monotonic() - started_at
+
+    assert elapsed < 1.2
+    assert Process.objects.filter(metadata__shutdown_state="draining").count() == 5
+  finally:
+    release.set()
+    wait_until(lambda: Process.objects.exists() is False)
+
+
+def _run_until_sigquit(supervisor, before_sigquit=lambda: None):
+  outcomes = []
+
+  def sigquit_on_first_tick():
+    before_sigquit()
+    supervisor.handle_sigquit()
+
+  supervisor.poll_once = sigquit_on_first_tick
+  thread = threading.Thread(target=lambda: outcomes.append(supervisor.run()))
+  started_at = time.monotonic()
+  thread.start()
+  thread.join(timeout=2)
+  return thread, outcomes, time.monotonic() - started_at
+
+
+def test_async_supervisor_sigquit_stops_without_the_graceful_budget(monkeypatch):
+  release = threading.Event()
+  tasks_settings = async_tasks_settings(dispatchers=[])
+  tasks_settings["default"]["OPTIONS"]["shutdown_timeout"] = 3
+  supervisor = build_async_supervisor(tasks_settings=tasks_settings, standalone=False)
+
+  def start_slow_job():
+    worker = supervisor.runners[0]
+    monkeypatch.setattr(worker, "_execute_job", lambda job_id: release.wait())
+    worker.pool.submit(worker._execute_job, "slow-job")
+
+  try:
+    thread, outcomes, elapsed = _run_until_sigquit(supervisor, start_slow_job)
+
+    assert thread.is_alive() is False
+    assert outcomes == [False]
+    assert elapsed < 2
+    assert Process.objects.filter(kind="Supervisor").exists() is False
+    assert Process.objects.get(kind="Worker").metadata["shutdown_timeout"] == 0
+  finally:
+    release.set()
+    thread.join(timeout=5)
+    wait_until(lambda: Process.objects.exists() is False)
+
+
+def test_fork_supervisor_sigquit_kills_children_without_the_graceful_budget():
+  killed = []
+  tasks_settings = async_tasks_settings(dispatchers=[], recurring={})
+  tasks_settings["default"]["OPTIONS"]["shutdown_timeout"] = 3
+  supervisor = build_fork_supervisor(
+    tasks_settings=tasks_settings,
+    standalone=False,
+    launcher=lambda spec: 92000,
+    waitpid=lambda _pid, _flags: (0, 0),
+    killer=lambda pid, sig: killed.append((pid, sig)),
+  )
+
+  thread, outcomes, elapsed = _run_until_sigquit(supervisor)
+  thread.join(timeout=5)
+
+  assert outcomes == [False]
+  assert elapsed < 2
+  assert killed == [(92000, signal.SIGTERM), (92000, signal.SIGKILL)]
+  assert Process.objects.exists() is False

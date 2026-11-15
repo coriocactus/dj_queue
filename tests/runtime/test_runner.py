@@ -307,25 +307,6 @@ def test_runner_stop_keeps_heartbeat_thread_reference_when_join_times_out():
   assert runner._heartbeat_thread is None
 
 
-def test_managed_poll_loop_reports_runner_stop_as_failure():
-  runner = DummyRunner()
-  runner.start()
-
-  def stop_during_poll():
-    runner.poll_count += 1
-    runner.request_stop()
-
-  runner.poll_once = stop_during_poll
-
-  try:
-    clean_exit = runner.run_managed_poll_loop(host_stop_requested=lambda: False)
-  finally:
-    runner.stop()
-
-  assert clean_exit is False
-  assert runner.poll_count == 1
-
-
 def test_runner_start_stop_fires_runner_hooks():
   events = []
   clear_hooks()

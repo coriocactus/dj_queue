@@ -102,6 +102,7 @@ class BaseRunner:
     if process_alive_threshold is None:
       process_alive_threshold = self.backend_config.process_alive_threshold
     self._process_alive_threshold = process_alive_threshold
+    self.shutdown_timeout = backend_config.shutdown_timeout
     self._started = False
     self._stopped = False
     self._aborted = False
@@ -130,15 +131,6 @@ class BaseRunner:
         break
       self.sleeper.sleep(self.polling_interval)
     return not self._aborted
-
-  def run_managed_poll_loop(self, *, host_stop_requested):
-    while not self.stop_requested() and not host_stop_requested():
-      if not self.poll_once_if_running():
-        return False
-      if self.stop_requested() or host_stop_requested():
-        break
-      self.sleeper.sleep(self.polling_interval)
-    return host_stop_requested()
 
   def stop(self):
     process = self._begin_stop()
@@ -182,11 +174,6 @@ class BaseRunner:
 
   def poll_once(self):
     raise NotImplementedError
-
-  def poll_once_if_running(self):
-    if not self._should_continue_handled():
-      return False
-    return self._poll_once_handled()
 
   def _poll_once_handled(self):
     try:

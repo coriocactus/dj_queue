@@ -1,4 +1,5 @@
 import threading
+import time
 import traceback
 
 from django.utils import timezone
@@ -66,7 +67,8 @@ class Worker(BaseRunner):
 
   def stop(self, *, timeout=None):
     if timeout is None:
-      timeout = self.backend_config.shutdown_timeout
+      timeout = self.shutdown_timeout
+    deadline = time.monotonic() + timeout
 
     process = self._begin_stop(stop_heartbeat=False)
     if process is None:
@@ -91,7 +93,7 @@ class Worker(BaseRunner):
       return
 
     self.wakeup_backend.stop(timeout=timeout)
-    drained = self.pool.shutdown(timeout, on_drained=finish)
+    drained = self.pool.shutdown(max(deadline - time.monotonic(), 0), on_drained=finish)
     if drained:
       finish()
     else:
