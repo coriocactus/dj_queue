@@ -395,25 +395,10 @@ def test_backend_snapshot_derives_active_count_from_authoritative_value():
   assert snapshot.semaphore_rows[0]["available_slots"] == 0
 
 
-def test_deep_health_allows_unresolved_legacy_recurring_reservation():
-  RecurringExecution.objects.create(
-    backend_alias="default",
-    task_key="legacy",
-    run_at=timezone.now(),
-    intended_job_id=None,
-    job=None,
-  )
-
-  problems = health.deep_health_problems(backend_alias="default")
-
-  assert not any("recurring execution reservations have no job" in problem for problem in problems)
-
-
 @pytest.mark.parametrize(
   ("identity", "backend_alias", "unhealthy"),
   [
     ("match", "default", False),
-    ("legacy", "default", False),
     ("mismatch", "default", True),
     ("mismatch", "other", False),
   ],
@@ -422,7 +407,7 @@ def test_deep_health_checks_attached_recurring_identity(identity, backend_alias,
   job = Job.objects.create(
     task_path="tests.tasks.echo", backend_alias=backend_alias, finished_at=timezone.now()
   )
-  intended_id = {"match": job.id, "legacy": None, "mismatch": uuid4()}[identity]
+  intended_id = {"match": job.id, "mismatch": uuid4()}[identity]
   RecurringExecution.objects.create(
     backend_alias=backend_alias,
     task_key="identity",

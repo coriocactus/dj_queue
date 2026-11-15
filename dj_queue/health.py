@@ -150,7 +150,6 @@ def _recurring_health_problems(*, alias, backend_alias):
     RecurringExecution.objects.using(alias)
     .filter(
       backend_alias=backend_alias,
-      intended_job_id__isnull=False,
       job__isnull=True,
     )
     .count()
@@ -173,7 +172,7 @@ def _recurring_health_problems(*, alias, backend_alias):
 
   recurring_identity_mismatched = (
     RecurringExecution.objects.using(alias)
-    .filter(backend_alias=backend_alias, intended_job_id__isnull=False, job__isnull=False)
+    .filter(backend_alias=backend_alias, job__isnull=False)
     .exclude(intended_job_id=F("job_id"))
     .count()
   )

@@ -3,7 +3,7 @@ from datetime import timedelta
 from typing import Any
 from uuid import uuid4
 
-from django.db import IntegrityError, transaction
+from django.db import transaction
 from django.db.models import Exists, OuterRef, Q
 from django.utils.module_loading import import_string
 
@@ -269,7 +269,6 @@ def fire_due_recurring_tasks(now, *, config, include_dynamic_tasks=False, batch_
     backend_alias=backend_alias,
     task_key=OuterRef("key"),
     job__isnull=True,
-    intended_job_id__isnull=False,
   )
   queryset = (
     RecurringTask.objects.using(alias)
@@ -296,7 +295,6 @@ def fire_due_recurring_tasks(now, *, config, include_dynamic_tasks=False, batch_
         backend_alias=backend_alias,
         task_key__in=[task.key for task in recurring_tasks],
         job__isnull=True,
-        intended_job_id__isnull=False,
       )
       .order_by("run_at", "id")
     )
@@ -319,8 +317,6 @@ def fire_due_recurring_tasks(now, *, config, include_dynamic_tasks=False, batch_
     if recurring_task.next_run_at is not None and recurring_task.next_run_at > now:
       continue
     run_at = latest_cron_run(recurring_task.schedule, now)
-    if run_at is None:
-      continue
     execution = fire_recurring_task(recurring_task, run_at, config=config)
     if execution is not None and execution.job_id is not None:
       fired_jobs.append(execution.job)
@@ -390,7 +386,7 @@ def _reserve_recurring_task(recurring_task, run_at, *, config):
         )
         .first()
       )
-      if execution is None or execution.job_id is not None or execution.intended_job_id is None:
+      if execution is None or execution.job_id is not None:
         return None
       return _recurring_reservation(execution, recurring_task, next_run_at)
 
@@ -410,7 +406,7 @@ def _reserve_recurring_task(recurring_task, run_at, *, config):
       run_at=run_at,
     )
     _advance_next_run_at(recurring_task, next_run_at, using=alias)
-    if not created and (execution.job_id is not None or execution.intended_job_id is None):
+    if not created and execution.job_id is not None:
       return None
     return _recurring_reservation(execution, recurring_task, next_run_at)
 
@@ -444,20 +440,14 @@ def _enqueue_reserved_recurring_task(reservation, *, config):
     backend=backend_alias,
   )
   payload = reservation["payload"]
-  try:
-    return enqueue_job(
-      task,
-      payload.get("args", []),
-      payload.get("kwargs", {}),
-      backend_alias=backend_alias,
-      job_id=reservation["intended_job_id"],
-      config=config,
-    )
-  except IntegrityError:
-    existing_job = Job.objects.using(using).filter(pk=reservation["intended_job_id"]).first()
-    if existing_job is None:
-      raise
-    return _validated_reserved_job(reservation, existing_job, using=using)
+  return enqueue_job(
+    task,
+    payload.get("args", []),
+    payload.get("kwargs", {}),
+    backend_alias=backend_alias,
+    job_id=reservation["intended_job_id"],
+    config=config,
+  )
 
 
 def _validated_reserved_job(reservation, job, *, using):
@@ -499,13 +489,6 @@ def _attach_reserved_recurring_job(reservation, job, *, using, backend_alias):
     .update(job=job)
   )
   if updated != 1:
-    execution = (
-      RecurringExecution.objects.using(using)
-      .select_related("job")
-      .get(pk=reservation["execution_id"])
-    )
-    if execution.job_id == job.id and execution.intended_job_id == job.id:
-      return None
     raise EnqueueError("recurring execution reservation could not be assigned a job")
   return (
     RecurringExecution.objects.using(using)
