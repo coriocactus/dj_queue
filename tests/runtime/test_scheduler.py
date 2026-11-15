@@ -1,6 +1,6 @@
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -351,6 +351,31 @@ def test_scheduler_persists_next_run_after_fire():
 
   task = RecurringTask.objects.get(backend_alias="default", key="static-task")
   assert task.next_run_at == now.replace(minute=1, second=0, microsecond=0)
+  scheduler.stop()
+
+
+def test_scheduler_fires_daily_timezone_task_once_on_the_fall_back_day():
+  scheduler = build_scheduler(
+    tasks_settings=scheduler_tasks_settings(
+      recurring={
+        "daily-task": {
+          "task_path": "tests.tasks.echo",
+          "schedule": "30 1 * * * America/New_York",
+        }
+      }
+    )
+  )
+  scheduler.start()
+
+  for hour in (5, 6):
+    scheduler.poll_once(now=datetime(2026, 11, 1, hour, 30, 1, tzinfo=UTC))
+
+  assert list(RecurringExecution.objects.values_list("run_at", flat=True)) == [
+    datetime(2026, 11, 1, 5, 30, tzinfo=UTC)
+  ]
+  assert RecurringTask.objects.get(key="daily-task").next_run_at == datetime(
+    2026, 11, 2, 6, 30, tzinfo=UTC
+  )
   scheduler.stop()
 
 

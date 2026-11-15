@@ -1197,9 +1197,11 @@ def _find_run_for_schedule(schedule: _Schedule, base: datetime, *, direction: in
       if _changes_offset(local_date, local_timezone):
         candidates = sorted(candidates, reverse=direction < 0)
       for candidate in candidates:
-        if (direction > 0 and candidate > timeline_base) or (
-          direction < 0 and candidate < timeline_base
-        ):
+        if (
+          direction > 0
+          and candidate > timeline_base
+          and not _repeats_wall_time(candidate, local_base, local_timezone)
+        ) or (direction < 0 and candidate < timeline_base):
           return _restore_timeline(candidate, return_timezone, local_timezone, return_naive)
     local_date += date_step
 
@@ -1240,6 +1242,16 @@ def _restore_timeline(
 def _matches_date(schedule: _Schedule, local_date: date, local_timezone: tzinfo | None) -> bool:
   moment = datetime(local_date.year, local_date.month, local_date.day, tzinfo=local_timezone)
   return schedule.months.matches(moment.month) and schedule._matches_day(moment)
+
+
+def _repeats_wall_time(
+  candidate: datetime, local_base: datetime, local_timezone: tzinfo | None
+) -> bool:
+  local_candidate = _to_local_datetime(candidate, local_timezone)
+  return (
+    _same_local_time(local_candidate, local_base)
+    and local_candidate.utcoffset() != local_base.utcoffset()
+  )
 
 
 def _changes_offset(local_date: date, local_timezone: tzinfo | None) -> bool:

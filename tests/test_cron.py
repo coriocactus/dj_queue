@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -109,13 +109,53 @@ def test_cron_supports_explicit_timezones():
   assert next_cron_run("0 0 * * * Europe/Rome", dt(2026, 4, 8, 21, 59)) == dt(2026, 4, 8, 22, 0)
 
 
-def test_cron_timezone_fires_twice_on_the_fall_back_day():
-  schedule = "30 1 * * * America/New_York"
+FALL_BACK_2026 = pytest.mark.parametrize(
+  ("zone", "hour", "first_fold", "second_fold"),
+  (
+    ("America/New_York", 1, dt(2026, 11, 1, 5, 0), dt(2026, 11, 1, 6, 0)),
+    ("Europe/Rome", 2, dt(2026, 10, 25, 0, 0), dt(2026, 10, 25, 1, 0)),
+  ),
+)
 
-  assert next_cron_run(schedule, dt(2026, 11, 1, 4, 0)) == dt(2026, 11, 1, 5, 30)
-  assert next_cron_run(schedule, dt(2026, 11, 1, 5, 30)) == dt(2026, 11, 1, 6, 30)
-  assert next_cron_run(schedule, dt(2026, 11, 1, 6, 30)) == dt(2026, 11, 2, 6, 30)
-  assert previous_cron_run(schedule, dt(2026, 11, 1, 6, 30)) == dt(2026, 11, 1, 5, 30)
+
+def next_runs(schedule, base, count):
+  runs = []
+  for _ in range(count):
+    base = next_cron_run(schedule, base)
+    runs.append(base)
+  return runs
+
+
+@FALL_BACK_2026
+def test_cron_timezone_daily_fires_once_on_the_fall_back_day(zone, hour, first_fold, second_fold):
+  schedule = f"30 {hour} * * * {zone}"
+  first_run = first_fold + timedelta(minutes=30)
+  second_fold_run = second_fold + timedelta(minutes=30)
+
+  assert next_runs(schedule, first_fold, 2) == [first_run, second_fold_run + timedelta(days=1)]
+  assert latest_cron_run(schedule, second_fold_run) == second_fold_run
+  assert previous_cron_run(schedule, second_fold_run) == first_run
+
+
+@FALL_BACK_2026
+def test_cron_timezone_hourly_skips_the_repeated_wall_time(zone, hour, first_fold, second_fold):
+  schedule = f"30 * * * * {zone}"
+
+  assert next_cron_run(schedule, first_fold + timedelta(minutes=30)) == second_fold + timedelta(
+    hours=1, minutes=30
+  )
+
+
+@FALL_BACK_2026
+def test_cron_timezone_sub_hourly_fires_through_the_repeated_hour(
+  zone, hour, first_fold, second_fold
+):
+  assert next_runs(f"*/15 * * * * {zone}", first_fold, 8) == [
+    first_fold + timedelta(minutes=15 * step) for step in range(1, 9)
+  ]
+  assert next_runs(f"* * * * * * {zone}", second_fold - timedelta(seconds=2), 4) == [
+    second_fold + timedelta(seconds=step) for step in range(-1, 3)
+  ]
 
 
 def test_cron_timezone_orders_runs_on_the_timeline_through_the_repeated_hour():
@@ -126,11 +166,18 @@ def test_cron_timezone_orders_runs_on_the_timeline_through_the_repeated_hour():
   assert latest_cron_run(schedule, dt(2026, 11, 1, 6, 15)) == dt(2026, 11, 1, 6, 15)
 
 
-def test_cron_timezone_skips_the_spring_forward_day():
-  schedule = "30 2 * * * America/New_York"
+@pytest.mark.parametrize(
+  ("zone", "last_run", "next_run"),
+  (
+    ("America/New_York", dt(2026, 3, 7, 7, 30), dt(2026, 3, 9, 6, 30)),
+    ("Europe/Rome", dt(2026, 3, 28, 1, 30), dt(2026, 3, 30, 0, 30)),
+  ),
+)
+def test_cron_timezone_skips_the_spring_forward_day(zone, last_run, next_run):
+  schedule = f"30 2 * * * {zone}"
 
-  assert next_cron_run(schedule, dt(2026, 3, 7, 7, 30)) == dt(2026, 3, 9, 6, 30)
-  assert previous_cron_run(schedule, dt(2026, 3, 9, 6, 30)) == dt(2026, 3, 7, 7, 30)
+  assert next_cron_run(schedule, last_run) == next_run
+  assert previous_cron_run(schedule, next_run) == last_run
 
 
 def test_cron_supports_natural_daily_schedule():
