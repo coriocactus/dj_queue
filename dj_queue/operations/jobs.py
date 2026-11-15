@@ -26,13 +26,13 @@ from dj_queue.operations._helpers import (
   _consume_selected_rows,
   _ensure_job_ids_have_no_other_execution_state,
   _ensure_state_rows_belong_to_backend,
+  _failed_execution_row,
 )
 from dj_queue.operations.concurrency import release_concurrency_slot
 from dj_queue.operations.dispatch import (
   DispatchEntry,
   build_dispatch_rows,
   dispatch_decision,
-  dispatch_job,
 )
 from dj_queue.operations.enqueue import enqueue_job_with_dispatch
 from dj_queue.wakeup import notify_ready_queues_on_commit
@@ -69,14 +69,14 @@ def promote_scheduled_jobs(*, batch_size, config):
         config=config,
       )
 
-  promoted_jobs, ready_queue_names, policy_failures = retry_transient_database_errors(
+  promoted, ready_queue_names, policy_failures = retry_transient_database_errors(
     promote_transition, using=alias
   )
 
   if ready_queue_names:
     notify_ready_queues_on_commit(tuple(dict.fromkeys(ready_queue_names)), config=config)
   _log_dispatch_policy_failures(policy_failures, backend_alias=backend_alias)
-  return promoted_jobs
+  return [entry.job for entry in promoted]
 
 
 def dispatch_scheduled_job_now(job_id, *, backend_alias="default", config=None):
@@ -100,7 +100,10 @@ def dispatch_scheduled_job_now(job_id, *, backend_alias="default", config=None):
     job = scheduled.job
     job.scheduled_at = None
     job.save(using=alias, update_fields=["scheduled_at", "updated_at"])
-    dispatch_outcome = dispatch_job(job, config=config)
+    (entry,), _ready_queue_names, _policy_failures = _redispatch_jobs(
+      [job], reset_results=False, config=config
+    )
+    dispatch_outcome = entry.outcome
 
   if dispatch_outcome.should_notify:
     notify_ready_queues_on_commit((job.queue_name,), config=config)
@@ -155,10 +158,10 @@ def retry_failed_job(job_id: UUID | str, *, backend_alias: str = "default", conf
       failed_rows = _consume_selected_rows(alias, FailedExecution, [failed])
       if not failed_rows:
         raise EnqueueError("job is not failed")
-      jobs, ready_queue_names, _policy_failures = _redispatch_jobs(
+      (entry,), ready_queue_names, _policy_failures = _redispatch_jobs(
         [failed.job for failed in failed_rows], config=config
       )
-      return jobs[0], ready_queue_names
+      return entry.job, ready_queue_names
 
   job, ready_queue_names = retry_transient_database_errors(retry_transition, using=alias)
 
@@ -207,9 +210,10 @@ def retry_failed_jobs(
         [failed.job for failed in failed_rows], isolate_policy_errors=True, config=config
       )
 
-  jobs, ready_queue_names, policy_failures = retry_transient_database_errors(
+  retried, ready_queue_names, policy_failures = retry_transient_database_errors(
     retry_transition, using=alias
   )
+  jobs = [entry.job for entry in retried]
 
   if ready_queue_names:
     notify_ready_queues_on_commit(tuple(dict.fromkeys(ready_queue_names)), config=config)
@@ -248,9 +252,10 @@ def promote_failed_job_retries(*, batch_size, config):
         [failed.job for failed in failed_rows], isolate_policy_errors=True, config=config
       )
 
-  jobs, ready_queue_names, policy_failures = retry_transient_database_errors(
+  retried, ready_queue_names, policy_failures = retry_transient_database_errors(
     promote_transition, using=alias
   )
+  jobs = [entry.job for entry in retried]
 
   if ready_queue_names:
     notify_ready_queues_on_commit(tuple(dict.fromkeys(ready_queue_names)), config=config)
@@ -295,18 +300,10 @@ def _redispatch_jobs(jobs, *, config, isolate_policy_errors=False, reset_results
   _bulk_create(
     alias,
     FailedExecution,
-    [
-      FailedExecution(
-        job_id=job.id,
-        exception_class=exception_path(error),
-        message=str(error),
-        traceback="",
-      )
-      for job, error in policy_failures
-    ],
+    [_failed_execution_row(job, error) for job, error in policy_failures],
   )
 
-  return [entry.job for entry in prepared], rows.ready_queue_names, policy_failures
+  return prepared, rows.ready_queue_names, policy_failures
 
 
 def _log_jobs_retried(jobs, *, backend_alias):

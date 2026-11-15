@@ -10,6 +10,7 @@ from dj_queue.models import (
 )
 from dj_queue.operations._helpers import (
   _ensure_job_ids_have_no_other_execution_state,
+  _failed_execution_row,
 )
 from dj_queue.operations.concurrency import (
   release_concurrency_slot,
@@ -164,15 +165,7 @@ def _fail_claimed_jobs(jobs, error, *, traceback_text, config):
       ignored_models=(ClaimedExecution,),
     )
     FailedExecution.objects.using(alias).bulk_create(
-      [
-        FailedExecution(
-          job_id=job.id,
-          exception_class=exception_class,
-          message=message,
-          traceback=traceback_text,
-        )
-        for job in jobs
-      ]
+      [_failed_execution_row(job, error, traceback_text=traceback_text) for job in jobs]
     )
 
     for job in release_recovered_concurrency_slots(jobs, config=config):

@@ -6,10 +6,10 @@ from django.utils import timezone
 
 from dj_queue.models import BlockedExecution, Job, ReadyExecution, ScheduledExecution
 from dj_queue.operations._helpers import (
+  _blocked_execution_row,
   _create_blocked_execution,
   _create_ready_execution,
   _create_scheduled_execution,
-  _finish_job_if_no_execution_state,
   _ready_execution_row,
   _scheduled_execution_row,
 )
@@ -99,11 +99,9 @@ def _append_dispatch_row(rows, entry, *, backend_alias, now):
     )
   elif entry.outcome is DispatchOutcome.BLOCKED:
     rows.blocked.append(
-      BlockedExecution(
-        job=job,
+      _blocked_execution_row(
+        job,
         backend_alias=backend_alias,
-        queue_name=job.queue_name,
-        priority=job.priority,
         concurrency_key=entry.decision.concurrency_key,
         expires_at=now + timedelta(seconds=entry.decision.duration_seconds),
         created_at=now,
@@ -143,11 +141,11 @@ def _concurrency_dispatch_outcome(decision, *, acquired):
   return DispatchOutcome.BLOCKED
 
 
-def dispatch_job(job, *, config, now=None, check_conflicts=True, task=None):
+def dispatch_job(job, *, config, task=None):
+  """Dispatch a job created in the caller's transaction, which cannot have other state yet."""
   alias = config.database_alias
   backend_alias = config.backend_alias
-  if now is None:
-    now = timezone.now()
+  now = timezone.now()
   decision = dispatch_decision(job, task=task, now=now, config=config)
   outcome = decision.outcome
   if outcome is None:
@@ -167,7 +165,6 @@ def dispatch_job(job, *, config, now=None, check_conflicts=True, task=None):
       job=job,
       backend_alias=backend_alias,
       scheduled_at=job.scheduled_at,
-      check_conflicts=check_conflicts,
     )
   elif outcome is DispatchOutcome.READY:
     _create_ready_execution(
@@ -176,7 +173,7 @@ def dispatch_job(job, *, config, now=None, check_conflicts=True, task=None):
       backend_alias=backend_alias,
       queue_name=job.queue_name,
       ready_at=now,
-      check_conflicts=check_conflicts,
+      check_conflicts=False,
     )
   elif outcome is DispatchOutcome.BLOCKED:
     _create_blocked_execution(
@@ -185,15 +182,12 @@ def dispatch_job(job, *, config, now=None, check_conflicts=True, task=None):
       backend_alias=backend_alias,
       concurrency_key=decision.concurrency_key,
       expires_at=now + timedelta(seconds=decision.duration_seconds),
-      check_conflicts=check_conflicts,
+      check_conflicts=False,
     )
   elif outcome is DispatchOutcome.DISCARDED:
-    if check_conflicts:
-      _finish_job_if_no_execution_state(alias, job, None, finished_at=now, include_claimed=True)
-    else:
-      job.finished_at = now
-      job.return_value = None
-      job.save(using=alias, update_fields=["finished_at", "return_value", "updated_at"])
+    job.finished_at = now
+    job.return_value = None
+    job.save(using=alias, update_fields=["finished_at", "return_value", "updated_at"])
   else:
     raise ValueError(f"unexpected dispatch outcome: {outcome}")
   return outcome

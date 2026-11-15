@@ -14,11 +14,10 @@ from dj_queue.db import (
   locked_queryset,
   retry_transient_database_errors,
 )
-from dj_queue.exceptions import DispatchPolicyError, EnqueueError
+from dj_queue.exceptions import DispatchPolicyError, EnqueueError, exception_path
 from dj_queue.log import log_event
 from dj_queue.models import (
   BlockedExecution,
-  FailedExecution,
   Job,
   Semaphore,
 )
@@ -29,6 +28,7 @@ from dj_queue.operations._helpers import (
   _create_ready_execution,
   _ensure_no_other_execution_state,
   _ensure_state_rows_belong_to_backend,
+  _failed_execution_row,
   _ready_execution_row,
   _task_option,
 )
@@ -588,7 +588,7 @@ def promote_expired_blocked_jobs(*, config, batch_size=500):
       backend_alias=backend_alias,
       job_id=str(job.id),
       failure_kind="dispatch_policy",
-      exception_class=f"{error.__class__.__module__}.{error.__class__.__qualname__}",
+      exception_class=exception_path(error),
       message=str(error),
     )
   return promoted_jobs
@@ -616,12 +616,7 @@ def _fail_blocked_policy(alias, blocked, error, *, consumed):
   if not consumed and not _consume_selected_rows(alias, BlockedExecution, [blocked]):
     return False
   _ensure_no_other_execution_state(alias, blocked.job, ignored_models=(BlockedExecution,))
-  FailedExecution.objects.using(alias).create(
-    job_id=blocked.job_id,
-    exception_class=f"{error.__class__.__module__}.{error.__class__.__qualname__}",
-    message=str(error),
-    traceback="",
-  )
+  _failed_execution_row(blocked.job, error).save(using=alias)
   return True
 
 

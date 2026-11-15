@@ -69,9 +69,7 @@ def create_ready_execution_after_blocked_consume(
     return cursor.rowcount
 
 
-def finish_job_if_no_execution_state(
-  alias, job, return_value, *, finished_at, include_claimed=False
-):
+def finish_job_if_no_execution_state(alias, job, return_value, *, finished_at):
   connection = connections[alias]
   quote = connection.ops.quote_name
   jobs_table = quote(Job._meta.db_table)
@@ -80,9 +78,8 @@ def finish_job_if_no_execution_state(
   finished_at_column = quote(Job._meta.get_field("finished_at").column)
   return_value_column = quote(Job._meta.get_field("return_value").column)
   updated_at_column = quote(Job._meta.get_field("updated_at").column)
-  ignored_models = () if include_claimed else (ClaimedExecution,)
   state_checks = state_absence_checks_sql(
-    state_models_except(*ignored_models),
+    state_models_except(ClaimedExecution),
     quote=quote,
     job_id_expression=f"{jobs_table}.{job_id_column}",
   )

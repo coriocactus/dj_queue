@@ -17,11 +17,11 @@ from dj_queue.exceptions import EnqueueError, exception_path
 from dj_queue.log import event_logging_enabled, log_event
 from dj_queue.models import (
   ClaimedExecution,
-  FailedExecution,
   Job,
 )
 from dj_queue.operations._helpers import (
   _ensure_no_other_execution_state,
+  _failed_execution_row,
   _finish_job_if_no_execution_state,
   _normalize_json_round_trip,
 )
@@ -173,12 +173,7 @@ def fail_claimed_job(
     with transaction.atomic(using=alias):
       _delete_claimed_execution(alias, job.id)
       _ensure_no_other_execution_state(alias, job, ignored_models=(ClaimedExecution,))
-      FailedExecution.objects.using(alias).create(
-        job_id=job.id,
-        exception_class=exception_path(error),
-        message=str(error),
-        traceback=traceback_text,
-      )
+      _failed_execution_row(job, error, traceback_text=traceback_text).save(using=alias)
 
       release_concurrency_slot(job, task=task, config=config)
 

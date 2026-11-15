@@ -5,9 +5,10 @@ from django.db import connections
 from django.db.models import Q
 
 from dj_queue.db import database_capabilities
-from dj_queue.exceptions import EnqueueError
+from dj_queue.exceptions import EnqueueError, exception_path
 from dj_queue.models import (
   BlockedExecution,
+  FailedExecution,
   Job,
   Pause,
   ReadyExecution,
@@ -200,16 +201,24 @@ def _scheduled_execution_row(job, *, backend_alias, scheduled_at=None, created_a
   )
 
 
-def _create_scheduled_execution(
-  alias, job, *, backend_alias, scheduled_at=None, check_conflicts=True
-):
-  if check_conflicts:
-    _ensure_no_other_execution_state(alias, job)
+def _create_scheduled_execution(alias, job, *, backend_alias, scheduled_at=None):
   return ScheduledExecution.objects.using(alias).create(
     **_scheduled_execution_fields(
       job,
       backend_alias=backend_alias,
       scheduled_at=scheduled_at,
+    )
+  )
+
+
+def _blocked_execution_row(job, *, backend_alias, concurrency_key, expires_at, created_at):
+  return BlockedExecution(
+    **_blocked_execution_fields(
+      job,
+      backend_alias=backend_alias,
+      concurrency_key=concurrency_key,
+      expires_at=expires_at,
+      created_at=created_at,
     )
   )
 
@@ -281,8 +290,9 @@ def _blocked_execution_fields(
   expires_at,
   queue_name=None,
   priority=None,
+  created_at=None,
 ):
-  return {
+  fields = {
     "job_id": job.id,
     "backend_alias": _execution_backend_alias(job, backend_alias),
     "queue_name": _execution_queue_name(job, queue_name),
@@ -290,6 +300,18 @@ def _blocked_execution_fields(
     "concurrency_key": concurrency_key if concurrency_key is not None else job.concurrency_key,
     "expires_at": expires_at,
   }
+  if created_at is not None:
+    fields["created_at"] = created_at
+  return fields
+
+
+def _failed_execution_row(job, error, *, traceback_text=""):
+  return FailedExecution(
+    job_id=job.id,
+    exception_class=exception_path(error),
+    message=str(error),
+    traceback=traceback_text,
+  )
 
 
 def _execution_backend_alias(job, backend_alias):
@@ -338,15 +360,9 @@ def _bulk_create(alias, model, objects):
   return
 
 
-def _finish_job_if_no_execution_state(
-  alias, job, return_value, *, finished_at, include_claimed=False
-):
+def _finish_job_if_no_execution_state(alias, job, return_value, *, finished_at):
   updated = sql_common.finish_job_if_no_execution_state(
-    alias,
-    job,
-    return_value,
-    finished_at=finished_at,
-    include_claimed=include_claimed,
+    alias, job, return_value, finished_at=finished_at
   )
   if updated != 1:
     raise EnqueueError(f"job {job.id} already has an execution-state row")

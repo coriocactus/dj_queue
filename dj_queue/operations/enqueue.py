@@ -71,7 +71,7 @@ def enqueue_job_with_dispatch(
   def enqueue_transition():
     with transaction.atomic(using=alias):
       job = Job.objects.using(alias).create(**submission.fields)
-      dispatch_outcome = dispatch_job(job, task=task, check_conflicts=False, config=config)
+      dispatch_outcome = dispatch_job(job, task=task, config=config)
       return job, dispatch_outcome
 
   job, dispatch_outcome = retry_transient_database_errors(enqueue_transition, using=alias)

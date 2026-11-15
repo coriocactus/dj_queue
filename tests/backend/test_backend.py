@@ -981,6 +981,32 @@ def test_discard_scheduled_jobs_in_batches():
   assert ScheduledExecution.objects.count() == 1
 
 
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+  ("task", "slot_taken", "outcome"),
+  [
+    (echo, False, DispatchOutcome.READY),
+    (limited, False, DispatchOutcome.READY),
+    (limited, True, DispatchOutcome.BLOCKED),
+    (limited_discard, True, DispatchOutcome.DISCARDED),
+  ],
+)
+def test_dispatch_scheduled_job_now_reports_the_dispatch_outcome(task, slot_taken, outcome):
+  if slot_taken:
+    limited.enqueue(1)
+  result = task.using(run_after=timezone.now() + timedelta(minutes=5)).enqueue(1)
+
+  job, dispatch_outcome = dispatch_scheduled_job_now(result.id)
+
+  job.refresh_from_db()
+  assert dispatch_outcome is outcome
+  assert job.scheduled_at is None
+  assert not ScheduledExecution.objects.exists()
+  assert ReadyExecution.objects.filter(job=job).exists() is (outcome is DispatchOutcome.READY)
+  assert BlockedExecution.objects.filter(job=job).exists() is (outcome is DispatchOutcome.BLOCKED)
+  assert (job.finished_at is not None) is (outcome is DispatchOutcome.DISCARDED)
+
+
 @pytest.mark.django_db(transaction=True)
 def test_dispatch_scheduled_job_now_skips_rows_consumed_by_another_transition(monkeypatch):
   import dj_queue.operations.jobs as job_operations
