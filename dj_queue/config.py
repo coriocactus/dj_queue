@@ -188,9 +188,9 @@ def load_backend_config(
   env_key = tuple(env.get(key) for key in CONFIG_ENV_KEYS)
   cache_key = (
     backend_alias,
-    _EMPTY_CLI_CACHE_KEY if not cli_overrides else _cache_key(cli_overrides),
+    _EMPTY_CLI_CACHE_KEY if not cli_overrides else _cache_key(cli_overrides, "CLI options"),
     env_key,
-    _cache_key(backend_block),
+    _cache_key(backend_block, f"TASKS[{backend_alias!r}]"),
   )
   cached = _BACKEND_CONFIG_CACHE.get(cache_key)
   if cached is not None:
@@ -216,7 +216,7 @@ def load_allowed_queues(
     tasks_settings = getattr(settings, "TASKS", {})
   ensure_dj_queue_backend_alias(tasks_settings, backend_alias)
   backend_block = _backend_block(tasks_settings, backend_alias)
-  return _as_string_tuple(backend_block.get("QUEUES", []))
+  return _as_string_tuple(backend_block.get("QUEUES", []), f"TASKS[{backend_alias!r}]['QUEUES']")
 
 
 def _load_backend_config_uncached(
@@ -254,7 +254,9 @@ def _build_backend_config(
   preserve_finished_jobs = _bool_option(
     resolved_options["preserve_finished_jobs"], "preserve_finished_jobs"
   )
-  allowed_queues = _as_string_tuple(backend_block.get("QUEUES", []))
+  allowed_queues = _as_string_tuple(
+    backend_block.get("QUEUES", []), f"TASKS[{backend_alias!r}]['QUEUES']"
+  )
   on_thread_error = _validated_callback_path(resolved_options.get("on_thread_error"))
   recurring = _build_recurring_config(
     resolved_options.get("recurring", {}),
@@ -477,7 +479,7 @@ def _json_serializable_options(options: Mapping[str, Any], setting_name: str) ->
   try:
     json.dumps(options, sort_keys=True, separators=(",", ":"), allow_nan=False)
   except (TypeError, ValueError) as exc:
-    raise ImproperlyConfigured(f"{setting_name} values must be JSON-serializable") from exc
+    raise ImproperlyConfigured(f"{setting_name} values must be JSON-serializable: {exc}") from exc
   return dict(options)
 
 
@@ -501,7 +503,7 @@ def _parse_bool(value: str, setting_name: str) -> bool:
   if normalized in FALSY_ENV_VALUES:
     return False
   raise ImproperlyConfigured(
-    f"{setting_name} must be one of {sorted(TRUTHY_ENV_VALUES | FALSY_ENV_VALUES)}"
+    f"{setting_name} must be one of {sorted(TRUTHY_ENV_VALUES | FALSY_ENV_VALUES)}, got {value!r}"
   )
 
 
@@ -512,7 +514,7 @@ def _bool_option(value: Any, setting_name: str) -> bool:
     return _parse_bool(value, setting_name)
   if isinstance(value, int) and value in (0, 1):
     return bool(value)
-  raise ImproperlyConfigured(f"dj_queue {setting_name} must be a boolean")
+  raise ImproperlyConfigured(f"dj_queue {setting_name} must be a boolean, got {value!r}")
 
 
 def _validated_callback_path(callback_path: Any) -> str | None:
@@ -536,11 +538,15 @@ def _build_worker_configs(raw_workers: Any, mode: str) -> tuple[WorkerConfig, ..
   workers: list[WorkerConfig] = []
   for index, raw_worker in enumerate(raw_workers or []):
     if not isinstance(raw_worker, Mapping):
-      raise ImproperlyConfigured("worker entries must be mappings")
+      raise ImproperlyConfigured(
+        f"dj_queue workers[{index}] must be a mapping, got {raw_worker!r}"
+      )
     _reject_unknown_options(raw_worker, DEFAULT_WORKER, f"workers[{index}]")
 
     worker = WorkerConfig(
-      queues=_as_queue_selectors(raw_worker.get("queues", DEFAULT_WORKER["queues"])),
+      queues=_as_queue_selectors(
+        raw_worker.get("queues", DEFAULT_WORKER["queues"]), f"workers[{index}].queues"
+      ),
       threads=_positive_int(
         raw_worker.get("threads", DEFAULT_WORKER["threads"]), f"workers[{index}].threads"
       ),
@@ -577,7 +583,9 @@ def _build_dispatcher_configs(raw_dispatchers: Any) -> tuple[DispatcherConfig, .
   dispatchers: list[DispatcherConfig] = []
   for index, raw_dispatcher in enumerate(raw_dispatchers or []):
     if not isinstance(raw_dispatcher, Mapping):
-      raise ImproperlyConfigured("dispatcher entries must be mappings")
+      raise ImproperlyConfigured(
+        f"dj_queue dispatchers[{index}] must be a mapping, got {raw_dispatcher!r}"
+      )
     _reject_unknown_options(raw_dispatcher, DEFAULT_DISPATCHER, f"dispatchers[{index}]")
 
     dispatchers.append(
@@ -613,7 +621,7 @@ def _build_scheduler_config(raw_scheduler: Any) -> SchedulerConfig:
   if raw_scheduler is None:
     raw_scheduler = {}
   if not isinstance(raw_scheduler, Mapping):
-    raise ImproperlyConfigured("scheduler config must be a mapping")
+    raise ImproperlyConfigured(f"dj_queue scheduler must be a mapping, got {raw_scheduler!r}")
   _reject_unknown_options(raw_scheduler, DEFAULT_SCHEDULER, "scheduler")
 
   return SchedulerConfig(
@@ -640,13 +648,15 @@ def _build_recurring_config(
   if raw_recurring is None:
     return {}
   if not isinstance(raw_recurring, Mapping):
-    raise ImproperlyConfigured("recurring config must be a mapping")
+    raise ImproperlyConfigured(f"dj_queue recurring must be a mapping, got {raw_recurring!r}")
 
   recurring: dict[str, RecurringTaskConfig] = {}
   for key, raw_entry in raw_recurring.items():
     key = _nonempty_string_option(key, "recurring task key")
     if not isinstance(raw_entry, Mapping):
-      raise ImproperlyConfigured("recurring entries must be mappings")
+      raise ImproperlyConfigured(
+        f"dj_queue recurring task {key!r} must be a mapping, got {raw_entry!r}"
+      )
     _reject_unknown_options(raw_entry, RECURRING_TASK_OPTIONS, f"recurring task {key!r}")
 
     raw_task_path = raw_entry.get("task_path")
@@ -698,28 +708,31 @@ def _scheduler_has_work(config: BackendConfig) -> bool:
   return config.scheduler.dynamic_tasks_enabled or bool(config.recurring) or config.cleanup_enabled
 
 
-def _as_queue_selectors(value: Any) -> tuple[str, ...]:
+def _as_queue_selectors(value: Any, setting_name: str) -> tuple[str, ...]:
   if isinstance(value, str):
     return (value,)
-  return _as_string_tuple(value)
+  return _as_string_tuple(value, setting_name)
 
 
-def _as_string_tuple(value: Any) -> tuple[str, ...]:
+def _as_string_tuple(value: Any, setting_name: str) -> tuple[str, ...]:
   if value in (None, []):
     return ()
   if isinstance(value, str):
     return (value,)
-  if not isinstance(value, Sequence) or isinstance(value, (bytes, bytearray)):
-    raise ImproperlyConfigured("expected a string or a sequence of strings")
-  values = tuple(value)
-  if not all(isinstance(item, str) for item in values):
-    raise ImproperlyConfigured("expected a string or a sequence of strings")
-  return values
+  if (
+    not isinstance(value, Sequence)
+    or isinstance(value, (bytes, bytearray))
+    or not all(isinstance(item, str) for item in value)
+  ):
+    raise ImproperlyConfigured(
+      f"dj_queue {setting_name} must be a string or a sequence of strings, got {value!r}"
+    )
+  return tuple(value)
 
 
 def _string_option(value: Any, setting_name: str) -> str:
   if not isinstance(value, str):
-    raise ImproperlyConfigured(f"dj_queue {setting_name} must be a string")
+    raise ImproperlyConfigured(f"dj_queue {setting_name} must be a string, got {value!r}")
   return value
 
 
@@ -738,13 +751,13 @@ def _optional_string_option(value: Any, setting_name: str) -> str | None:
 
 def _tuple_option(value: Any, setting_name: str) -> tuple[Any, ...]:
   if isinstance(value, str) or not isinstance(value, Sequence):
-    raise ImproperlyConfigured(f"dj_queue {setting_name} must be a sequence")
+    raise ImproperlyConfigured(f"dj_queue {setting_name} must be a sequence, got {value!r}")
   return tuple(value)
 
 
 def _dict_option(value: Any, setting_name: str) -> dict[str, Any]:
   if not isinstance(value, Mapping):
-    raise ImproperlyConfigured(f"dj_queue {setting_name} must be a mapping")
+    raise ImproperlyConfigured(f"dj_queue {setting_name} must be a mapping, got {value!r}")
   return dict(value)
 
 
@@ -837,11 +850,13 @@ def _integer(value: Any, setting_name: str, expectation: str) -> int:
   raise ImproperlyConfigured(f"dj_queue {setting_name} must be {expectation}, got {value!r}")
 
 
-def _cache_key(value: Any) -> str:
+def _cache_key(value: Any, setting_name: str) -> str:
   try:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
   except (TypeError, ValueError) as exc:
-    raise ImproperlyConfigured("dj_queue config values must be JSON-serializable") from exc
+    raise ImproperlyConfigured(
+      f"dj_queue {setting_name} values must be JSON-serializable: {exc}"
+    ) from exc
 
 
-_EMPTY_CLI_CACHE_KEY = _cache_key({})
+_EMPTY_CLI_CACHE_KEY = _cache_key({}, "CLI options")

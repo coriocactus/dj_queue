@@ -1012,3 +1012,47 @@ def test_load_backend_config_cache_invalidates_when_settings_change(settings):
 
   assert first.database_alias == "queue_a"
   assert second.database_alias == "queue_b"
+
+
+@pytest.mark.parametrize(
+  ("backend_block", "message"),
+  (
+    (
+      {"QUEUES": 5},
+      "dj_queue TASKS['default']['QUEUES'] must be a string or a sequence of strings, got 5",
+    ),
+    (
+      {"OPTIONS": {"workers": {"queues": 5}}},
+      "dj_queue workers[0].queues must be a string or a sequence of strings, got 5",
+    ),
+    (
+      {"OPTIONS": {"workers": [{}, {"queues": [1]}]}},
+      "dj_queue workers[1].queues must be a string or a sequence of strings, got [1]",
+    ),
+    ({"OPTIONS": {"workers": ["x"]}}, "dj_queue workers[0] must be a mapping, got 'x'"),
+    ({"OPTIONS": {"dispatchers": [{}, 3]}}, "dj_queue dispatchers[1] must be a mapping, got 3"),
+    ({"OPTIONS": {"scheduler": []}}, "dj_queue scheduler must be a mapping, got []"),
+    ({"OPTIONS": {"recurring": []}}, "dj_queue recurring must be a mapping, got []"),
+    (
+      {"OPTIONS": {"recurring": {"nightly": "x"}}},
+      "dj_queue recurring task 'nightly' must be a mapping, got 'x'",
+    ),
+    ({"OPTIONS": {"use_skip_locked": 2}}, "dj_queue use_skip_locked must be a boolean, got 2"),
+    (
+      {"OPTIONS": {"use_skip_locked": "sometimes"}},
+      "use_skip_locked must be one of ['0', '1', 'false', 'no', 'off', 'on', 'true', 'yes'], got",
+    ),
+    ({"OPTIONS": {"database_alias": 1}}, "dj_queue database_alias must be a string, got 1"),
+    (
+      {"OPTIONS": {"database_alias": object()}},
+      "dj_queue TASKS['default'] values must be JSON-serializable: Object of type object",
+    ),
+  ),
+)
+def test_config_errors_name_the_setting_and_value(settings, backend_block, message):
+  settings.TASKS = {"default": {"BACKEND": "dj_queue.backend.DjQueueBackend", **backend_block}}
+
+  with pytest.raises(ImproperlyConfigured) as exc_info:
+    load_backend_config()
+
+  assert message in str(exc_info.value)
