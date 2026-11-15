@@ -1,4 +1,3 @@
-from importlib import import_module
 from types import SimpleNamespace
 
 import pytest
@@ -8,43 +7,21 @@ from django.utils import timezone
 from dj_queue import health, observability, postgres_diagnostics
 from dj_queue.models import Job
 from dj_queue.queue_state import empty_queue_state_summary
+from dj_queue.reads import queues
 
 pytestmark = pytest.mark.django_db
-
-
-@pytest.mark.parametrize(
-  ("owner", "names"),
-  [
-    (
-      "reads.queues",
-      ("queue_rows", "queue_snapshot", "queue_ready_count", "queue_latency_seconds"),
-    ),
-    ("reads.processes", ("process_rows", "process_cutoff_for_backend", "has_live_processes")),
-    ("reads.controls", ("recurring_rows_for_backend", "semaphore_rows_for_backend")),
-    ("reads.jobs", ("failed_job_metrics",)),
-    ("health", ("deep_health_problems", "postgres_health_problems")),
-    ("postgres_diagnostics", ("postgres_diagnostics_for_backend", "postgres_autovacuum_sql")),
-  ],
-)
-def test_observability_preserves_read_imports(owner, names):
-  module = import_module(f"dj_queue.{owner}")
-  for name in names:
-    assert getattr(observability, name) is getattr(module, name)
 
 
 def test_supplied_empty_queue_projection_does_not_reload(django_assert_num_queries):
   now = timezone.now()
   with django_assert_num_queries(0):
-    row = observability.queue_snapshot(
+    row = queues.queue_snapshot(
       backend_alias="default",
       queue_name="empty",
       now=now,
       process_cutoff=now,
       state_summary=empty_queue_state_summary("empty"),
       paused=False,
-      oldest_ready_at=None,
-      oldest_scheduled_at=None,
-      oldest_blocked_at=None,
       live_workers=[],
     )
   assert row == {
@@ -79,7 +56,7 @@ def test_diagnostic_errors_remain_advisory(monkeypatch):
     "error": "diagnostics unavailable",
     "captured_at": now,
   }
-  assert observability.postgres_health_problems(backend_alias="default", now=now) == ()
+  assert health.postgres_health_problems(backend_alias="default", now=now) == ()
 
 
 def test_old_transaction_alone_is_not_unhealthy(monkeypatch):
@@ -94,7 +71,7 @@ def test_old_transaction_alone_is_not_unhealthy(monkeypatch):
       "long_transaction_threshold_seconds": 300,
     },
   )
-  assert observability.postgres_health_problems(backend_alias="default") == ()
+  assert health.postgres_health_problems(backend_alias="default") == ()
 
 
 @pytest.mark.postgres
@@ -134,13 +111,13 @@ def test_postgres_diagnostics_read_real_catalogs():
   try:
     with blocker.cursor() as cursor:
       cursor.execute("SELECT txid_current()")
-    diagnostics = observability.postgres_diagnostics_for_backend(backend_alias="default")
+    diagnostics = postgres_diagnostics.postgres_diagnostics_for_backend(backend_alias="default")
   finally:
     blocker.rollback()
     blocker.close()
   assert "error" not in diagnostics
   assert {row["table_name"] for row in diagnostics["queue_tables"]} == {
-    model._meta.db_table for model in observability.POSTGRES_DIAGNOSTIC_TABLE_MODELS
+    model._meta.db_table for model in postgres_diagnostics.POSTGRES_DIAGNOSTIC_TABLE_MODELS
   }
   assert diagnostics["xmin_activity"]
   assert {tuple(row) for row in diagnostics["xmin_activity"]} == {

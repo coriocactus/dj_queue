@@ -6,92 +6,11 @@ from django.utils import timezone
 from dj_queue.config import configured_backend_aliases as configured_dj_queue_backend_aliases
 from dj_queue.config import load_backend_config
 from dj_queue.db import get_database_alias
-from dj_queue.health import (
-  POSTGRES_DEAD_TUPLE_WARNING_COUNT,
-  POSTGRES_DEAD_TUPLE_WARNING_RATIO,
-  deep_health_problems,
-  postgres_health_problems,
-)
-from dj_queue.postgres_diagnostics import (
-  POSTGRES_AUTOVACUUM_STORAGE_PARAMETERS,
-  POSTGRES_AUTOVACUUM_TABLE_MODELS,
-  POSTGRES_DIAGNOSTIC_TABLE_MODELS,
-  postgres_autovacuum_sql,
-  postgres_diagnostics_for_backend,
-  postgres_prepared_transaction_rows,
-  postgres_queue_table_rows,
-  postgres_replication_slot_rows,
-  postgres_xmin_activity_rows,
-  postgres_xmin_blocker_rows,
-)
-from dj_queue.reads.controls import (
-  next_run_at,
-  recurring_rows_for_backend,
-  semaphore_blocked_waiter_count_expression,
-  semaphore_rows_for_backend,
-)
+from dj_queue.postgres_diagnostics import postgres_diagnostics_for_backend
+from dj_queue.reads.controls import recurring_rows_for_backend, semaphore_rows_for_backend
 from dj_queue.reads.jobs import failed_job_metrics
-from dj_queue.reads.processes import (
-  filter_process_status,
-  has_live_processes,
-  process_counts,
-  process_cutoff_for_backend,
-  process_live_rank_expression,
-  process_row,
-  process_rows,
-)
-from dj_queue.reads.queues import (
-  oldest_ready_at_for_queue,
-  queue_is_paused,
-  queue_latency_seconds,
-  queue_ready_count,
-  queue_rows,
-  queue_rows_for_backend,
-  queue_snapshot,
-)
-
-__all__ = [
-  "POSTGRES_AUTOVACUUM_STORAGE_PARAMETERS",
-  "POSTGRES_AUTOVACUUM_TABLE_MODELS",
-  "POSTGRES_DEAD_TUPLE_WARNING_COUNT",
-  "POSTGRES_DEAD_TUPLE_WARNING_RATIO",
-  "POSTGRES_DIAGNOSTIC_TABLE_MODELS",
-  "BackendChoice",
-  "BackendSnapshot",
-  "all_backend_snapshots",
-  "backend_choices",
-  "backend_snapshot",
-  "configured_backend_aliases",
-  "deep_health_problems",
-  "failed_job_metrics",
-  "filter_process_status",
-  "has_live_processes",
-  "next_run_at",
-  "oldest_ready_at_for_queue",
-  "postgres_autovacuum_sql",
-  "postgres_diagnostics_for_backend",
-  "postgres_health_problems",
-  "postgres_prepared_transaction_rows",
-  "postgres_queue_table_rows",
-  "postgres_replication_slot_rows",
-  "postgres_xmin_activity_rows",
-  "postgres_xmin_blocker_rows",
-  "process_counts",
-  "process_cutoff_for_backend",
-  "process_live_rank_expression",
-  "process_row",
-  "process_rows",
-  "queue_is_paused",
-  "queue_latency_seconds",
-  "queue_ready_count",
-  "queue_rows",
-  "queue_rows_for_backend",
-  "queue_snapshot",
-  "recurring_rows_for_backend",
-  "semaphore_blocked_waiter_count_expression",
-  "semaphore_rows_for_backend",
-  "stats_payload",
-]
+from dj_queue.reads.processes import process_counts, process_cutoff_for_backend, process_rows
+from dj_queue.reads.queues import queue_rows
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,7 +80,6 @@ def backend_snapshot(
     backend_alias=backend_alias,
     now=now,
     process_cutoff=process_cutoff,
-    scope="backend",
   )
   recurring_rows = recurring_rows_for_backend(backend_alias=backend_alias, now=now)
   if semaphore_rows is None:

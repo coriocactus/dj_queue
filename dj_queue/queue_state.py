@@ -41,14 +41,8 @@ class QueueStateSummary:
   oldest_scheduled_at: datetime | None = None
   oldest_blocked_at: datetime | None = None
 
-  def count(self, state):
-    return self.counts_by_state().get(state, 0)
-
-  def counts_by_state(self):
-    return dict(self.state_counts)
-
   def count_fields(self):
-    return queue_state_count_fields(self.counts_by_state())
+    return queue_state_count_fields(dict(self.state_counts))
 
 
 QUEUE_STATE_DEFINITIONS = (
@@ -115,7 +109,6 @@ SUMMARY_STATE_DEFINITIONS = tuple(
 QUEUE_STATE_BY_NAME = {definition.name: definition for definition in QUEUE_STATE_DEFINITIONS}
 QUEUE_STATES = tuple((definition.name, definition.label) for definition in QUEUE_STATE_DEFINITIONS)
 QUEUE_STATE_LABELS = {definition.name: definition.label for definition in QUEUE_STATE_DEFINITIONS}
-QUEUE_STATE_COUNT_KEYS = tuple(definition.count_key for definition in SUMMARY_STATE_DEFINITIONS)
 
 
 def queue_state_definition(state):

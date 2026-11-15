@@ -6,7 +6,7 @@ from django.utils import timezone
 
 from benchmarks.harness import Timer, throughput
 from benchmarks.tasks import limited, noop
-from dj_queue import observability
+from dj_queue import postgres_diagnostics
 from dj_queue.config import load_backend_config
 from dj_queue.models import BlockedExecution, ClaimedExecution, Job, ReadyExecution
 from dj_queue.operations.claiming import claim_ready_jobs
@@ -311,7 +311,7 @@ def _held_repeatable_read_snapshot():
 
 
 def _postgres_bloat_totals():
-  rows = observability.postgres_queue_table_rows(backend_alias="default")
+  rows = postgres_diagnostics.postgres_queue_table_rows(backend_alias="default")
   return {
     "dead_tuples": sum(row["dead_tuples"] for row in rows),
     "live_tuples": sum(row["live_tuples"] for row in rows),

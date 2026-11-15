@@ -7,7 +7,6 @@ from django.utils import timezone
 
 from dj_queue.models import FailedExecution, Job, ReadyExecution
 from dj_queue.queue_state import (
-  QUEUE_STATE_COUNT_KEYS,
   filter_queue_state,
   queue_state_count_fields,
   queue_state_count_key,
@@ -42,13 +41,17 @@ def test_queue_state_counts_and_count_fields_follow_state_definitions():
   enqueue_ready_job()
   make_scheduled_job(scheduled_at=timezone.now())
 
-  counts = queue_state_summary(backend_alias="default", queue_name="default").counts_by_state()
+  summary = queue_state_summary(backend_alias="default", queue_name="default")
 
-  assert counts["ready"] == 1
-  assert counts["scheduled"] == 1
+  assert summary.count_fields() == {
+    "ready_count": 1,
+    "scheduled_count": 1,
+    "claimed_count": 0,
+    "blocked_count": 0,
+    "failed_count": 0,
+  }
   assert queue_state_count_key("ready") == "ready_count"
-  assert set(queue_state_count_fields(counts)) == set(QUEUE_STATE_COUNT_KEYS)
-  assert queue_state_count_fields(counts)["ready_count"] == 1
+  assert queue_state_count_fields({"ready": 1})["ready_count"] == 1
 
 
 def test_queue_state_querysets_separate_invalid_jobs():
@@ -95,15 +98,15 @@ def test_queue_state_summaries_by_queue_count_state_rows():
   summaries = queue_state_summaries_by_queue(backend_alias="default")
 
   assert sorted(summaries) == ["alpha", "beta", "drifted"]
-  alpha = summaries["alpha"]
-  assert alpha.count("ready") == 0
-  assert alpha.count("blocked") == 1
-  assert "finished_count" not in alpha.count_fields()
-  assert alpha.count("failed") == 0
+  alpha = summaries["alpha"].count_fields()
+  assert alpha["ready_count"] == 0
+  assert alpha["blocked_count"] == 1
+  assert "finished_count" not in alpha
+  assert alpha["failed_count"] == 0
   assert summaries["drifted"].count_fields()["ready_count"] == 1
   assert summaries["drifted"].oldest_ready_at == now - timedelta(seconds=10)
-  assert summaries["beta"].count("scheduled") == 1
-  assert summaries["beta"].count("failed") == 1
+  assert summaries["beta"].count_fields()["scheduled_count"] == 1
+  assert summaries["beta"].count_fields()["failed_count"] == 1
 
 
 def test_queue_state_summaries_by_queue_read_one_aggregate_per_state():

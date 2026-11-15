@@ -16,8 +16,6 @@ from dj_queue.queue_state import (
 )
 from dj_queue.reads.processes import _live_processes_for_backend, process_cutoff_for_backend
 
-_NOT_PROVIDED = object()
-
 
 def queue_rows_for_backend(*, backend_alias, now=None):
   if now is None:
@@ -78,23 +76,14 @@ def queue_snapshot(
   now,
   process_cutoff,
   state_summary=None,
-  paused=_NOT_PROVIDED,
-  oldest_ready_at=_NOT_PROVIDED,
-  oldest_scheduled_at=_NOT_PROVIDED,
-  oldest_blocked_at=_NOT_PROVIDED,
+  paused=None,
   live_workers=None,
 ):
   alias = get_database_alias(backend_alias)
   if state_summary is None:
     state_summary = queue_state_summary(backend_alias=backend_alias, queue_name=queue_name)
-  if paused is _NOT_PROVIDED:
+  if paused is None:
     paused = queue_is_paused(backend_alias=backend_alias, queue_name=queue_name)
-  if oldest_ready_at is _NOT_PROVIDED:
-    oldest_ready_at = state_summary.oldest_ready_at
-  if oldest_scheduled_at is _NOT_PROVIDED:
-    oldest_scheduled_at = state_summary.oldest_scheduled_at
-  if oldest_blocked_at is _NOT_PROVIDED:
-    oldest_blocked_at = state_summary.oldest_blocked_at
   if live_workers is None:
     live_workers = list(
       _live_processes_for_backend(
@@ -106,11 +95,9 @@ def queue_snapshot(
     )
 
   latency_seconds = queue_latency_seconds(
-    backend_alias=backend_alias,
-    queue_name=queue_name,
     now=now,
     paused=paused,
-    oldest_ready_at=oldest_ready_at,
+    oldest_ready_at=state_summary.oldest_ready_at,
   )
 
   state_count_fields = state_summary.count_fields()
@@ -120,8 +107,8 @@ def queue_snapshot(
     **state_count_fields,
     "paused": paused,
     "latency_seconds": latency_seconds,
-    "oldest_scheduled_at": oldest_scheduled_at,
-    "oldest_blocked_at": oldest_blocked_at,
+    "oldest_scheduled_at": state_summary.oldest_scheduled_at,
+    "oldest_blocked_at": state_summary.oldest_blocked_at,
     "live_worker_count": sum(
       1 for worker in live_workers if _worker_matches_queue(queue_name, worker)
     ),
@@ -140,21 +127,8 @@ def queue_is_paused(*, backend_alias, queue_name):
   )
 
 
-def queue_latency_seconds(
-  *, backend_alias, queue_name, now=None, paused=None, oldest_ready_at=_NOT_PROVIDED
-):
-  if now is None:
-    now = timezone.now()
-  if paused is None:
-    paused = queue_is_paused(backend_alias=backend_alias, queue_name=queue_name)
-  if paused:
-    return None
-  if oldest_ready_at is _NOT_PROVIDED:
-    oldest_ready_at = oldest_ready_at_for_queue(
-      backend_alias=backend_alias,
-      queue_name=queue_name,
-    )
-  if oldest_ready_at is None:
+def queue_latency_seconds(*, now, paused, oldest_ready_at):
+  if paused or oldest_ready_at is None:
     return None
   return max((now - oldest_ready_at).total_seconds(), 0.0)
 

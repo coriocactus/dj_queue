@@ -39,7 +39,7 @@ def test_health_reports_queue_drift_that_summaries_count_by_state_row(
   summaries = queue_state_summaries_by_queue(backend_alias="default")
   if backend_alias == "default":
     assert list(summaries) == ["drifted"]
-    assert summaries["drifted"].count(state) == 1
+    assert summaries["drifted"].count_fields()[f"{state}_count"] == 1
   else:
     assert summaries == {}
   diagnostic = f"1 {state} execution rows have mismatched queue ownership"

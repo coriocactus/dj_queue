@@ -824,9 +824,9 @@ def scenario_scheduler_cleanup_not_due():
 
 
 def scenario_deep_health():
-  from dj_queue import observability
+  from dj_queue import health
 
-  problems = observability.deep_health_problems(backend_alias="default")
+  problems = health.deep_health_problems(backend_alias="default")
   return {"problem_count": len(problems)}
 
 

@@ -252,11 +252,11 @@ def batch_problems(snapshot, phase, worker):
 def verify():
   from django.db import connection
 
-  from dj_queue import observability
+  from dj_queue import health
   from dj_queue.models import Job, Process, RecurringExecution
 
   snapshot = status()
-  problems = list(observability.deep_health_problems(backend_alias="default"))
+  problems = list(health.deep_health_problems(backend_alias="default"))
   for phase, worker in PHASE_WORKERS.items():
     problems.extend(batch_problems(snapshot, phase, worker))
   for token, (attempts, completions, worker) in snapshot["effects"].items():

@@ -33,14 +33,14 @@ def process_counts(process_rows):
   return counts
 
 
-def process_rows(*, backend_alias, now, process_cutoff, scope):
+def process_rows(*, backend_alias, now, process_cutoff):
   alias = get_database_alias(backend_alias)
-  queryset = Process.objects.using(alias).select_related("supervisor")
-  if scope == "backend":
-    queryset = queryset.filter(backend_alias=backend_alias)
-  elif scope != "database":
-    raise ValueError(f"unknown process scope {scope!r}")
-  processes = list(queryset.order_by("name"))
+  processes = list(
+    Process.objects.using(alias)
+    .select_related("supervisor")
+    .filter(backend_alias=backend_alias)
+    .order_by("name")
+  )
   children = defaultdict(list)
   roots = []
 

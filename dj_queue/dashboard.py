@@ -6,7 +6,6 @@ from django.urls import reverse
 from django.utils import timezone
 
 from dj_queue import dashboard_tables as tables
-from dj_queue.api import QueueInfo
 from dj_queue.config import load_backend_config
 from dj_queue.dashboard_tables import OVERVIEW_COUNT_LABELS, OVERVIEW_SORTS, QUEUE_PAGE_SORTS
 from dj_queue.db import database_capabilities, get_database_alias
@@ -61,7 +60,6 @@ def dashboard_context(*, backend_alias, query_params=None):
     backend_alias=backend_alias,
     now=now,
     process_cutoff=process_cutoff,
-    scope="backend",
   )
   queue_section = tables.overview_section(
     section="queues",
@@ -152,7 +150,6 @@ def queue_page_context(*, backend_alias, queue_name, state, page_number, query_p
     now=now,
     process_cutoff=process_cutoff,
   )
-  queue_info = QueueInfo(queue_name, backend_alias=backend_alias)
   state_counts = {
     definition.name: queue_row[definition.count_key] for definition in SUMMARY_STATE_DEFINITIONS
   }
@@ -194,7 +191,6 @@ def queue_page_context(*, backend_alias, queue_name, state, page_number, query_p
     "config": config,
     "queue_database_alias": alias,
     "queue_name": queue_name,
-    "queue_info": queue_info,
     "queue_paused": queue_row["paused"],
     "queue_latency_seconds": queue_row["latency_seconds"],
     "queue_worker_count": queue_row["live_worker_count"],

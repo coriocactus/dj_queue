@@ -4,6 +4,7 @@ from typing import Any, Literal, Self, TypeVar
 
 from django.db import transaction
 from django.tasks import Task
+from django.utils import timezone
 
 from dj_queue.operations.claiming import ClaimedJob, claim_ready_jobs
 from dj_queue.operations.execution import execute_claimed_job
@@ -100,9 +101,12 @@ class QueueInfo:
       return None
 
     latency = queues.queue_latency_seconds(
-      backend_alias=self.backend_alias,
-      queue_name=self.queue_name,
+      now=timezone.now(),
       paused=False,
+      oldest_ready_at=queues.oldest_ready_at_for_queue(
+        backend_alias=self.backend_alias,
+        queue_name=self.queue_name,
+      ),
     )
     return 0.0 if latency is None else latency
 

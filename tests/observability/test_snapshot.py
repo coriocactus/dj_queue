@@ -19,6 +19,7 @@ from dj_queue.models import (
   RecurringTask,
   Semaphore,
 )
+from dj_queue.reads import processes
 from tests.factories import enqueue_ready_job, make_failed_job, make_job, read_query_counts
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -229,7 +230,7 @@ def test_deep_health_reports_failed_jobs_past_configured_retention(settings):
   old_failed = make_failed_job(queue_name="alpha")
   FailedExecution.objects.filter(job=old_failed).update(created_at=now - timedelta(seconds=120))
 
-  problems = observability.deep_health_problems(backend_alias="default", now=now)
+  problems = health.deep_health_problems(backend_alias="default", now=now)
 
   assert "1 failed execution rows exceed configured retention of 60 seconds" in problems
 
@@ -238,9 +239,7 @@ def test_deep_health_query_count_is_pinned_across_data_sizes():
   # postgresql adds four diagnostics queries
   expected = 16 if connection.vendor == "postgresql" else 12
 
-  assert read_query_counts(
-    lambda: observability.deep_health_problems(backend_alias="default")
-  ) == [
+  assert read_query_counts(lambda: health.deep_health_problems(backend_alias="default")) == [
     expected,
     expected,
   ]
@@ -272,7 +271,7 @@ def test_postgres_health_problems_report_bloat_and_xmin_blockers(monkeypatch):
     lambda **_kwargs: diagnostics,
   )
 
-  problems = observability.postgres_health_problems(backend_alias="default")
+  problems = health.postgres_health_problems(backend_alias="default")
 
   assert problems == (
     "1 PostgreSQL queue tables have high dead tuples: dj_queue_ready_executions",
@@ -297,11 +296,10 @@ def test_process_rows_expose_shutdown_drain_state():
     last_heartbeat_at=now,
   )
 
-  rows = observability.process_rows(
+  rows = processes.process_rows(
     backend_alias="default",
     now=now,
     process_cutoff=now - timedelta(minutes=1),
-    scope="backend",
   )
 
   assert rows[0]["shutdown_state"] == "draining"
@@ -364,7 +362,7 @@ def test_deep_health_allows_semaphore_occupancy_above_a_reduced_limit():
     expires_at=timezone.now() + timedelta(minutes=5),
   )
 
-  problems = observability.deep_health_problems(backend_alias="default")
+  problems = health.deep_health_problems(backend_alias="default")
 
   assert not any("semaphores have impossible slot counts" in problem for problem in problems)
 
@@ -377,7 +375,7 @@ def test_deep_health_reports_invalid_job_concurrency_policy():
     concurrency_limit=1,
   )
 
-  problems = observability.deep_health_problems(backend_alias="default")
+  problems = health.deep_health_problems(backend_alias="default")
 
   assert "1 jobs have invalid concurrency policy" in problems
 
@@ -393,7 +391,7 @@ def test_deep_health_reports_incompatible_live_rollout_protocol():
     last_heartbeat_at=timezone.now(),
   )
 
-  problems = observability.deep_health_problems(backend_alias="default")
+  problems = health.deep_health_problems(backend_alias="default")
 
   assert "1 live processes use an incompatible rollout protocol; expected 1" in problems
 
@@ -422,7 +420,7 @@ def test_deep_health_allows_unresolved_legacy_recurring_reservation():
     job=None,
   )
 
-  problems = observability.deep_health_problems(backend_alias="default")
+  problems = health.deep_health_problems(backend_alias="default")
 
   assert not any("recurring execution reservations have no job" in problem for problem in problems)
 
@@ -449,7 +447,7 @@ def test_deep_health_checks_attached_recurring_identity(identity, backend_alias,
     job=job,
   )
 
-  problems = observability.deep_health_problems(backend_alias="default")
+  problems = health.deep_health_problems(backend_alias="default")
 
   assert ("1 recurring execution rows have mismatched job identity" in problems) is unhealthy
 
