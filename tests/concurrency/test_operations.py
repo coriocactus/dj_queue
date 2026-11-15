@@ -1104,6 +1104,20 @@ def test_dispatcher_promotes_expired_blocked_jobs():
 
 
 @pytest.mark.django_db
+def test_expired_blocked_job_that_cannot_acquire_keeps_its_row():
+  limited.enqueue(1, value="first")
+  second = limited.enqueue(1, value="second")
+  BlockedExecution.objects.update(expires_at=timezone.now() - timedelta(seconds=1))
+  blocked = BlockedExecution.objects.get(job_id=second.id)
+
+  assert promote_expired_blocked_jobs(batch_size=10, config=load_backend_config()) == []
+
+  renewed = BlockedExecution.objects.get(job_id=second.id)
+  assert (renewed.pk, renewed.created_at) == (blocked.pk, blocked.created_at)
+  assert renewed.expires_at > timezone.now()
+
+
+@pytest.mark.django_db
 def test_promote_expired_blocked_jobs_rejects_conflicting_execution_state():
   job = make_job(task=limited, args=[1], kwargs={"value": "later"}, concurrency_key="account:1")
   BlockedExecution.objects.create(

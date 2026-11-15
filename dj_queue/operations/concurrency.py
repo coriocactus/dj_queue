@@ -24,7 +24,6 @@ from dj_queue.models import (
 from dj_queue.operations.state_rows import (
   _bulk_create_ready_executions,
   _consume_selected_rows,
-  _create_blocked_execution,
   _create_ready_execution,
   _ensure_no_other_execution_state,
   _ensure_state_rows_belong_to_backend,
@@ -490,10 +489,6 @@ def promote_expired_blocked_jobs(*, config, batch_size=500):
       if not blocked_rows:
         return [], []
       _ensure_state_rows_belong_to_backend(blocked_rows, backend_alias)
-      if uses_serialized_writes:
-        blocked_rows = _consume_selected_rows(alias, BlockedExecution, blocked_rows)
-        if not blocked_rows:
-          return [], []
 
       for blocked in blocked_rows:
         job = blocked.job
@@ -502,26 +497,24 @@ def promote_expired_blocked_jobs(*, config, batch_size=500):
             job, task_settings, config=config
           )
         except DispatchPolicyError as error:
-          if _fail_blocked_policy(alias, blocked, error, consumed=uses_serialized_writes):
+          if _fail_blocked_policy(alias, blocked, error):
             policy_failures.append((job, error))
           continue
 
-        if not semaphore_acquire(
+        expires_at = now + timedelta(seconds=duration_seconds)
+        # sqlite cannot lock the waiter, so its renewal comes first to find the row still there
+        if uses_serialized_writes and not _renew_blocked_execution(alias, blocked, expires_at):
+          continue
+        if semaphore_acquire(
           blocked.concurrency_key,
           limit=limit,
           duration_seconds=duration_seconds,
           config=config,
         ):
-          _renew_blocked_execution(
-            alias,
-            blocked,
-            expires_at=now + timedelta(seconds=duration_seconds),
-            consumed=uses_serialized_writes,
-          )
-          continue
-
-        _promote_blocked_execution(alias, blocked, ready_at=now, consumed=uses_serialized_writes)
-        promoted_jobs.append(job)
+          _promote_blocked_execution(alias, blocked, ready_at=now)
+          promoted_jobs.append(job)
+        elif not uses_serialized_writes:
+          _renew_blocked_execution(alias, blocked, expires_at)
     return promoted_jobs, policy_failures
 
   promoted_jobs, policy_failures = retry_transient_database_errors(promote_transition, using=alias)
@@ -564,17 +557,16 @@ def _blocked_concurrency_settings(job, task_settings, *, config):
   return limit, duration_seconds
 
 
-def _fail_blocked_policy(alias, blocked, error, *, consumed):
-  if not consumed and not _consume_selected_rows(alias, BlockedExecution, [blocked]):
+def _fail_blocked_policy(alias, blocked, error):
+  if not _consume_selected_rows(alias, BlockedExecution, [blocked]):
     return False
   _ensure_no_other_execution_state(alias, blocked.job, ignored_models=(BlockedExecution,))
   _failed_execution_row(blocked.job, error).save(using=alias)
   return True
 
 
-def _promote_blocked_execution(alias, blocked, *, ready_at, consumed):
-  if not consumed:
-    blocked.delete(using=alias)
+def _promote_blocked_execution(alias, blocked, *, ready_at):
+  blocked.delete(using=alias)
   _create_ready_execution(
     alias,
     job=blocked.job,
@@ -586,21 +578,8 @@ def _promote_blocked_execution(alias, blocked, *, ready_at, consumed):
   )
 
 
-def _renew_blocked_execution(alias, blocked, *, expires_at, consumed):
-  if consumed:
-    _create_blocked_execution(
-      alias,
-      blocked.job,
-      backend_alias=blocked.backend_alias,
-      queue_name=blocked.queue_name,
-      priority=blocked.priority,
-      concurrency_key=blocked.concurrency_key,
-      expires_at=expires_at,
-      check_conflicts=True,
-    )
-    return
-  blocked.expires_at = expires_at
-  blocked.save(using=alias, update_fields=["expires_at"])
+def _renew_blocked_execution(alias, blocked, expires_at):
+  return BlockedExecution.objects.using(alias).filter(pk=blocked.pk).update(expires_at=expires_at)
 
 
 def _positive_int_option(value, name):
