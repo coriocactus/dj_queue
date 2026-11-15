@@ -334,7 +334,7 @@ def test_config_precedence_cli_over_env_over_toml_over_settings(settings, tmp_pa
   assert cli_config.use_skip_locked is True
 
 
-def test_deprecated_silence_polling_is_ignored_with_a_warning(settings, tmp_path):
+def test_removed_silence_polling_is_an_unknown_option(settings, tmp_path):
   settings.TASKS = {
     "default": {
       "BACKEND": "dj_queue.backend.DjQueueBackend",
@@ -344,11 +344,18 @@ def test_deprecated_silence_polling_is_ignored_with_a_warning(settings, tmp_path
   path = tmp_path / "dj_queue.toml"
   path.write_text("silence_polling = false\n", encoding="utf-8")
 
-  with pytest.warns(FutureWarning, match="'silence_polling' has no effect") as warned:
-    config = load_backend_config(cli_overrides={"config": str(path)})
+  with pytest.raises(
+    ImproperlyConfigured,
+    match=r"dj_queue TASKS backend OPTIONS contains unknown options: 'silence_polling'",
+  ):
+    load_backend_config()
 
-  assert len(warned) == 2
-  assert not hasattr(config, "silence_polling")
+  settings.TASKS = {}
+  with pytest.raises(
+    ImproperlyConfigured,
+    match=r"dj_queue DJ_QUEUE_CONFIG contains unknown options: 'silence_polling'",
+  ):
+    load_backend_config(cli_overrides={"config": str(path)})
 
 
 def test_multi_backend_toml_selects_requested_alias(settings, tmp_path):

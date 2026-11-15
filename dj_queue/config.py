@@ -67,8 +67,6 @@ DEFAULT_OPTIONS = {
   "on_thread_error": None,
 }
 
-DEPRECATED_OPTIONS = ("silence_polling",)
-
 DJ_QUEUE_BACKEND_PATH = "dj_queue.backend.DjQueueBackend"
 
 TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
@@ -380,7 +378,6 @@ def _resolved_options(
   settings_options = backend_block.get("OPTIONS", {})
   if not isinstance(settings_options, Mapping):
     raise ImproperlyConfigured("TASKS backend OPTIONS must be a mapping")
-  settings_options = _without_deprecated_options(settings_options, "TASKS backend OPTIONS")
   _reject_unknown_options(settings_options, DEFAULT_OPTIONS, "TASKS backend OPTIONS")
 
   resolved_options = dict(DEFAULT_OPTIONS)
@@ -436,24 +433,8 @@ def _load_toml_options(config_path: Any, *, backend_alias: str) -> dict[str, Any
 
 
 def _validated_toml_options(options: Mapping[str, Any], setting_name: str) -> dict[str, Any]:
-  options = _without_deprecated_options(
-    _json_serializable_options(options, setting_name), setting_name
-  )
+  options = _json_serializable_options(options, setting_name)
   _reject_unknown_options(options, DEFAULT_OPTIONS, setting_name)
-  return options
-
-
-def _without_deprecated_options(options: Mapping[str, Any], setting_name: str) -> dict[str, Any]:
-  options = dict(options)
-  for name in DEPRECATED_OPTIONS:
-    if name in options:
-      del options[name]
-      warnings.warn(
-        f"dj_queue {setting_name} option {name!r} has no effect and will be rejected in a "
-        "future release; remove it",
-        FutureWarning,
-        stacklevel=2,
-      )
   return options
 
 

@@ -926,8 +926,6 @@ Global options:
 | `supervisor_pidfile` | `null` | optional pidfile guard for standalone supervisors |
 | `on_thread_error` | `null` | dotted callback path for runtime infrastructure exceptions |
 
-`silence_polling` is deprecated: it never had an effect, still loads with a `FutureWarning`, and will be rejected in a future release, so remove it from settings and TOML overlays.
-
 Worker entry options:
 
 | Option | Default | Meaning |
