@@ -106,7 +106,7 @@ def test_job_admin_changelist_query_count_is_pinned_across_data_sizes(admin_clie
   def changelist():
     assert admin_client.get(reverse("admin:dj_queue_job_changelist")).status_code == 200
 
-  assert read_query_counts(changelist) == [8, 8]
+  assert read_query_counts(changelist) == [5, 5]
 
 
 def test_job_admin_default_changelist_does_not_build_status_rank(admin_client, monkeypatch):
@@ -242,15 +242,16 @@ def test_job_admin_recurring_task_filter(admin_client):
   assert "tests.tasks.other" not in content
 
 
-def test_job_admin_concurrency_key_filter(admin_client):
-  matching_job = make_job(task_path="tests.tasks.matching", concurrency_key="acct:1")
-  other_job = make_job(task_path="tests.tasks.other", concurrency_key="acct:2")
+@pytest.mark.parametrize("field", ["concurrency_key", "queue_name"])
+def test_job_admin_link_filters_without_sidebar_filter(admin_client, field):
+  matching_job = make_job(task_path="tests.tasks.matching", **{field: "acct:1"})
+  other_job = make_job(task_path="tests.tasks.other", **{field: "acct:2"})
 
   response = admin_client.get(
     reverse("admin:dj_queue_job_changelist"),
     {
       "backend": "default",
-      "concurrency_key": "acct:1",
+      field: "acct:1",
     },
   )
 
@@ -258,6 +259,8 @@ def test_job_admin_concurrency_key_filter(admin_client):
   content = response.content.decode()
   assert str(matching_job.id) in content
   assert str(other_job.id) not in content
+  assert "By concurrency key" not in content
+  assert "By queue name" not in content
 
 
 def test_failed_execution_admin_retry_action(admin_client):
@@ -747,18 +750,18 @@ def test_job_concurrency_key_filter_is_backend_scoped(admin_client, settings):
       "OPTIONS": {},
     },
   }
-  make_job(backend_alias="default", concurrency_key="default-key-leak")
-  make_job(backend_alias="secondary", concurrency_key="secondary-key-visible")
+  default_job = make_job(backend_alias="default", concurrency_key="acct:1")
+  secondary_job = make_job(backend_alias="secondary", concurrency_key="acct:1")
 
   response = admin_client.get(
     reverse("admin:dj_queue_job_changelist"),
-    {"backend": "secondary"},
+    {"backend": "secondary", "concurrency_key": "acct:1"},
   )
 
   assert response.status_code == 200
   content = response.content.decode()
-  assert "secondary-key-visible" in content
-  assert "default-key-leak" not in content
+  assert str(secondary_job.id) in content
+  assert str(default_job.id) not in content
 
 
 def test_raw_admin_changelist_timestamps_use_compact_format(admin_client):

@@ -422,29 +422,6 @@ class JobRecurringTaskKeyListFilter(admin.SimpleListFilter):
     return queryset.filter(recurring_execution__task_key=self.value())
 
 
-class JobConcurrencyKeyListFilter(admin.SimpleListFilter):
-  title = "concurrency key"
-  parameter_name = "concurrency_key"
-
-  def lookups(self, request, model_admin):
-    alias = model_admin._backend_database_alias(request)
-    backend_alias = model_admin._backend_alias(request)
-    return tuple(
-      Job.objects.using(alias)
-      .filter(backend_alias=backend_alias)
-      .exclude(concurrency_key__isnull=True)
-      .exclude(concurrency_key="")
-      .order_by("concurrency_key")
-      .values_list("concurrency_key", "concurrency_key")
-      .distinct()
-    )
-
-  def queryset(self, request, queryset):
-    if not self.value():
-      return queryset
-    return queryset.filter(concurrency_key=self.value())
-
-
 class ProcessStatusListFilter(admin.SimpleListFilter):
   title = "status"
   parameter_name = "status"
@@ -466,6 +443,7 @@ class ProcessStatusListFilter(admin.SimpleListFilter):
 class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   backend_filter_field = "backend_alias"
   ignored_filter_params = ("backend_alias",)
+  show_full_result_count = False
   list_display = (
     "id",
     "task_path",
@@ -474,12 +452,7 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
     "display_status",
     "display_created_at",
   )
-  list_filter = (
-    "queue_name",
-    JobStatusListFilter,
-    JobRecurringTaskKeyListFilter,
-    JobConcurrencyKeyListFilter,
-  )
+  list_filter = (JobStatusListFilter, JobRecurringTaskKeyListFilter)
   list_select_related = (
     "ready_execution",
     "scheduled_execution",
@@ -696,6 +669,7 @@ class JobAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
 class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   backend_filter_field = "job__backend_alias"
   ignored_filter_params = ("job__backend_alias",)
+  show_full_result_count = False
   list_display = ("job", "exception_class", "message", "display_retry_at", "display_created_at")
   list_filter = (
     ("job__queue_name", admin.AllValuesFieldListFilter),
