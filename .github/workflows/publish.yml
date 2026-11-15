@@ -65,3 +65,16 @@ jobs:
         uses: astral-sh/attest-action@v0.0.7
       - name: Publish
         run: uv publish --check-url https://pypi.org/simple/
+
+  release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create GitHub release
+        run: >-
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY"
+          --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
