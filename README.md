@@ -797,7 +797,7 @@ policy, and autovacuum tuning.
   appears close to PostgreSQL connection capacity.
 - Keep retention short. Set `preserve_finished_jobs = False` if you do not need
   successful results. That still reduces table growth, but completion without
-  retention sends more statements per job than completion with retention (11
+  retention sends more statements per job than completion with retention (5
   against 1) and is slower per completion. Otherwise use bounded
   `clear_finished_jobs_after`, `clear_failed_jobs_after`, and
   `clear_recurring_executions_after` values.

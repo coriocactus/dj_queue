@@ -25,8 +25,8 @@ EXPECTED_STATEMENTS = {
   # postgres is pinned by tests/postgres/test_completion_statement.py
   "complete": {"mysql": 2, "mariadb": 2, "sqlite": 2},
   "complete keyed": {"postgres": 3, "mysql": 6, "mariadb": 6, "sqlite": 6},
-  "complete unretained": {"postgres": 9, "mysql": 9, "mariadb": 9, "sqlite": 9},
-  "complete unretained keyed": {"postgres": 11, "mysql": 13, "mariadb": 13, "sqlite": 13},
+  "complete unretained": {"postgres": 3, "mysql": 3, "mariadb": 3, "sqlite": 3},
+  "complete unretained keyed": {"postgres": 5, "mysql": 7, "mariadb": 7, "sqlite": 7},
   "fail": {"postgres": 3, "mysql": 3, "mariadb": 3, "sqlite": 3},
   "fail keyed": {"postgres": 5, "mysql": 7, "mariadb": 7, "sqlite": 7},
 }

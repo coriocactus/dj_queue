@@ -69,6 +69,30 @@ def create_ready_execution_after_blocked_consume(
     return cursor.rowcount
 
 
+def delete_job_if_no_execution_state(alias, job):
+  connection = connections[alias]
+  quote = connection.ops.quote_name
+  jobs_table = quote(Job._meta.db_table)
+  job_id_column = quote(Job._meta.get_field("id").column)
+  state_checks = state_absence_checks_sql(
+    state_models_except(ClaimedExecution),
+    quote=quote,
+    job_id_expression=f"{jobs_table}.{job_id_column}",
+  )
+  job_id = Job._meta.get_field("id").get_db_prep_value(
+    job.pk,
+    connection=connection,
+    prepared=False,
+  )
+
+  with connection.cursor() as cursor:
+    cursor.execute(
+      f"DELETE FROM {jobs_table} WHERE {jobs_table}.{job_id_column} = %s AND {state_checks}",
+      [job_id],
+    )
+    return cursor.rowcount
+
+
 def finish_job_if_no_execution_state(alias, job, return_value, *, finished_at):
   connection = connections[alias]
   quote = connection.ops.quote_name

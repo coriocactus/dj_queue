@@ -1,11 +1,12 @@
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import timedelta
 from unittest.mock import Mock
 
 import pytest
-from django.db import connection, connections
+from django.db import IntegrityError, connection, connections
 from django.db.utils import OperationalError
 from django.tasks import TaskResultStatus
 from django.test.utils import CaptureQueriesContext
@@ -976,6 +977,59 @@ def test_complete_claimed_job_rejects_conflicting_execution_state():
 
   assert ClaimedExecution.objects.filter(job=job).exists() is True
   assert Job.objects.get(pk=job.pk).finished_at is None
+
+
+@pytest.mark.django_db
+def test_unretained_completion_deletes_the_job_and_its_recurring_execution():
+  job = make_job()
+  other = make_job()
+  ClaimedExecution.objects.create(job=job)
+  for recurring_job in (job, other):
+    RecurringExecution.objects.create(
+      task_key="nightly", run_at=recurring_job.created_at, job=recurring_job
+    )
+
+  complete_claimed_job(
+    job.id, "done", config=replace(load_backend_config(), preserve_finished_jobs=False)
+  )
+
+  assert list(Job.objects.values_list("id", flat=True)) == [other.id]
+  assert list(RecurringExecution.objects.values_list("job_id", flat=True)) == [other.id]
+  assert not ClaimedExecution.objects.exists()
+
+
+@pytest.mark.django_db
+def test_unretained_completion_rejects_conflicting_execution_state():
+  job = make_job()
+  ClaimedExecution.objects.create(job=job)
+  RecurringExecution.objects.create(task_key="nightly", run_at=job.created_at, job=job)
+  FailedExecution.objects.create(
+    job=job, exception_class="builtins.ValueError", message="boom", traceback=""
+  )
+
+  with pytest.raises(EnqueueError, match="already has an execution-state row"):
+    complete_claimed_job(
+      job.id, "done", config=replace(load_backend_config(), preserve_finished_jobs=False)
+    )
+
+  assert Job.objects.filter(pk=job.pk).exists()
+  assert ClaimedExecution.objects.filter(job=job).exists()
+  assert RecurringExecution.objects.filter(job=job).exists()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_unretained_completion_surfaces_foreign_key_errors(monkeypatch):
+  job = make_job()
+  ClaimedExecution.objects.create(job=job)
+  monkeypatch.setattr(execution_operations, "_delete_claimed_execution", lambda *args: None)
+
+  with pytest.raises(IntegrityError):
+    complete_claimed_job(
+      job.id, "done", config=replace(load_backend_config(), preserve_finished_jobs=False)
+    )
+
+  assert Job.objects.filter(pk=job.pk).exists()
+  assert ClaimedExecution.objects.filter(job=job).exists()
 
 
 @pytest.mark.django_db(transaction=True)

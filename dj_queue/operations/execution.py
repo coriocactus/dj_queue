@@ -18,6 +18,7 @@ from dj_queue.log import event_logging_enabled, log_event
 from dj_queue.models import (
   ClaimedExecution,
   Job,
+  RecurringExecution,
 )
 from dj_queue.operations._helpers import (
   _ensure_no_other_execution_state,
@@ -28,6 +29,7 @@ from dj_queue.operations._helpers import (
 from dj_queue.operations.claiming import ClaimedJob
 from dj_queue.operations.concurrency import release_concurrency_slot
 from dj_queue.sql import backend_sql
+from dj_queue.sql import common as sql_common
 from dj_queue.task_results import task_result_for_claimed_job
 
 
@@ -138,8 +140,7 @@ def complete_claimed_job(job, return_value, *, config, task=None):
           _finish_job_if_no_execution_state(alias, completed, return_value, finished_at=now)
       else:
         _delete_claimed_execution(alias, job.id)
-        _ensure_no_other_execution_state(alias, job, ignored_models=(ClaimedExecution,))
-        completed.delete(using=alias)
+        _delete_job_if_no_execution_state(alias, job)
 
       release_concurrency_slot(job, task=task, config=config)
     return completed
@@ -228,6 +229,13 @@ def _delete_claimed_execution(alias, job_id):
   deleted, _ = ClaimedExecution.objects.using(alias).filter(job_id=job_id).delete()
   if not deleted:
     raise ClaimedExecution.DoesNotExist
+
+
+def _delete_job_if_no_execution_state(alias, job):
+  # the collector would also delete from every state table the guard proves empty
+  RecurringExecution.objects.using(alias).filter(job_id=job.id).delete()
+  if sql_common.delete_job_if_no_execution_state(alias, job) != 1:
+    raise EnqueueError(f"job {job.id} already has an execution-state row")
 
 
 def _delete_claimed_and_finish_job_if_no_execution_state(alias, job, return_value, *, finished_at):
