@@ -157,9 +157,7 @@ def postgres_xmin_activity_rows(*, backend_alias):
       """
       SELECT
         pid,
-        usename,
         application_name,
-        client_addr::text,
         state,
         wait_event_type,
         wait_event,
@@ -175,14 +173,12 @@ def postgres_xmin_activity_rows(*, backend_alias):
     return tuple(
       {
         "pid": row[0],
-        "user": row[1],
-        "application_name": row[2],
-        "client_addr": row[3],
-        "state": row[4],
-        "wait_event_type": row[5],
-        "wait_event": row[6],
-        "transaction_age_seconds": row[7],
-        "backend_xmin_age": row[8],
+        "application_name": row[1],
+        "state": row[2],
+        "wait_event_type": row[3],
+        "wait_event": row[4],
+        "transaction_age_seconds": row[5],
+        "backend_xmin_age": row[6],
       }
       for row in cursor.fetchall()
     )

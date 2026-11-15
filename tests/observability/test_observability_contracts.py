@@ -129,8 +129,28 @@ def test_autocommit_diagnostics_keep_four_query_budget(django_assert_num_queries
 
 @pytest.mark.postgres
 def test_postgres_diagnostics_read_real_catalogs():
-  diagnostics = observability.postgres_diagnostics_for_backend(backend_alias="default")
+  blocker = connections.create_connection("default")
+  blocker.set_autocommit(False)
+  try:
+    with blocker.cursor() as cursor:
+      cursor.execute("SELECT txid_current()")
+    diagnostics = observability.postgres_diagnostics_for_backend(backend_alias="default")
+  finally:
+    blocker.rollback()
+    blocker.close()
   assert "error" not in diagnostics
   assert {row["table_name"] for row in diagnostics["queue_tables"]} == {
     model._meta.db_table for model in observability.POSTGRES_DIAGNOSTIC_TABLE_MODELS
+  }
+  assert diagnostics["xmin_activity"]
+  assert {tuple(row) for row in diagnostics["xmin_activity"]} == {
+    (
+      "pid",
+      "application_name",
+      "state",
+      "wait_event_type",
+      "wait_event",
+      "transaction_age_seconds",
+      "backend_xmin_age",
+    )
   }
