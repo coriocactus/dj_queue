@@ -109,6 +109,22 @@ def test_cron_supports_explicit_timezones():
   assert next_cron_run("0 0 * * * Europe/Rome", dt(2026, 4, 8, 21, 59)) == dt(2026, 4, 8, 22, 0)
 
 
+def test_cron_timezone_fires_twice_on_the_fall_back_day():
+  schedule = "30 1 * * * America/New_York"
+
+  assert next_cron_run(schedule, dt(2026, 11, 1, 4, 0)) == dt(2026, 11, 1, 5, 30)
+  assert next_cron_run(schedule, dt(2026, 11, 1, 5, 30)) == dt(2026, 11, 1, 6, 30)
+  assert next_cron_run(schedule, dt(2026, 11, 1, 6, 30)) == dt(2026, 11, 2, 6, 30)
+  assert previous_cron_run(schedule, dt(2026, 11, 1, 6, 30)) == dt(2026, 11, 1, 5, 30)
+
+
+def test_cron_timezone_skips_the_spring_forward_day():
+  schedule = "30 2 * * * America/New_York"
+
+  assert next_cron_run(schedule, dt(2026, 3, 7, 7, 30)) == dt(2026, 3, 9, 6, 30)
+  assert previous_cron_run(schedule, dt(2026, 3, 9, 6, 30)) == dt(2026, 3, 7, 7, 30)
+
+
 def test_cron_supports_natural_daily_schedule():
   validate_cron("every day at noon")
   assert next_cron_run("every day", dt(2026, 4, 8, 0, 0)) == dt(2026, 4, 9, 0, 0)
