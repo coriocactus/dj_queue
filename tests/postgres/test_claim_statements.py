@@ -34,35 +34,40 @@ def locking_ready_selects(ctx):
   ]
 
 
-def enable_sort():
+def planner_settings():
   with connection.cursor() as cursor:
-    cursor.execute("SHOW enable_sort")
-    return cursor.fetchone()[0]
+    cursor.execute("SELECT current_setting('enable_sort'), current_setting('enable_seqscan')")
+    return cursor.fetchone()
 
 
 @pytest.mark.parametrize("queues", READY_ONLY_SELECTORS)
-def test_claim_owning_its_transaction_disables_sort_for_that_transaction_only(queues):
+def test_claim_owning_its_transaction_disables_sort_and_seqscan_for_that_transaction_only(queues):
   echo.using(queue_name="alpha").enqueue("job")
 
   with CaptureQueriesContext(connection) as ctx:
     claimed_jobs = claim_ready_jobs(limit=1, queues=queues)
 
   assert len(claimed_jobs) == 1
-  assert statements(ctx)[:2] == ["BEGIN", "SET LOCAL enable_sort = off"]
-  assert enable_sort() == "on"
+  assert statements(ctx)[:2] == [
+    "BEGIN",
+    "SET LOCAL enable_sort = off; SET LOCAL enable_seqscan = off",
+  ]
+  assert planner_settings() == ("on", "on")
 
 
 @pytest.mark.parametrize("caller_transaction", [transaction.atomic, autocommit_off])
 @pytest.mark.parametrize("queues", READY_ONLY_SELECTORS)
-def test_claim_inside_caller_transaction_leaves_enable_sort_untouched(caller_transaction, queues):
+def test_claim_inside_caller_transaction_leaves_planner_settings_untouched(
+  caller_transaction, queues
+):
   echo.using(queue_name="alpha").enqueue("job")
 
   with caller_transaction(), CaptureQueriesContext(connection) as ctx:
     claimed_jobs = claim_ready_jobs(limit=1, queues=queues)
-    setting_after_claim = enable_sort()
+    settings_after_claim = planner_settings()
 
   assert len(claimed_jobs) == 1
-  assert setting_after_claim == "on"
+  assert settings_after_claim == ("on", "on")
   assert not any("SET LOCAL" in sql for sql in statements(ctx))
 
 

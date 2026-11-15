@@ -206,9 +206,10 @@ def consume_next_blocked_job_with_released_slot(
   }
 
 
-def disable_sort_for_transaction(alias):
+def disable_sort_and_seqscan_for_transaction(alias):
   with connections[alias].cursor() as cursor:
-    cursor.execute("SET LOCAL enable_sort = off")
+    # psycopg sends a query without parameters over the simple protocol, so one round trip sets both
+    cursor.execute("SET LOCAL enable_sort = off; SET LOCAL enable_seqscan = off")
 
 
 def select_ready_rows(alias, *, backend_alias, limit, use_skip_locked, excluded_ids):

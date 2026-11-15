@@ -83,13 +83,13 @@ def _claim_ready_jobs_once(
   use_skip_locked,
   alias,
 ):
-  disable_sort = _selects_ready_rows_without_jobs(alias, queues) and owns_transaction(alias)
+  pin_index_plans = _selects_ready_rows_without_jobs(alias, queues) and owns_transaction(alias)
   with transaction.atomic(using=alias):
     if process is not None and process.backend_alias != backend_alias:
       raise EnqueueError(f"process {process.name!r} belongs to backend {process.backend_alias!r}")
 
-    if disable_sort:
-      backend_sql(alias).disable_sort_for_transaction(alias)
+    if pin_index_plans:
+      backend_sql(alias).disable_sort_and_seqscan_for_transaction(alias)
     claimed_insert_checks_conflicts = _claimed_insert_checks_conflicts(alias)
     queryset = (
       ReadyExecution.objects.using(alias).select_related("job").filter(backend_alias=backend_alias)

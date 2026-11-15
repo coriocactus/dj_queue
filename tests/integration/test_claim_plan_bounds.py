@@ -120,19 +120,7 @@ def test_completion_cost_does_not_follow_the_jobs_table(state, maintenance):
   assert "JIT" not in plan
 
 
-CONSUME_SCANS_READY_TABLE = pytest.mark.xfail(
-  strict=True,
-  reason="statistics of a drained table price every index probe above a scan of the ready table",
-)
-
-
-@pytest.mark.parametrize(
-  "state",
-  [
-    pytest.param(state, marks=CONSUME_SCANS_READY_TABLE if state == "post-backlog" else ())
-    for state in STATES
-  ],
-)
+@pytest.mark.parametrize("state", STATES)
 def test_consume_cost_is_bounded_by_the_claim_limit(state, maintenance):
   _build_state(state, maintenance)
   *reads, consume = _claim_statements("*")
