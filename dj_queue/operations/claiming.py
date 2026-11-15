@@ -225,8 +225,6 @@ def _select_ready_rows(queryset, *, limit, queues, use_skip_locked, alias, backe
         ordered_selectors,
         limit=limit,
         use_skip_locked=use_skip_locked,
-        alias=alias,
-        backend_alias=backend_alias,
       )
     else:
       ordered = _ordered_selector_rows_queryset(queryset, ordered_selectors)
@@ -243,9 +241,10 @@ def _select_ready_rows(queryset, *, limit, queues, use_skip_locked, alias, backe
 
 
 def _selects_ready_rows_without_jobs(alias, queues):
-  return database_capabilities(alias).backend_family == "postgresql" and not any(
-    selector != "*" and selector.endswith("*") for selector in normalize_queue_selectors(queues)
-  )
+  selectors = normalize_queue_selectors(queues)
+  ordered_selectors = selectors[: selectors.index("*")] if "*" in selectors else selectors
+  is_postgresql = database_capabilities(alias).backend_family == "postgresql"
+  return is_postgresql and _selectors_are_exact_queues(ordered_selectors)
 
 
 def _select_ready_rows_then_jobs(*, limit, queues, use_skip_locked, alias, backend_alias):
@@ -258,7 +257,6 @@ def _select_ready_rows_then_jobs(*, limit, queues, use_skip_locked, alias, backe
     selectors=exact_selectors,
     limit=limit,
     use_skip_locked=use_skip_locked,
-    join_jobs=False,
   )
   rows.sort(key=lambda row: (exact_selectors.index(row.queue_name), -row.priority, row.pk))
   if "*" in selectors and len(rows) < limit:
@@ -282,26 +280,7 @@ def _selectors_are_exact_queues(selectors):
   return all(not selector.endswith("*") for selector in selectors)
 
 
-def _select_exact_queue_rows(
-  queryset,
-  selectors,
-  *,
-  limit,
-  use_skip_locked,
-  alias,
-  backend_alias,
-):
-  select_ready_rows = getattr(backend_sql(alias), "select_ready_rows_by_exact_queues", None)
-  if select_ready_rows is not None:
-    return select_ready_rows(
-      alias,
-      backend_alias=backend_alias,
-      selectors=selectors,
-      limit=limit,
-      use_skip_locked=use_skip_locked,
-      join_jobs=True,
-    )
-
+def _select_exact_queue_rows(queryset, selectors, *, limit, use_skip_locked):
   selected_rows = []
   selected_ids = set()
   for selector in selectors:

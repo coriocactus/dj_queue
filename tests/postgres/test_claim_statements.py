@@ -11,7 +11,7 @@ from tests.tasks import echo
 
 pytestmark = [pytest.mark.postgres, pytest.mark.django_db(transaction=True)]
 
-READY_ONLY_SELECTORS = ("*", ("alpha", "beta"), ("alpha", "*"))
+READY_ONLY_SELECTORS = ("*", ("alpha", "beta"), ("alpha", "*"), ("beta", "*", "al*"))
 
 
 @contextmanager
@@ -77,7 +77,6 @@ def test_claim_inside_caller_transaction_leaves_planner_settings_untouched(
     (("al*",), ["alpha"]),
     (("be*", "*"), ["beta", "alpha"]),
     (("beta", "al*"), ["beta", "alpha"]),
-    (("beta", "*", "al*"), ["beta", "alpha"]),
   ],
 )
 def test_prefix_wildcard_claim_keeps_joined_statements_without_the_setting(
@@ -101,6 +100,8 @@ def test_prefix_wildcard_claim_keeps_joined_statements_without_the_setting(
     ("*", ["beta-9", "alpha-5", "alpha-0"]),
     (("alpha", "beta"), ["alpha-5", "alpha-0", "beta-9"]),
     (("alpha", "*"), ["alpha-5", "alpha-0", "beta-9"]),
+    # a prefix wildcard after * never selects, so it leaves the claim ready-only
+    (("alpha", "*", "be*"), ["alpha-5", "alpha-0", "beta-9"]),
   ],
 )
 def test_claim_locks_ready_rows_without_jobs_then_reads_jobs_by_primary_key(queues, claimed_args):
