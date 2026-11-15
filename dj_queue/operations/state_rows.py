@@ -1,7 +1,3 @@
-import json
-import math
-
-from django.db import connections
 from django.db.models import Q
 
 from dj_queue.db import database_capabilities
@@ -10,61 +6,16 @@ from dj_queue.models import (
   BlockedExecution,
   FailedExecution,
   Job,
-  Pause,
   ReadyExecution,
   ScheduledExecution,
 )
 from dj_queue.models.jobs import job_status_relation_names
-from dj_queue.sql import common as sql_common
 from dj_queue.sql.state import EXECUTION_STATE_MODELS
 
 STATE_RELATIONS = {
   model: relation_name
   for model, relation_name in zip(EXECUTION_STATE_MODELS, job_status_relation_names())
 }
-
-
-def _normalize_payload(args, kwargs):
-  return _normalize_json_round_trip(
-    {"args": list(args), "kwargs": dict(kwargs)},
-    exception_class=EnqueueError,
-    message="payload must be JSON round-trippable",
-  )
-
-
-def _normalize_json_round_trip(value, *, exception_class, message):
-  try:
-    return _normalize_json_value(value)
-  except ValueError as exc:
-    raise exception_class(message) from exc
-  except TypeError:
-    pass
-
-  try:
-    return json.loads(json.dumps(value, allow_nan=False))
-  except (TypeError, ValueError) as exc:
-    raise exception_class(message) from exc
-
-
-def _normalize_json_value(value):
-  if value is None or isinstance(value, (bool, str)):
-    return value
-  if type(value) is int:
-    return value
-  if type(value) is float:
-    if not math.isfinite(value):
-      raise ValueError
-    return value
-  if isinstance(value, (list, tuple)):
-    return [_normalize_json_value(item) for item in value]
-  if isinstance(value, dict):
-    normalized = {}
-    for key, item in value.items():
-      if not isinstance(key, str):
-        raise TypeError
-      normalized[key] = _normalize_json_value(item)
-    return normalized
-  raise TypeError
 
 
 def _ensure_no_other_execution_state(alias, job, *, ignored_models=()):
@@ -109,29 +60,6 @@ def _ensure_state_rows_belong_to_backend(rows, backend_alias):
   for row in rows:
     if row.job.backend_alias != backend_alias:
       raise EnqueueError(f"job {row.job_id} belongs to backend {row.job.backend_alias!r}")
-
-
-def _task_option(task, name, default=None):
-  if hasattr(task, name):
-    return getattr(task, name)
-  return getattr(task.func, name, default)
-
-
-def _lock_active_pauses(alias, backend_alias, queue_names=None):
-  queryset = Pause.objects.using(alias).select_for_update().filter(backend_alias=backend_alias)
-  if queue_names is not None:
-    active_queue_names = tuple(queue_name for queue_name in queue_names if queue_name)
-    if not active_queue_names:
-      return set()
-    queryset = queryset.filter(queue_name__in=active_queue_names)
-  return set(queryset.values_list("queue_name", flat=True))
-
-
-def _exclude_active_pauses(queryset, alias, backend_alias):
-  paused_queue_names = (
-    Pause.objects.using(alias).filter(backend_alias=backend_alias).values("queue_name")
-  )
-  return queryset.exclude(queue_name__in=paused_queue_names)
 
 
 def _ready_execution_row(
@@ -183,11 +111,11 @@ def _create_ready_execution(
 def _bulk_create_ready_executions(alias, ready_rows, *, check_conflicts):
   ready_rows = tuple(ready_rows)
   if not ready_rows:
-    return None
+    return
 
   if check_conflicts:
     _ensure_job_ids_have_no_other_execution_state(alias, [row.job_id for row in ready_rows])
-  return _bulk_create(alias, ReadyExecution, ready_rows)
+  ReadyExecution.objects.using(alias).bulk_create(ready_rows)
 
 
 def _scheduled_execution_row(job, *, backend_alias, scheduled_at=None, created_at=None):
@@ -345,27 +273,3 @@ def _consume_selected_rows(alias, model, rows):
     if deleted:
       consumed_rows.append(row)
   return consumed_rows
-
-
-def _bulk_create(alias, model, objects):
-  objects = tuple(objects)
-  if not objects:
-    return
-
-  fields = [field for field in model._meta.concrete_fields if not field.generated]
-  batch_size = connections[alias].ops.bulk_batch_size(fields, objects)
-  if batch_size is None or batch_size <= 0:
-    batch_size = len(objects)
-  model.objects.using(alias).bulk_create(objects, batch_size=batch_size)
-  return
-
-
-def _finish_job_if_no_execution_state(alias, job, return_value, *, finished_at):
-  updated = sql_common.finish_job_if_no_execution_state(
-    alias, job, return_value, finished_at=finished_at
-  )
-  if updated != 1:
-    raise EnqueueError(f"job {job.id} already has an execution-state row")
-  job.finished_at = finished_at
-  job.return_value = return_value
-  job.updated_at = finished_at

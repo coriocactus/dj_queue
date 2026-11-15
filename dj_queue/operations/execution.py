@@ -20,14 +20,13 @@ from dj_queue.models import (
   Job,
   RecurringExecution,
 )
-from dj_queue.operations._helpers import (
-  _ensure_no_other_execution_state,
-  _failed_execution_row,
-  _finish_job_if_no_execution_state,
-  _normalize_json_round_trip,
-)
 from dj_queue.operations.claiming import ClaimedJob
 from dj_queue.operations.concurrency import release_concurrency_slot
+from dj_queue.operations.enqueue import _normalize_json_round_trip
+from dj_queue.operations.state_rows import (
+  _ensure_no_other_execution_state,
+  _failed_execution_row,
+)
 from dj_queue.sql import backend_sql
 from dj_queue.sql import common as sql_common
 from dj_queue.task_results import task_result_for_claimed_job
@@ -229,6 +228,17 @@ def _delete_claimed_execution(alias, job_id):
   deleted, _ = ClaimedExecution.objects.using(alias).filter(job_id=job_id).delete()
   if not deleted:
     raise ClaimedExecution.DoesNotExist
+
+
+def _finish_job_if_no_execution_state(alias, job, return_value, *, finished_at):
+  updated = sql_common.finish_job_if_no_execution_state(
+    alias, job, return_value, finished_at=finished_at
+  )
+  if updated != 1:
+    raise EnqueueError(f"job {job.id} already has an execution-state row")
+  job.finished_at = finished_at
+  job.return_value = return_value
+  job.updated_at = finished_at
 
 
 def _delete_job_if_no_execution_state(alias, job):

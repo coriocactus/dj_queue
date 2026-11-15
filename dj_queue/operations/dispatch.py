@@ -5,18 +5,18 @@ from enum import StrEnum
 from django.utils import timezone
 
 from dj_queue.models import BlockedExecution, Job, ReadyExecution, ScheduledExecution
-from dj_queue.operations._helpers import (
+from dj_queue.operations.concurrency import (
+  concurrency_settings_for_job,
+  semaphore_acquire,
+  semaphore_acquire_many,
+)
+from dj_queue.operations.state_rows import (
   _blocked_execution_row,
   _create_blocked_execution,
   _create_ready_execution,
   _create_scheduled_execution,
   _ready_execution_row,
   _scheduled_execution_row,
-)
-from dj_queue.operations.concurrency import (
-  concurrency_settings_for_job,
-  semaphore_acquire,
-  semaphore_acquire_many,
 )
 
 

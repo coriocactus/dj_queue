@@ -7,13 +7,14 @@ from types import SimpleNamespace
 
 import pytest
 from django.db import connection, transaction
+from django.db.models import QuerySet
 from django.db.utils import OperationalError
 from django.tasks import TaskResultStatus
 from django.tasks.exceptions import TaskResultDoesNotExist
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
-import dj_queue.operations._helpers as operation_helpers
+import dj_queue.operations.enqueue as enqueue_operations
 from dj_queue.api import enqueue_on_commit
 from dj_queue.backend import DjQueueBackend, _async_backend_call
 from dj_queue.config import load_backend_config
@@ -360,20 +361,18 @@ def test_enqueue_bulk_retries_transient_database_deadlock(monkeypatch):
 
 @pytest.mark.django_db(transaction=True)
 def test_enqueue_bulk_mixed_retries_transient_database_deadlock(monkeypatch):
-  import dj_queue.operations.enqueue as job_operations
-
-  original_bulk_create = job_operations._bulk_create
+  original_bulk_create = QuerySet.bulk_create
   calls = 0
 
-  def create_scheduled_with_deadlock_once(alias, model, objects):
+  def create_scheduled_with_deadlock_once(queryset, objects):
     nonlocal calls
-    if model is ScheduledExecution:
+    if queryset.model is ScheduledExecution:
       calls += 1
       if calls == 1:
         raise OperationalError("deadlock found when trying to get lock")
-    return original_bulk_create(alias, model, objects)
+    return original_bulk_create(queryset, objects)
 
-  monkeypatch.setattr(job_operations, "_bulk_create", create_scheduled_with_deadlock_once)
+  monkeypatch.setattr(QuerySet, "bulk_create", create_scheduled_with_deadlock_once)
   future = timezone.now() + timedelta(minutes=1)
 
   results = echo.get_backend().enqueue_all(
@@ -1589,9 +1588,9 @@ def test_enqueue_json_payload_primitives_use_fast_validation(monkeypatch):
     raise AssertionError("json round trip used")
 
   monkeypatch.setattr(
-    operation_helpers,
+    enqueue_operations,
     "json",
-    SimpleNamespace(dumps=dumps, loads=operation_helpers.json.loads),
+    SimpleNamespace(dumps=dumps, loads=enqueue_operations.json.loads),
   )
 
   result = echo.enqueue({"items": [1, "two", None, True]})

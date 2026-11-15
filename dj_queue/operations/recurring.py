@@ -12,9 +12,13 @@ from dj_queue.cron import latest_cron_run, next_cron_run, validate_cron
 from dj_queue.db import locked_queryset, retry_transient_database_errors
 from dj_queue.exceptions import EnqueueError
 from dj_queue.models import Job, RecurringExecution, RecurringTask
-from dj_queue.operations._helpers import _normalize_payload
-from dj_queue.operations._insert import create_ignore_conflicts
-from dj_queue.operations.enqueue import enqueue_job, validate_priority, validate_queue_allowed
+from dj_queue.operations.enqueue import (
+  _normalize_payload,
+  enqueue_job,
+  validate_priority,
+  validate_queue_allowed,
+)
+from dj_queue.sql import common as sql_common
 
 
 def validate_recurring_task_definition(
@@ -391,7 +395,7 @@ def _reserve_recurring_task(recurring_task, run_at, *, config):
       return _recurring_reservation(execution, recurring_task, next_run_at)
 
     intended_job_id = uuid4()
-    created = create_ignore_conflicts(
+    created = sql_common.create_ignore_conflicts(
       RecurringExecution,
       using=alias,
       backend_alias=backend_alias,

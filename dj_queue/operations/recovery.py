@@ -8,13 +8,13 @@ from dj_queue.models import (
   FailedExecution,
   Process,
 )
-from dj_queue.operations._helpers import (
-  _ensure_job_ids_have_no_other_execution_state,
-  _failed_execution_row,
-)
 from dj_queue.operations.concurrency import (
   release_concurrency_slot,
   release_recovered_concurrency_slots,
+)
+from dj_queue.operations.state_rows import (
+  _ensure_job_ids_have_no_other_execution_state,
+  _failed_execution_row,
 )
 
 

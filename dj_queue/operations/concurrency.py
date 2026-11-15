@@ -21,7 +21,7 @@ from dj_queue.models import (
   Job,
   Semaphore,
 )
-from dj_queue.operations._helpers import (
+from dj_queue.operations.state_rows import (
   _bulk_create_ready_executions,
   _consume_selected_rows,
   _create_blocked_execution,
@@ -30,9 +30,7 @@ from dj_queue.operations._helpers import (
   _ensure_state_rows_belong_to_backend,
   _failed_execution_row,
   _ready_execution_row,
-  _task_option,
 )
-from dj_queue.operations._insert import create_ignore_conflicts
 from dj_queue.sql import backend_sql
 from dj_queue.sql import common as sql_common
 from dj_queue.wakeup import notify_ready_queues_on_commit
@@ -93,7 +91,7 @@ def semaphore_acquire_many(
     semaphore = None
     # cleanup can delete the conflicting row before it is locked
     while semaphore is None:
-      if create_ignore_conflicts(
+      if sql_common.create_ignore_conflicts(
         Semaphore,
         using=alias,
         key=key,
@@ -294,6 +292,12 @@ def _released_available_expression(limit):
 
 def _available_slots(semaphore, limit, *, released=0):
   return min(limit, max(0, semaphore.value + limit - semaphore.limit + released))
+
+
+def _task_option(task, name, default=None):
+  if hasattr(task, name):
+    return getattr(task, name)
+  return getattr(task.func, name, default)
 
 
 def concurrency_settings(task, *, config):

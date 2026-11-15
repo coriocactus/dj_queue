@@ -5,7 +5,7 @@ from django.utils import timezone
 
 from dj_queue.db import locked_queryset
 from dj_queue.models import FailedExecution, Job, RecurringExecution
-from dj_queue.operations._helpers import (
+from dj_queue.operations.state_rows import (
   _consume_selected_rows,
   _ensure_job_ids_have_no_other_execution_state,
 )

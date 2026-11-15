@@ -2,6 +2,7 @@ from unittest.mock import Mock
 
 import pytest
 from django.db import OperationalError
+from django.db.models import QuerySet
 
 from dj_queue.models import ClaimedExecution, Job, ScheduledExecution
 from dj_queue.operations import claiming, dispatch, enqueue, execution
@@ -39,27 +40,27 @@ def test_completion_retry_keeps_identity_and_executes_task_once(
 
 @pytest.mark.django_db(transaction=True)
 def test_bulk_retry_rebuilds_discarded_jobs_when_capacity_changes(monkeypatch):
-  bulk_create = enqueue._bulk_create
+  bulk_create = QuerySet.bulk_create
   acquire = dispatch.semaphore_acquire_many
   attempts = 0
   job_ids = []
 
-  def create_with_conflict(alias, model, objects):
+  def create_with_conflict(queryset, objects):
     nonlocal attempts
-    if model is Job:
+    if queryset.model is Job:
       job_ids.append(tuple(job.pk for job in objects))
-    if model is ScheduledExecution:
+    if queryset.model is ScheduledExecution:
       attempts += 1
       if attempts == 1:
         raise OperationalError("database is locked")
-    return bulk_create(alias, model, objects)
+    return bulk_create(queryset, objects)
 
   def acquire_after_retry(*args, **kwargs):
     if attempts == 0:
       return 0
     return acquire(*args, **kwargs)
 
-  monkeypatch.setattr(enqueue, "_bulk_create", create_with_conflict)
+  monkeypatch.setattr(QuerySet, "bulk_create", create_with_conflict)
   monkeypatch.setattr(dispatch, "semaphore_acquire_many", acquire_after_retry)
 
   [(job, _task, outcome)] = enqueue.enqueue_jobs_bulk([(limited_discard, [1], {})])

@@ -10,7 +10,7 @@ from django.db import connection, connections, transaction
 from django.db.utils import OperationalError
 from django.utils import timezone
 
-import dj_queue.operations._helpers as operation_helpers
+import dj_queue.operations.enqueue as enqueue_operations
 from dj_queue.config import WorkerConfig, load_backend_config
 from dj_queue.exceptions import ProcessExitError
 from dj_queue.models import (
@@ -638,9 +638,9 @@ def test_complete_claimed_job_json_result_primitives_use_fast_validation(monkeyp
     raise AssertionError("json round trip used")
 
   monkeypatch.setattr(
-    operation_helpers,
+    enqueue_operations,
     "json",
-    SimpleNamespace(dumps=dumps, loads=operation_helpers.json.loads),
+    SimpleNamespace(dumps=dumps, loads=enqueue_operations.json.loads),
   )
 
   complete_claimed_job(

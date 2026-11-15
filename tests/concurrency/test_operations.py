@@ -52,6 +52,7 @@ from dj_queue.operations.jobs import (
   promote_scheduled_jobs,
 )
 from dj_queue.operations.recurring import fire_recurring_task
+from dj_queue.sql import common as sql_common
 from dj_queue.sql import mysql as mysql_sql
 from dj_queue.sql import postgres as postgres_sql
 from tests.tasks import echo, limited, limited_discard, other_queue
@@ -783,10 +784,10 @@ def test_semaphore_acquire_many_first_acquire_uses_no_savepoint():
 
 @pytest.mark.django_db
 def test_semaphore_acquire_many_recreates_a_row_deleted_after_the_insert_conflict(monkeypatch):
-  create = concurrency_operations.create_ignore_conflicts
+  create = sql_common.create_ignore_conflicts
   conflicts = iter([False])
   monkeypatch.setattr(
-    concurrency_operations,
+    sql_common,
     "create_ignore_conflicts",
     lambda *args, **kwargs: next(conflicts, None) is None and create(*args, **kwargs),
   )

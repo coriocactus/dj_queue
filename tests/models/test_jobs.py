@@ -13,7 +13,7 @@ from dj_queue.models import (
   ReadyExecution,
   ScheduledExecution,
 )
-from dj_queue.operations._helpers import EXECUTION_STATE_MODELS, STATE_RELATIONS
+from dj_queue.operations.state_rows import EXECUTION_STATE_MODELS, STATE_RELATIONS
 
 STATUS_NAMES = ("ready", "claimed", "blocked", "scheduled", "failed", "finished")
 STATUS_RELATIONS = (

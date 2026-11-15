@@ -15,13 +15,10 @@ from dj_queue.db import (
 )
 from dj_queue.exceptions import EnqueueError
 from dj_queue.log import event_logging_enabled, log_event
-from dj_queue.models import ClaimedExecution, Job, Process, ReadyExecution
-from dj_queue.operations._helpers import (
-  _bulk_create,
+from dj_queue.models import ClaimedExecution, Job, Pause, Process, ReadyExecution
+from dj_queue.operations.state_rows import (
   _consume_selected_rows,
-  _exclude_active_pauses,
   _job_ids_with_other_execution_state,
-  _lock_active_pauses,
 )
 from dj_queue.queue_selectors import (
   filter_by_queue_selectors,
@@ -174,6 +171,23 @@ def _claim_ready_jobs_once(
   ]
 
 
+def _exclude_active_pauses(queryset, alias, backend_alias):
+  paused_queue_names = (
+    Pause.objects.using(alias).filter(backend_alias=backend_alias).values("queue_name")
+  )
+  return queryset.exclude(queue_name__in=paused_queue_names)
+
+
+def _lock_active_pauses(alias, backend_alias, queue_names=None):
+  queryset = Pause.objects.using(alias).select_for_update().filter(backend_alias=backend_alias)
+  if queue_names is not None:
+    active_queue_names = tuple(queue_name for queue_name in queue_names if queue_name)
+    if not active_queue_names:
+      return set()
+    queryset = queryset.filter(queue_name__in=active_queue_names)
+  return set(queryset.values_list("queue_name", flat=True))
+
+
 def _select_ready_rows(queryset, *, limit, queues, use_skip_locked, alias, backend_alias):
   if _selects_ready_rows_without_jobs(alias, queues):
     return _select_ready_rows_then_jobs(
@@ -309,12 +323,8 @@ def _claimed_insert_checks_conflicts(alias):
 
 def _create_claimed_executions(alias, jobs, *, process, claimed_at):
   process_id = process.id if process is not None else None
-  return _bulk_create(
-    alias,
-    ClaimedExecution,
-    [
-      ClaimedExecution(job_id=job.id, process_id=process_id, created_at=claimed_at) for job in jobs
-    ],
+  ClaimedExecution.objects.using(alias).bulk_create(
+    [ClaimedExecution(job_id=job.id, process_id=process_id, created_at=claimed_at) for job in jobs]
   )
 
 

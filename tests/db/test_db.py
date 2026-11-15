@@ -14,8 +14,7 @@ from dj_queue.db import (
   supports_skip_locked,
 )
 from dj_queue.models import RecurringExecution
-from dj_queue.operations._insert import create_ignore_conflicts
-from dj_queue.sql import mysql as mysql_sql
+from dj_queue.sql.common import create_ignore_conflicts
 
 
 @pytest.mark.postgres
@@ -111,17 +110,14 @@ def test_mysql_create_ignore_conflicts_uses_duplicate_key_noop(monkeypatch):
       statements.append((sql, params))
 
   class FakeConnection:
+    vendor = "mysql"
     features = connections["default"].features
     ops = connections["default"].ops
 
     def cursor(self):
       return FakeCursor()
 
-  monkeypatch.setattr("dj_queue.operations._insert.connections", {"default": FakeConnection()})
-  monkeypatch.setattr(
-    "dj_queue.operations._insert.backend_sql",
-    lambda using: mysql_sql,
-  )
+  monkeypatch.setattr("dj_queue.sql.common.connections", {"default": FakeConnection()})
 
   created = create_ignore_conflicts(
     RecurringExecution,

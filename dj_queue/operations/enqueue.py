@@ -1,4 +1,6 @@
 import inspect
+import json
+import math
 from dataclasses import dataclass
 from functools import lru_cache
 from uuid import uuid4
@@ -15,15 +17,7 @@ from dj_queue.models import (
   Job,
   ScheduledExecution,
 )
-from dj_queue.operations._helpers import (
-  _bulk_create,
-  _bulk_create_ready_executions,
-  _normalize_payload,
-  _task_option,
-)
-from dj_queue.operations.concurrency import (
-  concurrency_settings,
-)
+from dj_queue.operations.concurrency import _task_option, concurrency_settings
 from dj_queue.operations.dispatch import (
   DispatchEntry,
   DispatchOutcome,
@@ -31,6 +25,7 @@ from dj_queue.operations.dispatch import (
   dispatch_decision,
   dispatch_job,
 )
+from dj_queue.operations.state_rows import _bulk_create_ready_executions
 from dj_queue.wakeup import notify_ready_queues_on_commit
 
 
@@ -116,6 +111,49 @@ def _prepare_submission(task, args, kwargs, *, validate, config, job_id=None):
   )
 
 
+def _normalize_payload(args, kwargs):
+  return _normalize_json_round_trip(
+    {"args": list(args), "kwargs": dict(kwargs)},
+    exception_class=EnqueueError,
+    message="payload must be JSON round-trippable",
+  )
+
+
+def _normalize_json_round_trip(value, *, exception_class, message):
+  try:
+    return _normalize_json_value(value)
+  except ValueError as exc:
+    raise exception_class(message) from exc
+  except TypeError:
+    pass
+
+  try:
+    return json.loads(json.dumps(value, allow_nan=False))
+  except (TypeError, ValueError) as exc:
+    raise exception_class(message) from exc
+
+
+def _normalize_json_value(value):
+  if value is None or isinstance(value, (bool, str)):
+    return value
+  if type(value) is int:
+    return value
+  if type(value) is float:
+    if not math.isfinite(value):
+      raise ValueError
+    return value
+  if isinstance(value, (list, tuple)):
+    return [_normalize_json_value(item) for item in value]
+  if isinstance(value, dict):
+    normalized = {}
+    for key, item in value.items():
+      if not isinstance(key, str):
+        raise TypeError
+      normalized[key] = _normalize_json_value(item)
+    return normalized
+  raise TypeError
+
+
 def enqueue_jobs_bulk(task_calls, *, backend_alias="default", validate=True, config=None):
   config = resolve_backend_config(backend_alias, config)
   submissions = [
@@ -148,11 +186,11 @@ def _enqueue_bulk_once(submissions, *, config):
     )
 
   with transaction.atomic(using=alias):
-    _bulk_create(alias, Job, [entry.job for entry in prepared])
+    Job.objects.using(alias).bulk_create([entry.job for entry in prepared])
     rows = build_dispatch_rows(prepared, now=now, config=config)
     _bulk_create_ready_executions(alias, rows.ready, check_conflicts=False)
-    _bulk_create(alias, ScheduledExecution, rows.scheduled)
-    _bulk_create(alias, BlockedExecution, rows.blocked)
+    ScheduledExecution.objects.using(alias).bulk_create(rows.scheduled)
+    BlockedExecution.objects.using(alias).bulk_create(rows.blocked)
     if rows.discarded:
       Job.objects.using(alias).bulk_update(
         rows.discarded, ["finished_at", "return_value", "updated_at"]

@@ -9,4 +9,4 @@ def backend_sql(alias):
     return import_module("dj_queue.sql.postgres")
   if backend_family in {"mysql", "mariadb"}:
     return import_module("dj_queue.sql.mysql")
-  return import_module("dj_queue.sql.sqlite")
+  return import_module("dj_queue.sql.common")

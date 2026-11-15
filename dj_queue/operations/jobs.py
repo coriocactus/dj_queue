@@ -20,14 +20,6 @@ from dj_queue.models import (
   ReadyExecution,
   ScheduledExecution,
 )
-from dj_queue.operations._helpers import (
-  _bulk_create,
-  _bulk_create_ready_executions,
-  _consume_selected_rows,
-  _ensure_job_ids_have_no_other_execution_state,
-  _ensure_state_rows_belong_to_backend,
-  _failed_execution_row,
-)
 from dj_queue.operations.concurrency import release_concurrency_slot
 from dj_queue.operations.dispatch import (
   DispatchEntry,
@@ -35,6 +27,13 @@ from dj_queue.operations.dispatch import (
   dispatch_decision,
 )
 from dj_queue.operations.enqueue import enqueue_job_with_dispatch
+from dj_queue.operations.state_rows import (
+  _bulk_create_ready_executions,
+  _consume_selected_rows,
+  _ensure_job_ids_have_no_other_execution_state,
+  _ensure_state_rows_belong_to_backend,
+  _failed_execution_row,
+)
 from dj_queue.wakeup import notify_ready_queues_on_commit
 
 
@@ -295,12 +294,10 @@ def _redispatch_jobs(jobs, *, config, isolate_policy_errors=False, reset_results
       ["return_value", "finished_at", "updated_at"],
     )
   _bulk_create_ready_executions(alias, rows.ready, check_conflicts=False)
-  _bulk_create(alias, ScheduledExecution, rows.scheduled)
-  _bulk_create(alias, BlockedExecution, rows.blocked)
-  _bulk_create(
-    alias,
-    FailedExecution,
-    [_failed_execution_row(job, error) for job, error in policy_failures],
+  ScheduledExecution.objects.using(alias).bulk_create(rows.scheduled)
+  BlockedExecution.objects.using(alias).bulk_create(rows.blocked)
+  FailedExecution.objects.using(alias).bulk_create(
+    [_failed_execution_row(job, error) for job, error in policy_failures]
   )
 
   return prepared, rows.ready_queue_names, policy_failures

@@ -12,6 +12,43 @@ from dj_queue.sql.state import (
 )
 
 
+def create_ignore_conflicts(model, /, *, using, **fields):
+  obj = model(**fields)
+  connection = connections[using]
+  quote = connection.ops.quote_name
+  insert_fields = [
+    field
+    for field in model._meta.concrete_fields
+    if not field.generated and not _is_auto_field(field)
+  ]
+  table = quote(model._meta.db_table)
+  columns = ", ".join(quote(field.column) for field in insert_fields)
+  placeholders = ", ".join(["%s"] * len(insert_fields))
+  params = [
+    field.get_db_prep_save(field.pre_save(obj, add=True), connection=connection)
+    for field in insert_fields
+  ]
+
+  with connection.cursor() as cursor:
+    if connection.vendor == "mysql":
+      pk_column = quote(model._meta.pk.column)
+      cursor.execute(
+        f"INSERT INTO {table} ({columns}) VALUES ({placeholders}) "
+        f"ON DUPLICATE KEY UPDATE {pk_column} = {pk_column} + LAST_INSERT_ID(0)",
+        params,
+      )
+      return cursor.lastrowid != 0
+    cursor.execute(
+      f"INSERT INTO {table} ({columns}) VALUES ({placeholders}) ON CONFLICT DO NOTHING",
+      params,
+    )
+    return cursor.rowcount > 0
+
+
+def _is_auto_field(field):
+  return field.get_internal_type() in {"AutoField", "BigAutoField", "SmallAutoField"}
+
+
 def create_ready_execution_after_blocked_consume(
   alias,
   *,
