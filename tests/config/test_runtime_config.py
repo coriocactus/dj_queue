@@ -16,8 +16,8 @@ from tests.config.test_queue_db_runtime import (
   _dj_queue_tables,
   _queue_tasks,
   _sqlite_databases,
-  wait_until,
 )
+from tests.factories import wait_until
 from tests.tasks import limited
 
 pytestmark = pytest.mark.filterwarnings(
@@ -72,7 +72,7 @@ polling_interval = 0.01
       )
     try:
       supervisor.start()
-      wait_until(lambda: not Job.objects.using("queue").exists(), timeout=5)
+      wait_until(lambda: not Job.objects.using("queue").exists())
       wait_until(
         lambda: (
           Process.objects.using("queue")

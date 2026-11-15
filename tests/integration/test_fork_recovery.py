@@ -82,7 +82,7 @@ def test_kill_worker_mid_execution_recovery(tmp_path, queue_test_settings):
   from dj_queue.models import ClaimedExecution, FailedExecution, Job, Process, ReadyExecution
   from dj_queue.operations.jobs import retry_failed_job
   from dj_queue.runtime.supervisor import ForkSupervisor
-  from tests.contrib.test_server_integrations import wait_until
+  from tests.factories import wait_until
   from tests.tasks import signal_and_wait
 
   tasks_settings = _queue_tasks(database_alias="default")
@@ -137,12 +137,11 @@ def test_kill_worker_mid_execution_recovery(tmp_path, queue_test_settings):
     first_pid = next(iter(supervisor.children))
     first_child = children_by_pid[first_pid]
 
-    wait_until(lambda: (control_dir / "started").exists(), timeout=5)
+    wait_until(lambda: (control_dir / "started").exists())
     wait_until(
       lambda: (
         ClaimedExecution.objects.filter(job_id=job.id, process__pid=first_pid).exists() is True
       ),
-      timeout=5,
     )
 
     first_child.terminate()
@@ -168,7 +167,6 @@ def test_kill_worker_mid_execution_recovery(tmp_path, queue_test_settings):
         Job.objects.filter(pk=job.id, finished_at__isnull=False, return_value="recovered").exists()
         is True
       ),
-      timeout=5,
     )
 
     assert FailedExecution.objects.filter(job_id=job.id).exists() is False

@@ -1,5 +1,3 @@
-import time
-
 import pytest
 from django.core.management import call_command
 from django.db import connections
@@ -8,6 +6,7 @@ from dj_queue.config import WorkerConfig, load_backend_config
 from dj_queue.models import ClaimedExecution, Job, ReadyExecution
 from dj_queue.operations.claiming import claim_ready_jobs
 from dj_queue.runtime.worker import Worker
+from tests.factories import wait_until
 from tests.tasks import echo
 
 pytestmark = pytest.mark.filterwarnings(
@@ -72,15 +71,6 @@ def _dj_queue_tables(alias):
     for table_name in connections[alias].introspection.table_names()
     if table_name.startswith("dj_queue_")
   }
-
-
-def wait_until(predicate, timeout=1):
-  deadline = time.monotonic() + timeout
-  while time.monotonic() < deadline:
-    if predicate():
-      return
-    time.sleep(0.01)
-  assert predicate()
 
 
 class InlinePool:

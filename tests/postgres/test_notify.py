@@ -14,18 +14,10 @@ from dj_queue.runtime.notify import (
   notify_ready_queues,
 )
 from dj_queue.runtime.worker import Worker
+from tests.factories import wait_until
 from tests.tasks import echo
 
 pytestmark = pytest.mark.postgres
-
-
-def wait_until(predicate, timeout=2):
-  deadline = time.monotonic() + timeout
-  while time.monotonic() < deadline:
-    if predicate():
-      return
-    time.sleep(0.01)
-  assert predicate()
 
 
 class InlinePool:
@@ -114,7 +106,7 @@ def test_worker_wakes_on_notify():
   started_at = time.monotonic()
   result = echo.enqueue("wake")
 
-  wait_until(lambda: Job.objects.get(pk=result.id).finished_at is not None, timeout=1)
+  wait_until(lambda: Job.objects.get(pk=result.id).finished_at is not None)
 
   elapsed = time.monotonic() - started_at
   worker.request_stop()

@@ -3,25 +3,7 @@ import threading
 import pytest
 
 from dj_queue.runtime.pool import WorkerPool
-
-
-def wait_until(predicate, timeout=1):
-  finished = threading.Event()
-
-  def check():
-    if predicate():
-      finished.set()
-      return True
-    return False
-
-  deadline = threading.Timer(timeout, finished.set)
-  deadline.start()
-  try:
-    while not finished.wait(0.01):
-      check()
-    assert predicate()
-  finally:
-    deadline.cancel()
+from tests.factories import wait_until
 
 
 def test_worker_pool_closes_thread_connections_on_drained_shutdown(monkeypatch):

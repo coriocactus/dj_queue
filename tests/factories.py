@@ -1,3 +1,7 @@
+import time
+
+import pytest
+from django.db import OperationalError
 from django.utils import timezone
 
 from dj_queue.models import (
@@ -131,3 +135,22 @@ def make_failed_job(task=None, **overrides):
     traceback=traceback,
   )
   return job
+
+
+def wait_until(predicate, timeout=5):
+  deadline = time.monotonic() + timeout
+  while time.monotonic() < deadline:
+    try:
+      if predicate():
+        return
+    except OperationalError as error:
+      if "locked" not in str(error).lower():
+        raise
+    time.sleep(0.01)
+
+  try:
+    assert predicate()
+  except OperationalError as error:
+    if "locked" not in str(error).lower():
+      raise
+    pytest.fail(f"timed out waiting for predicate after database lock: {error}")

@@ -10,7 +10,7 @@ from django.db import connections
 from dj_queue.config import WorkerConfig, load_backend_config
 from dj_queue.models import BlockedExecution, ClaimedExecution, Job, Semaphore
 from dj_queue.runtime.worker import Worker
-from tests.runtime.test_supervisor import wait_until
+from tests.factories import wait_until
 from tests.tasks import limited
 
 logger = logging.getLogger("dj_queue.stress")

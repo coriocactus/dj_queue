@@ -31,6 +31,7 @@ from dj_queue.runtime.supervisor import (
   Supervisor,
   warn_if_psycopg_is_pure_python,
 )
+from tests.factories import wait_until
 from tests.tasks import limited
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -226,25 +227,6 @@ def build_fork_supervisor(
     killer=killer,
     exit_fn=exit_fn,
   )
-
-
-def wait_until(predicate, timeout=1):
-  deadline = time.monotonic() + timeout
-  while time.monotonic() < deadline:
-    try:
-      if predicate():
-        return
-    except OperationalError as error:
-      if "locked" not in str(error).lower():
-        raise
-    time.sleep(0.01)
-
-  try:
-    assert predicate()
-  except OperationalError as error:
-    if "locked" not in str(error).lower():
-      raise
-    pytest.fail(f"timed out waiting for predicate after database lock: {error}")
 
 
 def test_startup_orphan_cleanup_fails_leftover_claimed_jobs():
@@ -849,7 +831,6 @@ def test_supervisor_heartbeat_disabled_still_keeps_live_processes_fresh(settings
 
     wait_until(
       lambda: Process.objects.get(pk=worker_process.pk).last_heartbeat_at > initial_heartbeat,
-      timeout=1,
     )
   finally:
     supervisor.stop()
@@ -1016,7 +997,7 @@ def test_async_supervisor_restarts_crashed_runner_and_fails_its_claimed_jobs():
     worker.poll_once = crashing_poll
 
     # wait for the crash to be detected and a replacement runner to register
-    wait_until(lambda: crash_count >= 1, timeout=2)
+    wait_until(lambda: crash_count >= 1)
     wait_until(
       lambda: (
         supervisor.runners[0] is not worker
@@ -1024,7 +1005,6 @@ def test_async_supervisor_restarts_crashed_runner_and_fails_its_claimed_jobs():
         and supervisor.runners[0].process.pk != original_process_pk
         and not Process.objects.filter(pk=original_process_pk).exists()
       ),
-      timeout=2,
     )
 
     # the old runner was replaced and the replacement process row is registered
@@ -1089,7 +1069,6 @@ def test_async_supervisor_replaces_runner_whose_recovery_and_stop_fail(monkeypat
         and supervisor.runners[0].process is not None
         and not Process.objects.filter(pk=original_process_pk).exists()
       ),
-      timeout=2,
     )
     assert supervisor.runner_threads[0].is_alive() is True
   finally:
@@ -1133,7 +1112,6 @@ def test_async_supervisor_replaces_draining_runner_whose_deregistration_fails():
       lambda: (
         Process.objects.get(pk=original_process_pk).metadata.get("shutdown_state") == "draining"
       ),
-      timeout=2,
     )
     release.set()
     wait_until(
@@ -1142,7 +1120,6 @@ def test_async_supervisor_replaces_draining_runner_whose_deregistration_fails():
         and supervisor.runners[0].process is not None
         and not Process.objects.filter(pk=original_process_pk).exists()
       ),
-      timeout=2,
     )
   finally:
     release.set()
@@ -1173,7 +1150,7 @@ def test_async_supervisor_stop_does_not_restart_runner_after_stop_request():
     worker.poll_once = crashing_poll
     worker.stop = gated_stop
 
-    wait_until(crash_handled.is_set, timeout=2)
+    wait_until(crash_handled.is_set)
   finally:
     supervisor.stop()
 
@@ -1246,7 +1223,7 @@ def test_async_supervisor_preserves_active_claims_until_drain_finishes():
   thread = threading.Thread(target=supervisor._run_managed_runner, args=(runner,))
 
   thread.start()
-  wait_until(lambda: events == ["poll", "stop"], timeout=1)
+  wait_until(lambda: events == ["poll", "stop"])
 
   runner.process = None
   thread.join(timeout=1)
@@ -1443,7 +1420,6 @@ def test_async_supervisor_waits_for_undrained_crashed_runner_before_replacement(
 
     wait_until(
       lambda: worker.process is not None and worker.process.pk == original_process_pk,
-      timeout=2,
     )
     assert Process.objects.filter(pk=original_process_pk).exists() is True
 
@@ -1455,7 +1431,6 @@ def test_async_supervisor_waits_for_undrained_crashed_runner_before_replacement(
         and supervisor.runners[0].process.pk != original_process_pk
         and not Process.objects.filter(pk=original_process_pk).exists()
       ),
-      timeout=2,
     )
   finally:
     allow_runner_stop.set()

@@ -1,5 +1,4 @@
 import threading
-import time
 from contextlib import contextmanager
 from importlib.metadata import version
 from types import SimpleNamespace
@@ -12,6 +11,7 @@ from dj_queue.config import load_backend_config
 from dj_queue.hooks import clear_hooks, register_hook
 from dj_queue.models import Process
 from dj_queue.runtime.base import BaseRunner
+from tests.factories import wait_until
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
@@ -42,15 +42,6 @@ class DummyRunner(BaseRunner):
 class FallbackRunner(BaseRunner):
   def poll_once(self):
     return None
-
-
-def wait_until(predicate, timeout=1):
-  deadline = time.monotonic() + timeout
-  while time.monotonic() < deadline:
-    if predicate():
-      return
-    time.sleep(0.01)
-  assert predicate()
 
 
 def test_runner_heartbeat_updates_and_stop_deregisters():

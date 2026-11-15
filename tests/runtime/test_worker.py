@@ -25,6 +25,7 @@ from dj_queue.operations.claiming import ClaimedJob, claim_ready_jobs
 from dj_queue.operations.execution import complete_claimed_job, execute_claimed_job
 from dj_queue.runtime.base import DJ_QUEUE_VERSION, ROLLOUT_PROTOCOL_VERSION
 from dj_queue.runtime.worker import Worker
+from tests.factories import wait_until
 from tests.tasks import echo, fail, limited, nan_result, non_json_result, with_context
 
 pytestmark = pytest.mark.django_db(transaction=True)
@@ -112,15 +113,6 @@ def make_ready_job(task=echo, **overrides):
     priority=job.priority,
   )
   return job
-
-
-def wait_until(predicate, timeout=1):
-  deadline = time.monotonic() + timeout
-  while time.monotonic() < deadline:
-    if predicate():
-      return
-    time.sleep(0.01)
-  assert predicate()
 
 
 def make_worker(config=None, **overrides):

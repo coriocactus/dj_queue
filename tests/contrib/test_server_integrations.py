@@ -13,6 +13,7 @@ from django.tasks import TaskResultStatus
 from dj_queue.config import load_backend_config
 from dj_queue.models import Job, Process
 from dj_queue.runtime.supervisor import AsyncSupervisor
+from tests.factories import wait_until
 from tests.tasks import echo
 
 pytestmark = [
@@ -55,15 +56,6 @@ def _sqlite_databases(tmp_path):
       "NAME": str(tmp_path / "queue.sqlite3"),
     },
   }
-
-
-def wait_until(predicate, timeout=1):
-  deadline = time.monotonic() + timeout
-  while time.monotonic() < deadline:
-    if predicate():
-      return
-    time.sleep(0.01)
-  assert predicate()
 
 
 def test_gunicorn_hooks_import_before_django_setup():
@@ -125,7 +117,7 @@ def test_gunicorn_post_fork_starts_one_embedded_supervisor(monkeypatch):
   try:
     gunicorn.post_fork(object(), worker_one)
     gunicorn.post_fork(object(), worker_two)
-    wait_until(lambda: any(event[0] == "poll" for event in events), timeout=1)
+    wait_until(lambda: any(event[0] == "poll" for event in events))
 
     assert isinstance(worker_one._dj_queue_supervisor, StubSupervisor)
     assert worker_two._dj_queue_supervisor is None
@@ -254,7 +246,7 @@ def test_gunicorn_retries_lock_until_replacement_worker_can_start(monkeypatch):
   available["open"] = True
   gunicorn.worker_exit(object(), worker_one)
 
-  wait_until(lambda: getattr(worker_two, "_dj_queue_supervisor", None) is not None, timeout=1)
+  wait_until(lambda: getattr(worker_two, "_dj_queue_supervisor", None) is not None)
   acquired_lock = worker_two._dj_queue_supervisor_lock
 
   gunicorn.worker_exit(object(), worker_two)
