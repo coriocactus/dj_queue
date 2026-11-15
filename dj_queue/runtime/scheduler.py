@@ -1,6 +1,5 @@
 from django.utils import timezone
 
-from dj_queue.config import load_backend_config
 from dj_queue.operations.cleanup import (
   clear_failed_jobs,
   clear_finished_jobs,
@@ -26,20 +25,6 @@ class Scheduler(BaseRunner):
     super().__init__(*args, **kwargs)
     self._static_tasks_synced = False
     self._last_cleanup_at = None
-
-  @classmethod
-  def from_backend_config(
-    cls, *, backend_alias="default", tasks_settings=None, cli_overrides=None, env=None, **kwargs
-  ):
-    config = load_backend_config(
-      backend_alias,
-      tasks_settings=tasks_settings,
-      cli_overrides=cli_overrides,
-      env=env,
-    )
-    if config.scheduler is None:
-      return None
-    return cls(config, backend_config=config, **kwargs)
 
   def start(self):
     process = super().start()
@@ -68,11 +53,6 @@ class Scheduler(BaseRunner):
   def poll_once(self, *, now=None):
     if now is None:
       now = timezone.now()
-    if self.process is None:
-      self.start()
-    else:
-      self.ensure_static_tasks_synced()
-
     with app_executor():
       fired_jobs = []
       if self._has_recurring_work():

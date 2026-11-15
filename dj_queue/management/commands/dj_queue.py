@@ -13,13 +13,9 @@ MIGRATION_WAIT_TIMEOUT = 60
 MIGRATION_WAIT_INTERVAL = 0.5
 
 
-def build_supervisor(*, backend_alias, cli_overrides):
-  mode = load_backend_config(backend_alias, cli_overrides=cli_overrides).mode
-  supervisor_class = AsyncSupervisor if mode == "async" else ForkSupervisor
-  return supervisor_class.from_backend_config(
-    backend_alias=backend_alias,
-    cli_overrides=cli_overrides,
-  )
+def build_supervisor(config):
+  supervisor_class = AsyncSupervisor if config.mode == "async" else ForkSupervisor
+  return supervisor_class(config)
 
 
 def wait_for_dj_queue_migrations(
@@ -123,10 +119,6 @@ class Command(BaseCommand):
         timeout=options["migration_wait_timeout"],
         stdout=self.stdout,
       )
-      supervisor = build_supervisor(
-        backend_alias=options["backend"],
-        cli_overrides=cli_overrides,
-      )
     except ImproperlyConfigured as exc:
       raise CommandError(str(exc)) from exc
-    supervisor.run()
+    build_supervisor(config).run()

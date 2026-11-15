@@ -62,9 +62,9 @@ def test_dj_queue_command_honors_skip_recurring_environment(monkeypatch):
   configs = []
   monkeypatch.setenv("DJ_QUEUE_SKIP_RECURRING", "true")
 
-  def build_supervisor(*, backend_alias, cli_overrides):
-    configs.append(load_backend_config(backend_alias, cli_overrides=cli_overrides))
-    return SimpleNamespace(run=lambda: None)
+  def build_supervisor(config):
+    configs.append(config)
+    return SimpleNamespace(run=lambda: True)
 
   monkeypatch.setattr("dj_queue.management.commands.dj_queue.build_supervisor", build_supervisor)
   call_command("dj_queue")
@@ -78,27 +78,17 @@ def test_dj_queue_command_starts_default_runtime(monkeypatch):
   class StubSupervisor:
     def run(self):
       started.append("run")
+      return True
 
-  def build_supervisor(*, backend_alias, cli_overrides):
-    started.append((backend_alias, cli_overrides))
+  def build_supervisor(config):
+    started.append(config)
     return StubSupervisor()
 
   monkeypatch.setattr("dj_queue.management.commands.dj_queue.build_supervisor", build_supervisor)
 
   call_command("dj_queue")
 
-  assert started == [
-    (
-      "default",
-      {
-        "config": None,
-        "mode": None,
-        "only_work": False,
-        "only_dispatch": False,
-      },
-    ),
-    "run",
-  ]
+  assert started == [load_backend_config(), "run"]
 
 
 def test_dj_queue_command_mode_async(monkeypatch):
@@ -107,27 +97,17 @@ def test_dj_queue_command_mode_async(monkeypatch):
   class StubSupervisor:
     def run(self):
       seen.append("run")
+      return True
 
-  def build_supervisor(*, backend_alias, cli_overrides):
-    seen.append((backend_alias, cli_overrides))
+  def build_supervisor(config):
+    seen.append(config.mode)
     return StubSupervisor()
 
   monkeypatch.setattr("dj_queue.management.commands.dj_queue.build_supervisor", build_supervisor)
 
   call_command("dj_queue", "--mode", "async")
 
-  assert seen == [
-    (
-      "default",
-      {
-        "config": None,
-        "mode": "async",
-        "only_work": False,
-        "only_dispatch": False,
-      },
-    ),
-    "run",
-  ]
+  assert seen == ["async", "run"]
 
 
 def test_dj_queue_command_waits_for_migrations_before_runtime(monkeypatch):
@@ -136,12 +116,13 @@ def test_dj_queue_command_waits_for_migrations_before_runtime(monkeypatch):
   class StubSupervisor:
     def run(self):
       events.append("run")
+      return True
 
   def wait_for_migrations(database_alias, *, timeout, stdout):
     events.append(("wait", database_alias, timeout))
 
-  def build_supervisor(*, backend_alias, cli_overrides):
-    events.append(("build", backend_alias, cli_overrides))
+  def build_supervisor(config):
+    events.append(("build", config.backend_alias))
     return StubSupervisor()
 
   monkeypatch.setattr(
@@ -154,16 +135,7 @@ def test_dj_queue_command_waits_for_migrations_before_runtime(monkeypatch):
 
   assert events == [
     ("wait", "default", 2.5),
-    (
-      "build",
-      "default",
-      {
-        "config": None,
-        "mode": None,
-        "only_work": False,
-        "only_dispatch": False,
-      },
-    ),
+    ("build", "default"),
     "run",
   ]
 
@@ -206,13 +178,9 @@ def test_wait_for_dj_queue_migrations_times_out(monkeypatch):
 def test_only_work_mode_starts_no_dispatcher_or_scheduler(monkeypatch):
   captured = []
 
-  class StubSupervisor:
-    def run(self):
-      return None
-
-  def build_supervisor(*, backend_alias, cli_overrides):
-    captured.append(load_backend_config(backend_alias, cli_overrides=cli_overrides))
-    return StubSupervisor()
+  def build_supervisor(config):
+    captured.append(config)
+    return SimpleNamespace(run=lambda: True)
 
   monkeypatch.setattr("dj_queue.management.commands.dj_queue.build_supervisor", build_supervisor)
 
@@ -228,13 +196,9 @@ def test_only_work_mode_starts_no_dispatcher_or_scheduler(monkeypatch):
 def test_only_dispatch_mode_starts_no_worker_or_scheduler(monkeypatch):
   captured = []
 
-  class StubSupervisor:
-    def run(self):
-      return None
-
-  def build_supervisor(*, backend_alias, cli_overrides):
-    captured.append(load_backend_config(backend_alias, cli_overrides=cli_overrides))
-    return StubSupervisor()
+  def build_supervisor(config):
+    captured.append(config)
+    return SimpleNamespace(run=lambda: True)
 
   monkeypatch.setattr("dj_queue.management.commands.dj_queue.build_supervisor", build_supervisor)
 
@@ -264,13 +228,9 @@ def test_skip_recurring_flag_suppresses_scheduler_even_when_configured(monkeypat
   }
   captured = []
 
-  class StubSupervisor:
-    def run(self):
-      return None
-
-  def build_supervisor(*, backend_alias, cli_overrides):
-    captured.append(load_backend_config(backend_alias, cli_overrides=cli_overrides))
-    return StubSupervisor()
+  def build_supervisor(config):
+    captured.append(config)
+    return SimpleNamespace(run=lambda: True)
 
   monkeypatch.setattr("dj_queue.management.commands.dj_queue.build_supervisor", build_supervisor)
 
@@ -311,13 +271,9 @@ def test_dj_queue_command_uses_selected_backend_toml_overlay(monkeypatch, settin
   )
   captured = []
 
-  class StubSupervisor:
-    def run(self):
-      return None
-
-  def build_supervisor(*, backend_alias, cli_overrides):
-    captured.append(load_backend_config(backend_alias, cli_overrides=cli_overrides))
-    return StubSupervisor()
+  def build_supervisor(config):
+    captured.append(config)
+    return SimpleNamespace(run=lambda: True)
 
   monkeypatch.setattr(
     "dj_queue.management.commands.dj_queue.wait_for_dj_queue_migrations",

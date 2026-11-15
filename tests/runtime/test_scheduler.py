@@ -15,6 +15,7 @@ from dj_queue.models import FailedExecution, Job, Process, RecurringExecution, R
 from dj_queue.operations import recurring as recurring_operations
 from dj_queue.operations.recurring import fire_recurring_task
 from dj_queue.runtime.scheduler import Scheduler
+from dj_queue.runtime.topology import runner_definitions
 from tests.factories import make_process
 from tests.tasks import echo
 
@@ -52,9 +53,10 @@ def scheduler_tasks_settings(
 
 
 def build_scheduler(*, tasks_settings, name=None):
-  return Scheduler.from_backend_config(
-    backend_alias="default",
-    tasks_settings=tasks_settings,
+  config = load_backend_config(tasks_settings=tasks_settings)
+  return Scheduler(
+    config,
+    backend_config=config,
     name=name or f"scheduler-{uuid4()}",
     pid=34567,
     hostname="localhost",
@@ -78,7 +80,7 @@ def make_finished_job(*, finished_at, return_value, task=echo):
 
 
 def test_scheduler_only_starts_when_it_has_work():
-  scheduler = build_scheduler(
+  config = load_backend_config(
     tasks_settings=scheduler_tasks_settings(
       recurring={},
       dynamic_tasks_enabled=False,
@@ -87,7 +89,7 @@ def test_scheduler_only_starts_when_it_has_work():
     )
   )
 
-  assert scheduler is None
+  assert "scheduler" not in [definition.kind for definition in runner_definitions(config)]
 
 
 def test_scheduler_uses_configured_polling_interval():
@@ -198,6 +200,9 @@ def test_scheduler_does_not_sync_static_tasks_on_every_poll(monkeypatch):
 
   monkeypatch.setattr(scheduler, "sync_static_tasks", sync_once)
 
+  # a supervisor starts the scheduler, and its run() then starts it again
+  scheduler.start()
+  scheduler.start()
   scheduler.poll_once(now=now)
   scheduler.poll_once(now=now + timedelta(seconds=1))
 
@@ -340,6 +345,7 @@ def test_scheduler_persists_next_run_after_fire():
       }
     )
   )
+  scheduler.start()
 
   scheduler.poll_once(now=now)
 
@@ -535,6 +541,7 @@ def test_scheduler_limits_due_recurring_work_per_poll(monkeypatch):
     )
   )
   monkeypatch.setattr("dj_queue.runtime.scheduler.RECURRING_BATCH_SIZE", 1)
+  scheduler.start()
 
   first_batch = scheduler.poll_once(now=now)
   second_batch = scheduler.poll_once(now=now)

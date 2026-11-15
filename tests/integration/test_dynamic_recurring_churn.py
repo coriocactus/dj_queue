@@ -5,6 +5,7 @@ import pytest
 from django.utils import timezone
 
 from dj_queue.api import schedule_recurring_task, unschedule_recurring_task
+from dj_queue.config import load_backend_config
 from dj_queue.models import Job, RecurringExecution, RecurringTask
 from dj_queue.runtime.scheduler import Scheduler
 
@@ -34,9 +35,10 @@ def scheduler_tasks_settings():
 
 
 def build_scheduler(name=None):
-  return Scheduler.from_backend_config(
-    backend_alias="default",
-    tasks_settings=scheduler_tasks_settings(),
+  config = load_backend_config(tasks_settings=scheduler_tasks_settings())
+  return Scheduler(
+    config,
+    backend_config=config,
     name=name or f"scheduler-{uuid4()}",
     pid=34567,
     hostname="localhost",

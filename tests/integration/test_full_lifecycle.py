@@ -16,6 +16,8 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 
 class InlinePool:
+  in_flight = 0
+
   def __init__(self, max_workers):
     self.idle_capacity = max_workers
 
@@ -89,9 +91,10 @@ def make_dispatcher(name="dispatcher-1"):
 
 
 def make_scheduler(tasks_settings, name="scheduler-1"):
-  return Scheduler.from_backend_config(
-    backend_alias="default",
-    tasks_settings=tasks_settings,
+  config = load_backend_config(tasks_settings=tasks_settings)
+  return Scheduler(
+    config,
+    backend_config=config,
     name=name,
     pid=34567,
     hostname="localhost",

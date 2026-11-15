@@ -52,9 +52,10 @@ def scheduler_tasks_settings(*, recurring=None, dynamic_tasks_enabled=False, lis
 
 
 def build_scheduler(*, tasks_settings, name=None):
-  return Scheduler.from_backend_config(
-    backend_alias="default",
-    tasks_settings=tasks_settings,
+  config = load_backend_config(tasks_settings=tasks_settings)
+  return Scheduler(
+    config,
+    backend_config=config,
     name=name or f"scheduler-{uuid4()}",
     pid=34567,
     hostname="localhost",
@@ -639,7 +640,6 @@ def test_notify_watcher_reconnects_after_connection_error(monkeypatch):
   ]
   assert closed == ["broken"]
   assert wakes == ["wake"]
-  assert backend.failed is False
   assert events == [("notify.restored", {"backend_alias": "default"})]
 
 
@@ -664,7 +664,6 @@ def test_notify_wakeup_backend_starts_reconnect_watcher_after_initial_failure(mo
   assert [(str(error), kwargs["context"]) for error, kwargs in errors] == [
     ("initial notify failure", "worker.notify")
   ]
-  assert backend.failed is True
   assert started == [True]
 
 
@@ -692,7 +691,6 @@ def test_notify_watcher_reconnects_when_started_without_connection(monkeypatch):
   backend._watch()
 
   assert wakes == ["wake"]
-  assert backend.failed is False
   assert events == [("notify.restored", {"backend_alias": "default"})]
 
 

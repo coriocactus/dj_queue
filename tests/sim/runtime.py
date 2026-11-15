@@ -57,6 +57,10 @@ class ManualWorkerPool:
   def idle_capacity(self):
     return max(0, self.max_workers - len(self._running))
 
+  @property
+  def in_flight(self):
+    return len(self._running)
+
   def submit(self, fn, *args, **kwargs):
     future = Future()
     self._running.append((future, fn, args, kwargs))

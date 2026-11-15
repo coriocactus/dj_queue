@@ -33,8 +33,8 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 class InlinePool:
   def __init__(self, max_workers):
-    self.max_workers = max_workers
     self.idle_capacity = max_workers
+    self.in_flight = 0
     self.shutdown_timeout = None
 
   def submit(self, fn, *args, **kwargs):
@@ -75,8 +75,8 @@ class FakeWakeupBackend:
 
 
 class FailingSubmitPool:
-  max_workers = 1
   idle_capacity = 1
+  in_flight = 0
 
   def submit(self, *_args, **_kwargs):
     raise RuntimeError("pool closed")

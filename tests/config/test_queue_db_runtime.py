@@ -74,6 +74,8 @@ def _dj_queue_tables(alias):
 
 
 class InlinePool:
+  in_flight = 0
+
   def __init__(self, max_workers):
     self.idle_capacity = max_workers
 

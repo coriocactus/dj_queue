@@ -43,7 +43,7 @@ polling_interval = 0.01
 [[dispatchers]]
 polling_interval = 0.01
 """)
-  supervisor = build_supervisor(backend_alias="default", cli_overrides={"config": str(path)})
+  supervisor = build_supervisor(load_backend_config(cli_overrides={"config": str(path)}))
   supervisor.standalone = False
 
   with django_db_blocker.unblock():

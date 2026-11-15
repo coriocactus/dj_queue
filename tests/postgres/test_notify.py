@@ -21,6 +21,8 @@ pytestmark = pytest.mark.postgres
 
 
 class InlinePool:
+  in_flight = 0
+
   def __init__(self, max_workers):
     self.idle_capacity = max_workers
 
@@ -128,7 +130,7 @@ def test_notify_connection_failure_falls_back_to_polling(monkeypatch):
   backend.start()
 
   assert isinstance(backend, NotifyWakeupBackend)
-  assert backend.failed is True
+  assert backend._watcher is None
 
 
 @pytest.mark.django_db(transaction=True)

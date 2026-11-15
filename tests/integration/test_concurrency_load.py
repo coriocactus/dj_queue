@@ -34,6 +34,11 @@ class BlockingPool:
     with self._lock:
       return max(0, self._max_workers - self._in_flight)
 
+  @property
+  def in_flight(self):
+    with self._lock:
+      return self._in_flight
+
   def submit(self, fn, *args, **kwargs):
     future = Future()
     with self._lock:

@@ -11,6 +11,7 @@ from _example import result, step, takeaway, title
 from django.conf import settings
 from django.tasks import task
 
+from dj_queue.config import load_backend_config
 from dj_queue.models import RecurringTask
 from dj_queue.runtime.scheduler import Scheduler
 
@@ -46,9 +47,10 @@ settings.TASKS["default"]["OPTIONS"]["recurring"] = {
 result("configured keys=nightly_cleanup, hourly_digest")
 
 step(2, "persist the static recurring schedule")
-scheduler = Scheduler.from_backend_config(
-  backend_alias="default",
-  tasks_settings=settings.TASKS,
+config = load_backend_config(tasks_settings=settings.TASKS)
+scheduler = Scheduler(
+  config,
+  backend_config=config,
   name="example-static-recurring",
   pid=12345,
   hostname="localhost",

@@ -17,9 +17,6 @@ class Dispatcher(BaseRunner):
     self._last_maintenance_at = None
 
   def poll_once(self):
-    if self.process is None:
-      self.start()
-
     with app_executor():
       promoted_jobs = promote_scheduled_jobs(
         batch_size=self.config.batch_size,

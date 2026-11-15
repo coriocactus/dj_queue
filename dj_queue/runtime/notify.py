@@ -38,7 +38,6 @@ class NotifyWakeupBackend:
     self.queues = tuple(queues or ("*",))
     self.reconnect_base_delay = reconnect_base_delay
     self.reconnect_max_delay = reconnect_max_delay
-    self.failed = False
     self._connection = None
     self._watcher = None
     self._stop_event = threading.Event()
@@ -51,13 +50,11 @@ class NotifyWakeupBackend:
     try:
       self._connection = self._open_connection()
     except Exception as error:
-      self.failed = True
       self._close_connection()
       handle_thread_error(error, context="worker.notify", config=self.config)
     try:
       self._start_watcher()
     except Exception as error:
-      self.failed = True
       self._watcher = None
       self._close_connection()
       handle_thread_error(error, context="worker.notify", config=self.config)
@@ -99,7 +96,6 @@ class NotifyWakeupBackend:
         if self._stop_event.is_set():
           return
         failures += 1
-        self.failed = True
         self._close_connection()
         handle_thread_error(error, context="worker.notify", config=self.config)
 
@@ -107,12 +103,10 @@ class NotifyWakeupBackend:
     try:
       self._connection = self._open_connection()
     except Exception as error:
-      self.failed = True
       self._close_connection()
       handle_thread_error(error, context="worker.notify", config=self.config)
       return False
 
-    self.failed = False
     log_event("notify.restored", backend_alias=self.config.backend_alias)
     return True
 
@@ -139,15 +133,8 @@ class NotifyWakeupBackend:
 
 
 def notify_ready_queues(queue_names, *, config):
-  if not queue_names or not config.listen_notify:
-    return
-
-  if not supports_listen_notify(config.database_alias):
-    return
-
   payload = json.dumps(list(dict.fromkeys(queue_names)), separators=(",", ":"))
   _notify(READY_CHANNEL, payload, config=config)
-  return
 
 
 def build_wakeup_backend(*, queues, wake_up, config):
