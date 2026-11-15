@@ -88,10 +88,12 @@ jobs:
             django: "6.0"
             group: django60
             psycopg: binary
+            plan-bounds: true
           - postgres-version: "18"
             django: "6.0"
             group: django60
             psycopg: binary
+            plan-bounds: true
           - postgres-version: "18"
             django: "6.1"
             group: django61
@@ -128,6 +130,13 @@ jobs:
           DB_BACKEND: postgres
           DB_PORT: "5432"
           PSYCOPG_IMPL: ${{ matrix.psycopg }}
+      - if: matrix.plan-bounds
+        run: uv run --no-sync pytest tests/integration/test_claim_plan_bounds.py
+        env:
+          DB_BACKEND: postgres
+          DB_PORT: "5432"
+          PSYCOPG_IMPL: ${{ matrix.psycopg }}
+          STRESS: "1"
 
   mysql:
     name: MySQL ${{ matrix.mysql-version }} / Django ${{ matrix.django }}
