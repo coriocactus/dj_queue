@@ -914,11 +914,13 @@ def test_internal_cleanup_deletes_old_recurring_executions_when_configured():
     backend_alias="default",
     task_key="nightly",
     run_at=now - timedelta(minutes=10),
+    intended_job_id=uuid4(),
   )
   recent_execution = RecurringExecution.objects.create(
     backend_alias="default",
     task_key="nightly",
     run_at=now - timedelta(seconds=10),
+    intended_job_id=uuid4(),
   )
   scheduler = build_scheduler(
     tasks_settings=scheduler_tasks_settings(

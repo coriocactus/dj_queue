@@ -34,7 +34,7 @@ class RecurringTask(models.Model):
 
 class RecurringExecution(models.Model):
   backend_alias = models.CharField(max_length=64, default="default")
-  intended_job_id = models.UUIDField(null=True)
+  intended_job_id = models.UUIDField()
   job = models.OneToOneField(
     "dj_queue.Job",
     null=True,

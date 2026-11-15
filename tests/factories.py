@@ -170,7 +170,10 @@ def read_query_counts(read):
         ClaimedExecution.objects.create(job=make_job(queue_name=queue_name), process=worker)
         finished = make_job(queue_name=queue_name, finished_at=now)
         RecurringExecution.objects.create(
-          job=finished, task_key=key, run_at=now - timedelta(minutes=job_index)
+          job=finished,
+          intended_job_id=finished.id,
+          task_key=key,
+          run_at=now - timedelta(minutes=job_index),
         )
 
     with CaptureQueriesContext(connection) as ctx:

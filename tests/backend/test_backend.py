@@ -1421,6 +1421,7 @@ def test_clear_recurring_executions_by_age_and_task_key():
     backend_alias="default",
     task_key="nightly",
     run_at=timezone.now(),
+    intended_job_id=uuid.uuid4(),
   )
   RecurringExecution.objects.filter(pk=old_execution.pk).update(
     run_at=timezone.now() - timedelta(minutes=10)
@@ -1430,6 +1431,7 @@ def test_clear_recurring_executions_by_age_and_task_key():
     backend_alias="default",
     task_key="hourly",
     run_at=timezone.now(),
+    intended_job_id=uuid.uuid4(),
   )
   RecurringExecution.objects.filter(pk=other_execution.pk).update(
     run_at=timezone.now() - timedelta(minutes=10)
@@ -1439,6 +1441,7 @@ def test_clear_recurring_executions_by_age_and_task_key():
     backend_alias="default",
     task_key="nightly",
     run_at=timezone.now(),
+    intended_job_id=uuid.uuid4(),
   )
   RecurringExecution.objects.filter(pk=recent_execution.pk).update(
     run_at=timezone.now() - timedelta(seconds=10)
@@ -1462,6 +1465,7 @@ def test_clear_recurring_executions_locks_rows(monkeypatch):
     backend_alias="default",
     task_key="nightly",
     run_at=timezone.now(),
+    intended_job_id=uuid.uuid4(),
   )
   RecurringExecution.objects.filter(pk=execution.pk).update(
     run_at=timezone.now() - timedelta(minutes=10)

@@ -987,7 +987,10 @@ def test_unretained_completion_deletes_the_job_and_its_recurring_execution():
   ClaimedExecution.objects.create(job=job)
   for recurring_job in (job, other):
     RecurringExecution.objects.create(
-      task_key="nightly", run_at=recurring_job.created_at, job=recurring_job
+      task_key="nightly",
+      run_at=recurring_job.created_at,
+      job=recurring_job,
+      intended_job_id=recurring_job.id,
     )
 
   complete_claimed_job(
@@ -1003,7 +1006,9 @@ def test_unretained_completion_deletes_the_job_and_its_recurring_execution():
 def test_unretained_completion_rejects_conflicting_execution_state():
   job = make_job()
   ClaimedExecution.objects.create(job=job)
-  RecurringExecution.objects.create(task_key="nightly", run_at=job.created_at, job=job)
+  RecurringExecution.objects.create(
+    task_key="nightly", run_at=job.created_at, job=job, intended_job_id=job.id
+  )
   FailedExecution.objects.create(
     job=job, exception_class="builtins.ValueError", message="boom", traceback=""
   )

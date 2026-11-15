@@ -58,21 +58,6 @@ def test_recurring_execution_allows_null_job_during_recoverable_reservation():
 
 
 @pytest.mark.django_db
-def test_recurring_execution_allows_legacy_job_without_intended_id():
-  job = make_job()
-  execution = RecurringExecution.objects.create(
-    backend_alias="default",
-    task_key="every-minute",
-    run_at=timezone.now(),
-    intended_job_id=None,
-    job=job,
-  )
-
-  assert execution.intended_job_id is None
-  assert execution.job == job
-
-
-@pytest.mark.django_db
 def test_recurring_task_key_unique():
   RecurringTask.objects.create(
     backend_alias="default",
@@ -97,6 +82,7 @@ def test_recurring_execution_task_key_run_at_unique():
     backend_alias="default",
     task_key="every-minute",
     run_at=run_at,
+    intended_job_id=uuid4(),
   )
 
   with pytest.raises(IntegrityError), transaction.atomic():
@@ -104,6 +90,7 @@ def test_recurring_execution_task_key_run_at_unique():
       backend_alias="default",
       task_key="every-minute",
       run_at=run_at,
+      intended_job_id=uuid4(),
     )
 
 

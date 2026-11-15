@@ -1,4 +1,5 @@
 from datetime import timedelta
+from uuid import uuid4
 
 import pytest
 from django.http import Http404
@@ -546,6 +547,7 @@ def test_dashboard_recurring_timestamps_use_compact_format(admin_client):
   )
   RecurringExecution.objects.create(
     backend_alias="default",
+    intended_job_id=uuid4(),
     job=None,
     task_key=task.key,
     run_at=now,

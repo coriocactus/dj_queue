@@ -411,11 +411,13 @@ def test_prune_command_can_delete_failed_and_recurring_rows(capsys):
     backend_alias="default",
     task_key="nightly",
     run_at=timezone.now() - timedelta(days=3),
+    intended_job_id=uuid4(),
   )
   recent_recurring = RecurringExecution.objects.create(
     backend_alias="default",
     task_key="nightly",
     run_at=timezone.now() - timedelta(hours=1),
+    intended_job_id=uuid4(),
   )
 
   call_command(
@@ -466,6 +468,7 @@ def test_prune_command_uses_backend_config_for_failed_and_recurring_windows(sett
     backend_alias="default",
     task_key="nightly",
     run_at=timezone.now() - timedelta(hours=2),
+    intended_job_id=uuid4(),
   )
 
   call_command("dj_queue_prune")
