@@ -649,14 +649,14 @@ class FailedExecutionAdmin(HiddenSidebarAdminMixin, admin.ModelAdmin):
   ignored_filter_params = ("job__backend_alias",)
   show_full_result_count = False
   list_display = ("job", "exception_class", "message", "display_retry_at", "display_created_at")
-  list_filter = (
-    ("job__queue_name", admin.AllValuesFieldListFilter),
-    "exception_class",
-  )
+  list_filter = ("exception_class",)
   list_select_related = ("job",)
   actions = ("retry_jobs", "discard_jobs")
   readonly_fields = ("job", "exception_class", "message", "traceback", "retry_at", "created_at")
   search_fields = ("job__id", "job__task_path", "message", "exception_class")
+
+  def lookup_allowed(self, lookup, value, request):
+    return lookup == "job__queue_name" or super().lookup_allowed(lookup, value, request)
 
   def has_retry_jobs_permission(self, request):
     return has_action_permission(request.user, "retry")

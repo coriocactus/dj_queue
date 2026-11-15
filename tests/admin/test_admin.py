@@ -111,6 +111,14 @@ def test_job_admin_changelist_query_count_is_pinned_across_data_sizes(admin_clie
   assert read_query_counts(changelist) == [5, 5]
 
 
+def test_failed_execution_changelist_query_count_is_pinned_across_data_sizes(admin_client):
+  def changelist():
+    url = reverse("admin:dj_queue_failedexecution_changelist")
+    assert admin_client.get(url).status_code == 200
+
+  assert read_query_counts(changelist) == [5, 5]
+
+
 def test_job_admin_default_changelist_does_not_build_status_rank(admin_client, monkeypatch):
   make_job()
 
@@ -342,7 +350,8 @@ def test_failed_execution_admin_changelist_filtered_by_backend(admin_client):
 
 
 def test_failed_execution_admin_changelist_filtered_by_queue(admin_client):
-  make_failed_job(queue_name="alpha")
+  _alpha_job, alpha_failed = make_failed_job(queue_name="alpha")
+  make_failed_job(queue_name="beta")
 
   response = admin_client.get(
     reverse("admin:dj_queue_failedexecution_changelist"),
@@ -353,6 +362,8 @@ def test_failed_execution_admin_changelist_filtered_by_queue(admin_client):
   )
 
   assert response.status_code == 200
+  assert [obj.pk for obj in response.context["cl"].result_list] == [alpha_failed.pk]
+  assert "By queue name" not in response.content.decode()
 
 
 def test_job_admin_backend_param_controls_shared_database_scope(admin_client, settings):
