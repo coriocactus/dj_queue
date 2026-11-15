@@ -10,10 +10,6 @@ class DispatchPolicyError(EnqueueError):
   pass
 
 
-class AlreadyRecorded(DjQueueError):
-  pass
-
-
 class ProcessExitError(DjQueueError):
   pass
 

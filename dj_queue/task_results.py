@@ -2,7 +2,7 @@ from django.tasks import TaskResult, TaskResultStatus
 from django.tasks.base import Task, TaskError
 from django.utils.module_loading import import_string
 
-from dj_queue.exceptions import DjQueueError
+from dj_queue.exceptions import DjQueueError, exception_path
 
 
 def task_result_from_job(job):
@@ -20,7 +20,7 @@ def task_result_from_job(job):
     finished_at = job.updated_at
     errors = [
       TaskError(
-        exception_class_path=_exception_class_path(DjQueueError),
+        exception_class_path=exception_path(DjQueueError()),
         traceback=f"job has invalid execution state: {', '.join(job.execution_state_names)}",
       )
     ]
@@ -107,10 +107,6 @@ def _unavailable_task_for_job(job):
     queue_name=job.queue_name,
     run_after=job.scheduled_at,
   )
-
-
-def _exception_class_path(error_class):
-  return f"{error_class.__module__}.{error_class.__qualname__}"
 
 
 def build_task_result(
